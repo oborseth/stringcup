@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Stringcup E2EE Demo</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 960px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #f7f7fa;
+    }
+    h1 {
+      margin-bottom: 0.5rem;
+    }
+    fieldset {
+      margin-bottom: 1.5rem;
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+    }
+    legend {
+      font-weight: 600;
+      padding: 0 0.3rem;
+    }
+    label {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    input, textarea, button {
+      font: inherit;
+      padding: 0.35rem 0.5rem;
+      margin: 0.2rem 0;
+      box-sizing: border-box;
+    }
+    input, textarea {
+      width: 100%;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 3rem;
+    }
+    button {
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #222;
+      color: #fff;
+      cursor: pointer;
+      padding: 0.35rem 0.8rem;
+      margin-right: 0.5rem;
+      margin-top: 0.3rem;
+    }
+    button.secondary {
+      background: #fff;
+      color: #222;
+      border-color: #888;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .row > .col {
+      flex: 1;
+      min-width: 180px;
+    }
+    #log, #identityDump {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      background: #111;
+      color: #e6ffe6;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    #identityDump {
+      background: #1c2430;
+      color: #e5f1ff;
+    }
+    #inbox {
+      max-height: 260px;
+      overflow-y: auto;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      background: #fff;
+      padding: 0.5rem;
+      font-size: 0.9rem;
+    }
+    .msg {
+      border-bottom: 1px solid #eee;
+      padding: 0.4rem 0;
+    }
+    .msg:last-child {
+      border-bottom: none;
+    }
+    .msg-header {
+      font-size: 0.78rem;
+      color: #666;
+      margin-bottom: 0.15rem;
+    }
+    .msg-body {
+      white-space: pre-wrap;
+    }
+
+    /* Chat-style differentiation for in/out messages */
+    .msg.msg-out .msg-body {
+      background: #eef;
+      border-radius: 4px;
+      padding: 0.25rem 0.4rem;
+      display: inline-block;
+    }
+    .msg.msg-in .msg-body {
+      background: #f7f7f7;
+      border-radius: 4px;
+      padding: 0.25rem 0.4rem;
+      display: inline-block;
+    }
+
+    .pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      background: #eef;
+      color: #334;
+      margin-left: 0.35rem;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "@noble/hashes/crypto": "/js/noble/hashes/esm/crypto.js",
+      "@noble/hashes/sha512": "/js/noble/hashes/esm/sha512.js",
+      "@noble/hashes/utils": "/js/noble/hashes/esm/utils.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h1>Stringcup E2EE Demo</h1>
+  <p>
+    This demo uses <strong>X25519</strong> identity keys, a symmetric ratchet, and per-user <strong>API tokens</strong>.
+    All encryption/decryption happens in the browser.
+  </p>
+
+  <!-- Identity & token -->
+  <fieldset>
+    <legend>1. Identity & API Token</legend>
+    <div class="row">
+      <div class="col">
+        <label for="externalId">Your ID (external_id)</label>
+        <input id="externalId" placeholder="alice, bob, joe..." />
+      </div>
+      <div class="col">
+        <label for="displayName">Display name</label>
+        <input id="displayName" placeholder="Alice Example" />
+      </div>
+    </div>
+    <div style="margin-top:0.5rem;">
+      <button id="btnGenerate">Generate New Identity</button>
+      <button id="btnUpload" class="secondary">Upload / Refresh Identity</button>
+      <button id="btnShowIdentity" class="secondary" type="button">Show Local Identity</button>
+      <button id="btnClearIdentity" class="secondary" type="button">Clear Identity & Sessions</button>
+    </div>
+    <p style="font-size:0.85rem;margin-top:0.4rem;">
+      Tip: open this page in two windows (e.g. one as <code>alice</code>, one as <code>bob</code>) to test messaging.
+    </p>
+    <div id="identityDump" style="margin-top:0.5rem;"></div>
+  </fieldset>
+
+  <!-- Messaging -->
+  <fieldset>
+    <legend>2. Send Encrypted Message</legend>
+    <div class="row">
+      <div class="col">
+        <label for="recipientId">Recipient ID</label>
+        <input id="recipientId" placeholder="bob" />
+      </div>
+    </div>
+<label for="messageText" style="margin-top:0.3rem;">Message</label>
+<input id="messageText" placeholder="Hello, encrypted world!" autocomplete="off" />
+<div>
+  <button id="btnSend">Encrypt & Send</button>
+</div>
+  </fieldset>
+
+  <!-- Inbox -->
+  <fieldset>
+    <legend>3. Inbox (Fetch & Decrypt)</legend>
+    <div style="margin-bottom:0.3rem;">
+      <div>
+        <button id="btnFetchRaw" class="secondary">Fetch Raw Messages</button>
+        <button id="btnFetchDec">Fetch & Decrypt Messages</button>
+      </div>
+      <div>
+        <label style="margin-left:0.75rem; font-size:0.85rem; display:inline-flex; align-items:center; gap:0.3rem;">
+          <input type="checkbox" id="autoFetchToggle">
+          Auto-fetch every 3 seconds
+        </label>
+      </div>
+      <br>
+      <div><span class="pill" id="sessionStatus">no identity</span></div>
+    </div>
+    <div id="inbox">(no messages yet)</div>
+  </fieldset>
+
+  <!-- Log -->
+  <fieldset>
+    <legend>Debug Log</legend>
+    <div id="log"></div>
+  </fieldset>
+
+  <script type="module">
+    import {
+      generateIdentity,
+      uploadIdentity,
+      loadIdentity,
+      saveIdentity,
+      clearIdentity,
+      sendMessage,
+      fetchMessages,
+      startInboxWatcher,
+      stopInboxWatcher,
+    } from '/js/e2ee.js';
+
+    const logEl = document.getElementById('log');
+    const idDumpEl = document.getElementById('identityDump');
+    const sessionStatusEl = document.getElementById('sessionStatus');
+    const inboxEl = document.getElementById('inbox');
+
+    // Local chat history (per tab, not persisted to backend)
+    const chatHistory = [];
+
+    function log(msg) {
+      const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
+      logEl.textContent += `[${now}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setIdentityDump(identity) {
+      if (!identity) {
+        idDumpEl.textContent = '(no identity in localStorage)';
+        sessionStatusEl.textContent = 'no identity';
+        sessionStatusEl.style.background = '#fee';
+        sessionStatusEl.style.color = '#500';
+        return;
+      }
+      const copy = { ...identity };
+      if (copy.privKeyB64 && copy.privKeyB64.length > 12) {
+        copy.privKeyB64 = copy.privKeyB64.slice(0, 12) + '… (hidden)';
+      }
+      idDumpEl.textContent = JSON.stringify(copy, null, 2);
+      sessionStatusEl.textContent =
+        `identity: ${identity.externalId}` +
+        (identity.apiToken ? ' (token set)' : ' (no token)');
+      sessionStatusEl.style.background = identity.apiToken ? '#e4ffe4' : '#fff7d6';
+      sessionStatusEl.style.color = '#143414';
+    }
+
+    // --- Chat-history rendering helpers ---
+
+function renderChatInbox() {
+  inboxEl.innerHTML = '';
+  if (chatHistory.length === 0) {
+    inboxEl.textContent = '(no messages)';
+    return;
+  }
+
+  for (const item of chatHistory) {
+    const msg = document.createElement('div');
+    msg.className = 'msg ' + (item.direction === 'out' ? 'msg-out' : 'msg-in');
+
+    const head = document.createElement('div');
+    head.className = 'msg-header';
+    head.textContent =
+      item.direction === 'out'
+        ? `To: ${item.recipientId} @ ${item.createdAt}`
+        : `From: ${item.senderId} @ ${item.createdAt}`;
+
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = item.text;
+
+    msg.appendChild(head);
+    msg.appendChild(body);
+    inboxEl.appendChild(msg);
+  }
+
+  // 🔥 ALWAYS scroll to top after rendering
+  inboxEl.scrollTop = 0;
+}
+
+function addOutgoingMessage(recipientId, text) {
+  const identity = loadIdentity();
+  const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
+
+  chatHistory.unshift({
+    direction: 'out',
+    senderId: identity ? identity.externalId : '',
+    recipientId,
+    createdAt: ts,
+    text,
+  });
+
+  renderChatInbox();
+}
+
+function addIncomingMessagesFromDecrypted(items) {
+  const identity = loadIdentity();
+  const fallbackTs = () =>
+    new Date().toISOString().replace('T', ' ').replace('Z', '');
+
+  for (const item of items) {
+    const raw = item.raw || item;
+    const text =
+      item.plaintext !== undefined
+        ? item.plaintext
+        : item.error
+        ? '(decrypt error) ' + item.error
+        : '(no plaintext)';
+
+    chatHistory.unshift({
+      direction: 'in',
+      senderId: raw.sender_id,
+      recipientId: identity ? identity.externalId : '',
+      createdAt: raw.created_at || fallbackTs(),
+      text,
+    });
+  }
+
+  renderChatInbox();
+}
+
+    // Separate renderer for raw debug view (does not touch chatHistory)
+    function renderInboxRaw(items) {
+      inboxEl.innerHTML = '';
+      if (!items || items.length === 0) {
+        inboxEl.textContent = '(no messages)';
+        return;
+      }
+      for (const item of items) {
+        const msg = document.createElement('div');
+        msg.className = 'msg';
+
+        const head = document.createElement('div');
+        head.className = 'msg-header';
+
+        const raw = item.raw || item;
+        head.textContent = `From: ${raw.sender_id} @ ${raw.created_at || 'unknown'}`;
+
+        const body = document.createElement('div');
+        body.className = 'msg-body';
+
+        if (item.plaintext !== undefined) {
+          body.textContent = item.plaintext;
+        } else if (item.error) {
+          body.textContent = '(decrypt error) ' + item.error;
+        } else {
+          body.textContent = `(raw ciphertext) ${raw.ciphertext}`;
+        }
+
+        msg.appendChild(head);
+        msg.appendChild(body);
+        inboxEl.appendChild(msg);
+      }
+    }
+
+    // --- Wire UI ---
+
+    document.getElementById('btnGenerate').addEventListener('click', async () => {
+      try {
+        const externalId = document.getElementById('externalId').value.trim();
+        const displayName =
+          document.getElementById('displayName').value.trim() || null;
+        if (!externalId) {
+          alert('Please enter an external_id first');
+          return;
+        }
+        log(`Generating new identity for "${externalId}"…`);
+        const identity = generateIdentity(externalId, displayName);
+        setIdentityDump(identity);
+        log('Identity generated. Now calling uploadIdentity() to register & get token…');
+        const res = await uploadIdentity();
+        log('uploadIdentity response: ' + JSON.stringify(res));
+        const idAfter = loadIdentity();
+        setIdentityDump(idAfter);
+      } catch (e) {
+        log('ERROR (generate): ' + e.message);
+      }
+    });
+
+    document.getElementById('btnUpload').addEventListener('click', async () => {
+      try {
+        const identity = loadIdentity();
+        if (!identity) {
+          alert('No identity in localStorage. Use "Generate New Identity" first.');
+          return;
+        }
+
+        // If the form has different values, sync externalId/displayName to the stored identity
+        const formId = document.getElementById('externalId').value.trim();
+        const formName = document.getElementById('displayName').value.trim();
+        if (formId && formId !== identity.externalId) {
+          identity.externalId = formId;
+        }
+        if (formName && formName !== identity.displayName) {
+          identity.displayName = formName;
+        }
+        saveIdentity(identity);
+        setIdentityDump(identity);
+
+        log('Calling uploadIdentity() (will update identity, may issue token if first time)…');
+        const res = await uploadIdentity();
+        log('uploadIdentity response: ' + JSON.stringify(res));
+        const idAfter = loadIdentity();
+        setIdentityDump(idAfter);
+      } catch (e) {
+        log('ERROR (upload): ' + e.message);
+      }
+    });
+
+    document.getElementById('btnShowIdentity').addEventListener('click', () => {
+      const identity = loadIdentity();
+      setIdentityDump(identity);
+      if (identity) {
+        document.getElementById('externalId').value = identity.externalId;
+        document.getElementById('displayName').value =
+          identity.displayName || '';
+      }
+      log('Refreshed identity from localStorage.');
+    });
+
+    document.getElementById('btnClearIdentity').addEventListener('click', () => {
+      if (!confirm('Clear identity and all local ratchet sessions?')) return;
+      clearIdentity();
+      setIdentityDump(null);
+      chatHistory.length = 0;
+      inboxEl.textContent = '(no messages)';
+      log('Cleared identity and sessions from localStorage.');
+    });
+
+const messageInput = document.getElementById('messageText');
+
+messageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault(); // prevent form submission / new line (not needed for input, but good habit)
+    document.getElementById('btnSend').click();
+  }
+});
+
+    document.getElementById('btnSend').addEventListener('click', async () => {
+      try {
+        const identity = loadIdentity();
+        if (!identity) {
+          alert('No identity. Generate & upload first.');
+          return;
+        }
+        const recipientId = document.getElementById('recipientId').value.trim();
+        const msgText = document.getElementById('messageText').value;
+        if (!recipientId) {
+          alert('Enter a recipient ID.');
+          return;
+        }
+        if (!msgText) {
+          alert('Enter a message.');
+          return;
+        }
+        log(`Sending encrypted message to "${recipientId}"…`);
+        const res = await sendMessage(recipientId, msgText);
+        log('sendMessage response: ' + JSON.stringify(res));
+
+        // Add sent message to local chat history
+        addOutgoingMessage(recipientId, msgText);
+
+messageInput.value = '';
+messageInput.focus();
+inboxEl.scrollTop = 0;
+
+      } catch (e) {
+        log('ERROR (send): ' + e.message);
+      }
+    });
+
+    document.getElementById('btnFetchRaw').addEventListener('click', async () => {
+      try {
+        log('Fetching raw messages from inbox…');
+        const msgs = await fetchMessages(false);
+        log(`Fetched ${msgs.length} message(s).`);
+        renderInboxRaw(msgs);
+      } catch (e) {
+        log('ERROR (fetch raw): ' + e.message);
+      }
+    });
+
+    document.getElementById('btnFetchDec').addEventListener('click', async () => {
+      try {
+        log('Fetching & decrypting messages…');
+        const msgs = await fetchMessages(true);
+        log(`Fetched & attempted decrypt of ${msgs.length} message(s).`);
+
+        // Append to chat history
+        addIncomingMessagesFromDecrypted(msgs);
+      } catch (e) {
+        log('ERROR (fetch dec): ' + e.message);
+      }
+    });
+
+    document.getElementById('autoFetchToggle').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        log('Auto-fetch enabled (every 3 seconds)…');
+        startInboxWatcher({
+          decrypt: true,
+          intervalMs: 3000,
+          onBatch: (msgs) => {
+            log(`Auto-fetch: received ${msgs.length} message(s).`);
+            addIncomingMessagesFromDecrypted(msgs);
+          },
+        });
+      } else {
+        stopInboxWatcher();
+        log('Auto-fetch disabled.');
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      const autoToggle = document.getElementById('autoFetchToggle');
+      if (document.visibilityState === 'hidden') {
+        stopInboxWatcher();
+      } else if (autoToggle.checked) {
+        startInboxWatcher({
+          decrypt: true,
+          intervalMs: 3000,
+          onBatch: (msgs) => {
+            log(`Auto-fetch: received ${msgs.length} message(s).`);
+            addIncomingMessagesFromDecrypted(msgs);
+          },
+        });
+      }
+    });
+
+
+    // --- On load: try to hydrate identity into form/UI ---
+    (function init() {
+      const identity = loadIdentity();
+      setIdentityDump(identity);
+      if (identity) {
+        document.getElementById('externalId').value = identity.externalId;
+        document.getElementById('displayName').value =
+          identity.displayName || '';
+        log('Loaded identity from localStorage.');
+      } else {
+        log('No identity in localStorage. Create one in section 1.');
+      }
+      renderChatInbox();
+    })();
+  </script>
+</body>
+</html>
+

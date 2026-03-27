@@ -1,0 +1,494 @@
+CRITICAL - 2025-12-12 01:22:33 --> Error: Class "App\Models\IdentityModel" not found
+[Method: GET, Route: api/v1/identities/test]
+in APPPATH/Controllers/Api/V1/IdentityController.php on line 102.
+ 1 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\IdentityController->show('test')
+ 2 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\IdentityController))
+ 3 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 4 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 5 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 6 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:34:54 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:24 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:24 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:25 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:25 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:27 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:28 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:28 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:35:28 --> CodeIgniter\Format\Exceptions\FormatException: Failed to parse JSON string. Error: Malformed UTF-8 characters, possibly incorrectly encoded
+[Method: GET, Route: test/identityTest]
+in SYSTEMPATH/Format/JSONFormatter.php on line 47.
+ 1 SYSTEMPATH/Format/JSONFormatter.php(47): CodeIgniter\Format\Exceptions\FormatException::forInvalidJSON('Malformed UTF-8 characters, possibly incorrectly encoded')
+ 2 SYSTEMPATH/HTTP/ResponseTrait.php(252): CodeIgniter\Format\JSONFormatter->format([...])
+ 3 SYSTEMPATH/HTTP/ResponseTrait.php(178): CodeIgniter\HTTP\Response->formatBody([...], 'json')
+ 4 APPPATH/Controllers/Test.php(36): CodeIgniter\HTTP\Response->setJSON([...])
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Test->identityTest()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Test))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 01:40:40 --> Error: Class "Ramsey\Uuid\Uuid" not found
+[Method: POST, Route: api/v1/identities]
+in APPPATH/Controllers/Api/V1/IdentityController.php on line 66.
+ 1 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\IdentityController->register()
+ 2 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\IdentityController))
+ 3 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 4 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 5 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 6 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:18:42 --> CodeIgniter\HTTP\Exceptions\BadRequestException: The URI you submitted has disallowed characters: "[object Object]"
+[Method: POST, Route: %5Bobject%20Object%5D/identities]
+in SYSTEMPATH/Router/Router.php on line 741.
+ 1 SYSTEMPATH/Router/Router.php(207): CodeIgniter\Router\Router->checkDisallowedChars('[object Object]/identities')
+ 2 SYSTEMPATH/CodeIgniter.php(832): CodeIgniter\Router\Router->handle('[object Object]/identities')
+ 3 SYSTEMPATH/CodeIgniter.php(455): CodeIgniter\CodeIgniter->tryToRouteIt(Object(CodeIgniter\Router\RouteCollection))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:19:18 --> CodeIgniter\HTTP\Exceptions\BadRequestException: The URI you submitted has disallowed characters: "[object Object]"
+[Method: POST, Route: %5Bobject%20Object%5D/identities]
+in SYSTEMPATH/Router/Router.php on line 741.
+ 1 SYSTEMPATH/Router/Router.php(207): CodeIgniter\Router\Router->checkDisallowedChars('[object Object]/identities')
+ 2 SYSTEMPATH/CodeIgniter.php(832): CodeIgniter\Router\Router->handle('[object Object]/identities')
+ 3 SYSTEMPATH/CodeIgniter.php(455): CodeIgniter\CodeIgniter->tryToRouteIt(Object(CodeIgniter\Router\RouteCollection))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:24:50 --> CodeIgniter\HTTP\Exceptions\BadRequestException: The URI you submitted has disallowed characters: "[object Object]"
+[Method: POST, Route: %5Bobject%20Object%5D/identities]
+in SYSTEMPATH/Router/Router.php on line 741.
+ 1 SYSTEMPATH/Router/Router.php(207): CodeIgniter\Router\Router->checkDisallowedChars('[object Object]/identities')
+ 2 SYSTEMPATH/CodeIgniter.php(832): CodeIgniter\Router\Router->handle('[object Object]/identities')
+ 3 SYSTEMPATH/CodeIgniter.php(455): CodeIgniter\CodeIgniter->tryToRouteIt(Object(CodeIgniter\Router\RouteCollection))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:25:16 --> CodeIgniter\HTTP\Exceptions\BadRequestException: The URI you submitted has disallowed characters: "[object Object]"
+[Method: POST, Route: %5Bobject%20Object%5D/identities]
+in SYSTEMPATH/Router/Router.php on line 741.
+ 1 SYSTEMPATH/Router/Router.php(207): CodeIgniter\Router\Router->checkDisallowedChars('[object Object]/identities')
+ 2 SYSTEMPATH/CodeIgniter.php(832): CodeIgniter\Router\Router->handle('[object Object]/identities')
+ 3 SYSTEMPATH/CodeIgniter.php(455): CodeIgniter\CodeIgniter->tryToRouteIt(Object(CodeIgniter\Router\RouteCollection))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:25:37 --> CodeIgniter\HTTP\Exceptions\BadRequestException: The URI you submitted has disallowed characters: "[object Object]"
+[Method: POST, Route: %5Bobject%20Object%5D/identities]
+in SYSTEMPATH/Router/Router.php on line 741.
+ 1 SYSTEMPATH/Router/Router.php(207): CodeIgniter\Router\Router->checkDisallowedChars('[object Object]/identities')
+ 2 SYSTEMPATH/CodeIgniter.php(832): CodeIgniter\Router\Router->handle('[object Object]/identities')
+ 3 SYSTEMPATH/CodeIgniter.php(455): CodeIgniter\CodeIgniter->tryToRouteIt(Object(CodeIgniter\Router\RouteCollection))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:38:16 --> ErrorException: Undefined variable $msgModel
+[Method: GET, Route: api/v1/messages]
+in APPPATH/Controllers/Api/V1/MessageController.php on line 107.
+ 1 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\Debug\Exceptions->errorHandler(2, 'Undefined variable $msgModel', '/usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php', 107)
+ 2 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 3 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+ERROR - 2025-12-12 18:39:06 --> mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2 in /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php:327
+Stack trace:
+#0 /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `me...', 0)
+#1 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `me...')
+#2 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `me...')
+#3 /usr/share/nginx/html/stringcup.com/system/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `me...', Array, false)
+#4 /usr/share/nginx/html/stringcup.com/system/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+#5 /usr/share/nginx/html/stringcup.com/system/BaseModel.php(1152): CodeIgniter\Model->doDelete(NULL, false)
+#6 /usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+#7 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+#8 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+#9 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(NULL, Object(Config\Cache), false)
+#10 /usr/share/nginx/html/stringcup.com/system/Boot.php(363): CodeIgniter\CodeIgniter->run()
+#11 /usr/share/nginx/html/stringcup.com/system/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+#12 /usr/share/nginx/html/stringcup.com/public/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+#13 {main}
+CRITICAL - 2025-12-12 18:39:06 --> CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+[Method: GET, Route: api/v1/messages]
+in SYSTEMPATH/Database/BaseConnection.php on line 684.
+ 1 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 2 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 3 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 4 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:39:06 --> [Caused by] CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 332.
+ 1 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 2 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 4 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 5 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 6 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 7 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 8 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 9 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+10 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+11 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+12 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:39:06 --> [Caused by] mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 327.
+ 1 SYSTEMPATH/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `messages`
+WHERE `id` IN ()', 0)
+ 2 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 4 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 5 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 6 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 7 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 8 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 9 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+10 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+11 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+12 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+13 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+ERROR - 2025-12-12 18:39:48 --> mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2 in /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php:327
+Stack trace:
+#0 /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `me...', 0)
+#1 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `me...')
+#2 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `me...')
+#3 /usr/share/nginx/html/stringcup.com/system/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `me...', Array, false)
+#4 /usr/share/nginx/html/stringcup.com/system/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+#5 /usr/share/nginx/html/stringcup.com/system/BaseModel.php(1152): CodeIgniter\Model->doDelete(NULL, false)
+#6 /usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+#7 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+#8 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+#9 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(NULL, Object(Config\Cache), false)
+#10 /usr/share/nginx/html/stringcup.com/system/Boot.php(363): CodeIgniter\CodeIgniter->run()
+#11 /usr/share/nginx/html/stringcup.com/system/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+#12 /usr/share/nginx/html/stringcup.com/public/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+#13 {main}
+CRITICAL - 2025-12-12 18:39:48 --> CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+[Method: GET, Route: api/v1/messages]
+in SYSTEMPATH/Database/BaseConnection.php on line 684.
+ 1 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 2 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 3 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 4 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:39:48 --> [Caused by] CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 332.
+ 1 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 2 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 4 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 5 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 6 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 7 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 8 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 9 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+10 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+11 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+12 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:39:48 --> [Caused by] mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 327.
+ 1 SYSTEMPATH/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `messages`
+WHERE `id` IN ()', 0)
+ 2 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 4 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 5 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 6 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 7 APPPATH/Controllers/Api/V1/MessageController.php(107): CodeIgniter\BaseModel->delete()
+ 8 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 9 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+10 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+11 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+12 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+13 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:40:09 --> ErrorException: Undefined variable $ids
+[Method: GET, Route: api/v1/messages]
+in APPPATH/Controllers/Api/V1/MessageController.php on line 106.
+ 1 APPPATH/Controllers/Api/V1/MessageController.php(106): CodeIgniter\Debug\Exceptions->errorHandler(2, 'Undefined variable $ids', '/usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php', 106)
+ 2 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 3 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 4 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 5 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 6 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 7 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+ERROR - 2025-12-12 18:40:25 --> mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2 in /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php:327
+Stack trace:
+#0 /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `me...', 0)
+#1 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `me...')
+#2 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `me...')
+#3 /usr/share/nginx/html/stringcup.com/system/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `me...', Array, false)
+#4 /usr/share/nginx/html/stringcup.com/system/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+#5 /usr/share/nginx/html/stringcup.com/system/BaseModel.php(1152): CodeIgniter\Model->doDelete(NULL, false)
+#6 /usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php(108): CodeIgniter\BaseModel->delete()
+#7 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+#8 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+#9 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(NULL, Object(Config\Cache), false)
+#10 /usr/share/nginx/html/stringcup.com/system/Boot.php(363): CodeIgniter\CodeIgniter->run()
+#11 /usr/share/nginx/html/stringcup.com/system/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+#12 /usr/share/nginx/html/stringcup.com/public/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+#13 {main}
+CRITICAL - 2025-12-12 18:40:25 --> CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+[Method: GET, Route: api/v1/messages]
+in SYSTEMPATH/Database/BaseConnection.php on line 684.
+ 1 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 2 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 3 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 4 APPPATH/Controllers/Api/V1/MessageController.php(108): CodeIgniter\BaseModel->delete()
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:40:25 --> [Caused by] CodeIgniter\Database\Exceptions\DatabaseException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 332.
+ 1 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 2 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 4 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 5 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 6 APPPATH/Controllers/Api/V1/MessageController.php(108): CodeIgniter\BaseModel->delete()
+ 7 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 8 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 9 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+10 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+11 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+12 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 18:40:25 --> [Caused by] mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ')' at line 2
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 327.
+ 1 SYSTEMPATH/Database/MySQLi/Connection.php(327): mysqli->query('DELETE FROM `messages`
+WHERE `id` IN ()', 0)
+ 2 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 3 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('DELETE FROM `messages`
+WHERE `id` IN ()')
+ 4 SYSTEMPATH/Database/BaseBuilder.php(2848): CodeIgniter\Database\BaseConnection->query('DELETE FROM `messages`
+WHERE `id` IN :id:', [...], false)
+ 5 SYSTEMPATH/Model.php(521): CodeIgniter\Database\BaseBuilder->delete()
+ 6 SYSTEMPATH/BaseModel.php(1152): CodeIgniter\Model->doDelete(null, false)
+ 7 APPPATH/Controllers/Api/V1/MessageController.php(108): CodeIgniter\BaseModel->delete()
+ 8 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 9 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+10 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+11 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+12 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+13 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 20:19:00 --> Error: Call to undefined method App\Controllers\Api\V1\MessageController::getIdentityForToken()
+[Method: GET, Route: api/v1/messages]
+in APPPATH/Controllers/Api/V1/MessageController.php on line 116.
+ 1 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 2 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 3 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 4 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 5 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+ 6 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+ERROR - 2025-12-12 20:21:50 --> mysqli_sql_exception: Unknown column 'recipient_id' in 'where clause' in /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php:327
+Stack trace:
+#0 /usr/share/nginx/html/stringcup.com/system/Database/MySQLi/Connection.php(327): mysqli->query('SELECT *\nFROM `...', 0)
+#1 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('SELECT *\nFROM `...')
+#2 /usr/share/nginx/html/stringcup.com/system/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('SELECT *\nFROM `...')
+#3 /usr/share/nginx/html/stringcup.com/system/Database/BaseBuilder.php(1649): CodeIgniter\Database\BaseConnection->query('SELECT *\nFROM `...', Array, false)
+#4 /usr/share/nginx/html/stringcup.com/system/Model.php(286): CodeIgniter\Database\BaseBuilder->get()
+#5 /usr/share/nginx/html/stringcup.com/system/BaseModel.php(677): CodeIgniter\Model->doFindAll(0, 0)
+#6 /usr/share/nginx/html/stringcup.com/app/Controllers/Api/V1/MessageController.php(139): CodeIgniter\BaseModel->findAll()
+#7 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+#8 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+#9 /usr/share/nginx/html/stringcup.com/system/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(NULL, Object(Config\Cache), false)
+#10 /usr/share/nginx/html/stringcup.com/system/Boot.php(363): CodeIgniter\CodeIgniter->run()
+#11 /usr/share/nginx/html/stringcup.com/system/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+#12 /usr/share/nginx/html/stringcup.com/public/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+#13 {main}
+CRITICAL - 2025-12-12 20:21:50 --> CodeIgniter\Database\Exceptions\DatabaseException: Unknown column 'recipient_id' in 'where clause'
+[Method: GET, Route: api/v1/messages]
+in SYSTEMPATH/Database/BaseConnection.php on line 684.
+ 1 SYSTEMPATH/Database/BaseBuilder.php(1649): CodeIgniter\Database\BaseConnection->query('SELECT *
+FROM `messages`
+WHERE `recipient_id` = :recipient_id:
+ORDER BY `id` ASC', [...], false)
+ 2 SYSTEMPATH/Model.php(286): CodeIgniter\Database\BaseBuilder->get()
+ 3 SYSTEMPATH/BaseModel.php(677): CodeIgniter\Model->doFindAll(0, 0)
+ 4 APPPATH/Controllers/Api/V1/MessageController.php(139): CodeIgniter\BaseModel->findAll()
+ 5 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 6 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 7 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+ 8 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+ 9 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+10 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 20:21:50 --> [Caused by] CodeIgniter\Database\Exceptions\DatabaseException: Unknown column 'recipient_id' in 'where clause'
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 332.
+ 1 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('SELECT *
+FROM `messages`
+WHERE `recipient_id` = \'bob\'
+ORDER BY `id` ASC')
+ 2 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('SELECT *
+FROM `messages`
+WHERE `recipient_id` = \'bob\'
+ORDER BY `id` ASC')
+ 3 SYSTEMPATH/Database/BaseBuilder.php(1649): CodeIgniter\Database\BaseConnection->query('SELECT *
+FROM `messages`
+WHERE `recipient_id` = :recipient_id:
+ORDER BY `id` ASC', [...], false)
+ 4 SYSTEMPATH/Model.php(286): CodeIgniter\Database\BaseBuilder->get()
+ 5 SYSTEMPATH/BaseModel.php(677): CodeIgniter\Model->doFindAll(0, 0)
+ 6 APPPATH/Controllers/Api/V1/MessageController.php(139): CodeIgniter\BaseModel->findAll()
+ 7 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 8 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+ 9 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+10 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+11 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+12 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
+CRITICAL - 2025-12-12 20:21:50 --> [Caused by] mysqli_sql_exception: Unknown column 'recipient_id' in 'where clause'
+in SYSTEMPATH/Database/MySQLi/Connection.php on line 327.
+ 1 SYSTEMPATH/Database/MySQLi/Connection.php(327): mysqli->query('SELECT *
+FROM `messages`
+WHERE `recipient_id` = \'bob\'
+ORDER BY `id` ASC', 0)
+ 2 SYSTEMPATH/Database/BaseConnection.php(729): CodeIgniter\Database\MySQLi\Connection->execute('SELECT *
+FROM `messages`
+WHERE `recipient_id` = \'bob\'
+ORDER BY `id` ASC')
+ 3 SYSTEMPATH/Database/BaseConnection.php(646): CodeIgniter\Database\BaseConnection->simpleQuery('SELECT *
+FROM `messages`
+WHERE `recipient_id` = \'bob\'
+ORDER BY `id` ASC')
+ 4 SYSTEMPATH/Database/BaseBuilder.php(1649): CodeIgniter\Database\BaseConnection->query('SELECT *
+FROM `messages`
+WHERE `recipient_id` = :recipient_id:
+ORDER BY `id` ASC', [...], false)
+ 5 SYSTEMPATH/Model.php(286): CodeIgniter\Database\BaseBuilder->get()
+ 6 SYSTEMPATH/BaseModel.php(677): CodeIgniter\Model->doFindAll(0, 0)
+ 7 APPPATH/Controllers/Api/V1/MessageController.php(139): CodeIgniter\BaseModel->findAll()
+ 8 SYSTEMPATH/CodeIgniter.php(933): App\Controllers\Api\V1\MessageController->inbox()
+ 9 SYSTEMPATH/CodeIgniter.php(507): CodeIgniter\CodeIgniter->runController(Object(App\Controllers\Api\V1\MessageController))
+10 SYSTEMPATH/CodeIgniter.php(354): CodeIgniter\CodeIgniter->handleRequest(null, Object(Config\Cache), false)
+11 SYSTEMPATH/Boot.php(363): CodeIgniter\CodeIgniter->run()
+12 SYSTEMPATH/Boot.php(68): CodeIgniter\Boot::runCodeIgniter(Object(CodeIgniter\CodeIgniter))
+13 FCPATH/index.php(59): CodeIgniter\Boot::bootWeb(Object(Config\Paths))
