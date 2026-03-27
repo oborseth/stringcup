@@ -137,11 +137,15 @@ info:
     }
     ```
 
-    ### Rate limits
-    - `POST /api/v1/identities` — 5 requests/hour (per IP)
-    - `GET /api/v1/identities/{id}` — 100 requests/hour
-    - `POST /api/v1/messages` — 100 requests/hour
-    - `GET /api/v1/messages` — 300 requests/hour
+    ### Rate limits (per IP / authenticated identity)
+
+    | Endpoint | Limit |
+    |---|---|
+    | `POST /api/v1/identities`, `POST /api/v2/identities` | 5/hour |
+    | `GET /api/v1/identities/{id}`, `GET /api/v2/identities/{id}` | 100/hour |
+    | `POST /api/v1/messages`, `POST /api/v2/messages` | 100/hour |
+    | `GET /api/v1/messages`, `GET /api/v2/messages` | 300/hour |
+    | `DELETE /api/v2/messages/{id}` | 300/hour |
 
     Tokens expire after 30 days of inactivity. Each authenticated request resets the clock.
 
@@ -626,15 +630,16 @@ components:
 
     MessageHeader:
       type: object
-      required: [v, algo, msg_seq, iv]
+      required: [algo, msg_seq, iv]
       description: |
         Unencrypted metadata stored alongside the ciphertext. The server does not
         inspect or validate the contents beyond checking required fields exist.
+        Either `version` or `v` must be present (server accepts both; `version` is canonical).
       properties:
-        v:
+        version:
           type: integer
           enum: [1]
-          description: Protocol version
+          description: Protocol version. Use `version` (the field `v` is also accepted as an alias).
           example: 1
         algo:
           type: string
@@ -712,7 +717,7 @@ components:
         created_at:
           type: string
           format: date-time
-          example: '2026-03-24T12:00:00Z'
+          example: '2026-03-24 12:00:00'
 
     MessageHeaderV2:
       type: object
@@ -796,17 +801,30 @@ components:
         created_at:
           type: string
           format: date-time
-          example: '2026-03-24T12:00:00Z'
+          example: '2026-03-24 12:00:00'
 
     ErrorResponse:
       type: object
+      description: Standard error envelope returned by all error responses.
       properties:
+        status:
+          type: integer
+          description: HTTP status code
+          example: 404
+        error:
+          type: string
+          description: HTTP status text
+          example: Not Found
         messages:
-          type: object
-          properties:
-            error:
-              type: string
-              example: Identity not found
+          description: Error detail(s). May be an array of strings or an object keyed by field name.
+          oneOf:
+            - type: array
+              items:
+                type: string
+            - type: object
+              additionalProperties:
+                type: string
+          example: ["Identity not found"]
 
   responses:
     Unauthorized:

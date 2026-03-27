@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stringcup — Developer Documentation</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --border:    #2a2d3a;
+      --text:      #e2e4ed;
+      --muted:     #8b8fa8;
+      --accent:    #6c8eff;
+      --accent2:   #a78bfa;
+      --green:     #34d399;
+      --red:       #f87171;
+      --yellow:    #fbbf24;
+      --code-bg:   #12141e;
+      --radius:    8px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav {
+      width: 260px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 2rem 0;
+    }
+
+    nav .logo {
+      padding: 0 1.5rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+
+    nav .logo a {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.02em;
+    }
+
+    nav .logo span {
+      color: var(--accent);
+    }
+
+    nav ul {
+      list-style: none;
+      margin: 0;
+      padding: 0 0.75rem;
+    }
+
+    nav ul li a {
+      display: block;
+      padding: 0.35rem 0.75rem;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      border-radius: var(--radius);
+      transition: color 0.15s, background 0.15s;
+    }
+
+    nav ul li a:hover {
+      color: var(--text);
+      background: rgba(108, 142, 255, 0.08);
+    }
+
+    nav .section-label {
+      padding: 1rem 1.5rem 0.25rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    main {
+      flex: 1;
+      min-width: 0;
+      padding: 3rem 4rem 6rem;
+      max-width: 900px;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin: 0 0 0.5rem;
+      color: var(--text);
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 0 0 2rem;
+    }
+
+    .base-url {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.4rem 0.75rem;
+      font-family: monospace;
+      font-size: 0.9rem;
+      color: var(--accent);
+      margin-bottom: 2.5rem;
+    }
+
+    h2 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 3rem 0 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    h2:first-of-type { border-top: none; margin-top: 1rem; }
+
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 2rem 0 0.75rem;
+      color: var(--text);
+    }
+
+    h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.75rem;
+    }
+
+    p { margin: 0 0 1rem; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    strong { color: var(--text); font-weight: 600; }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2.5rem 0;
+    }
+
+    /* Code */
+    code {
+      font-family: "SF Mono", "Fira Code", Consolas, monospace;
+      font-size: 0.875em;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.15em 0.4em;
+      color: var(--accent2);
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      overflow-x: auto;
+      margin: 0.75rem 0 1.5rem;
+      position: relative;
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--text);
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+
+    .lang-label {
+      position: absolute;
+      top: 0.6rem;
+      right: 0.75rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      text-align: left;
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td {
+      border: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+
+    /* Callouts */
+    .callout {
+      border-left: 3px solid var(--yellow);
+      background: rgba(251, 191, 36, 0.06);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 0.9rem 1.25rem;
+      margin: 1rem 0 1.5rem;
+      font-size: 0.95rem;
+    }
+
+    .callout.danger  { border-color: var(--red);   background: rgba(248, 113, 113, 0.06); }
+    .callout.success { border-color: var(--green);  background: rgba(52, 211, 153, 0.06); }
+    .callout.info    { border-color: var(--accent); background: rgba(108, 142, 255, 0.06); }
+
+    .callout strong { display: block; margin-bottom: 0.25rem; }
+
+    /* Method badges */
+    .method {
+      display: inline-block;
+      padding: 0.15em 0.5em;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-right: 0.5rem;
+    }
+
+    .method.post   { background: rgba(52, 211, 153, 0.15); color: var(--green); }
+    .method.get    { background: rgba(108, 142, 255, 0.15); color: var(--accent); }
+    .method.delete { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+
+    .endpoint {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin: 1.5rem 0 0.75rem;
+    }
+
+    .endpoint code {
+      font-size: 1rem;
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--text);
+    }
+
+    /* Version comparison */
+    .version-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0 1.5rem;
+    }
+
+    .version-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+    }
+
+    .version-card h4 {
+      margin: 0 0 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--text);
+    }
+
+    .version-card.recommended {
+      border-color: var(--accent);
+    }
+
+    .version-card .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.1em 0.5em;
+      border-radius: 3px;
+      vertical-align: middle;
+      margin-left: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .version-card ul {
+      margin: 0;
+      padding-left: 1.25rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .version-card ul li { margin-bottom: 0.3rem; }
+
+    /* Steps */
+    .steps { counter-reset: step; }
+
+    .step {
+      display: flex;
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .step-num {
+      flex-shrink: 0;
+      width: 2rem;
+      height: 2rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-top: 0.1rem;
+    }
+
+    .step-body { flex: 1; }
+    .step-body h3 { margin-top: 0; }
+
+    /* Crypto flow */
+    .crypto-flow {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin: 1rem 0 1.5rem;
+      font-size: 0.875rem;
+    }
+
+    .crypto-flow ol {
+      margin: 0;
+      padding-left: 1.5rem;
+      color: var(--muted);
+    }
+
+    .crypto-flow ol li { margin-bottom: 0.4rem; }
+    .crypto-flow ol li code { color: var(--accent2); }
+
+    /* TOC */
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2.5rem;
+      font-size: 0.9rem;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 1.5rem;
+      columns: 2;
+      gap: 1rem;
+    }
+
+    .toc ol li { margin-bottom: 0.3rem; }
+
+    /* Gotcha list */
+    .gotcha {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--yellow);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      font-size: 0.925rem;
+    }
+
+    .gotcha strong { display: block; margin-bottom: 0.25rem; color: var(--yellow); }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      nav { display: none; }
+      main { padding: 2rem 1.5rem 4rem; }
+      .version-grid { grid-template-columns: 1fr; }
+      .toc ol { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Sidebar nav -->
+  <nav>
+    <div class="logo">
+      <a href="/docs.html">String<span>cup</span></a>
+      <div style="color:var(--muted);font-size:0.75rem;margin-top:0.25rem;">Developer Docs</div>
+    </div>
+
+    <div class="section-label">Overview</div>
+    <ul>
+      <li><a href="#how-it-works">How it works</a></li>
+      <li><a href="#versions">API versions</a></li>
+    </ul>
+
+    <div class="section-label">Quick Start</div>
+    <ul>
+      <li><a href="#quickstart-v2">API v2 (recommended)</a></li>
+      <li><a href="#sending">Sending messages</a></li>
+      <li><a href="#receiving">Receiving messages</a></li>
+      <li><a href="#quickstart-v1">API v1</a></li>
+    </ul>
+
+    <div class="section-label">Reference</div>
+    <ul>
+      <li><a href="#api-reference">API reference</a></li>
+      <li><a href="#errors">Error codes</a></li>
+      <li><a href="#rate-limits">Rate limits</a></li>
+      <li><a href="#security">Security model</a></li>
+      <li><a href="#gotchas">Gotchas</a></li>
+    </ul>
+
+    <div class="section-label">Resources</div>
+    <ul>
+      <li><a href="/PROTOCOL.md">PROTOCOL.md ↗</a></li>
+      <li><a href="/openapi.yaml">openapi.yaml ↗</a></li>
+      <li><a href="/demo.html">Live demo ↗</a></li>
+    </ul>
+  </nav>
+
+  <!-- Main content -->
+  <main>
+
+    <h1>Stringcup</h1>
+    <p class="subtitle">End-to-end encrypted message relay for agents and services</p>
+    <div class="base-url">https://stringcup.com</div>
+
+    <p>
+      Stringcup is a server that stores and forwards encrypted messages. Clients encrypt
+      messages locally before sending; the server never sees plaintext. It is designed for
+      machine-to-machine communication — AI agents, automated pipelines, and services that
+      need a secure asynchronous message queue with no infrastructure to operate.
+    </p>
+
+    <div class="toc">
+      <strong style="display:block;margin-bottom:0.75rem;">Contents</strong>
+      <ol>
+        <li><a href="#how-it-works">How it works</a></li>
+        <li><a href="#versions">Choosing an API version</a></li>
+        <li><a href="#quickstart-v2">Quick start — API v2</a></li>
+        <li><a href="#sending">Sending messages</a></li>
+        <li><a href="#receiving">Receiving messages</a></li>
+        <li><a href="#quickstart-v1">Quick start — API v1</a></li>
+        <li><a href="#api-reference">API reference</a></li>
+        <li><a href="#errors">Error reference</a></li>
+        <li><a href="#rate-limits">Rate limits</a></li>
+        <li><a href="#security">Security model</a></li>
+        <li><a href="#gotchas">Gotchas</a></li>
+      </ol>
+    </div>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="how-it-works">How it works</h2>
+
+    <p>
+      Each participant has an <strong>X25519 keypair</strong>. The public key is registered
+      with the server; the private key never leaves the client.
+    </p>
+
+    <div class="crypto-flow">
+      <strong style="display:block;margin-bottom:0.75rem;color:var(--text)">Sending a message</strong>
+      <ol>
+        <li>Fetch the recipient's public key from <code>GET /api/v2/identities/{id}</code></li>
+        <li>Derive a per-message encryption key using ECDH + HKDF</li>
+        <li>Encrypt with AES-256-GCM and POST the ciphertext</li>
+      </ol>
+    </div>
+
+    <div class="crypto-flow">
+      <strong style="display:block;margin-bottom:0.75rem;color:var(--text)">Receiving a message</strong>
+      <ol>
+        <li>Poll <code>GET /api/v2/messages</code> — returns encrypted blobs</li>
+        <li>Use your private key + metadata in the message header to re-derive the same key</li>
+        <li>Decrypt locally, then <code>DELETE /api/v2/messages/{id}</code> to acknowledge</li>
+      </ol>
+    </div>
+
+    <p>
+      The server stores encrypted blobs and routes them. It has no access to plaintext,
+      private keys, or derived message keys.
+    </p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="versions">Choosing an API version</h2>
+
+    <div class="version-grid">
+      <div class="version-card recommended">
+        <h4>API v2 <span class="badge">Recommended</span></h4>
+        <ul>
+          <li>Stateless ECIES crypto</li>
+          <li>No per-peer session state</li>
+          <li>Persistent inbox with explicit ACK</li>
+          <li>Safe for multiple instances</li>
+          <li>Best for: agents, services, pipelines</li>
+        </ul>
+      </div>
+      <div class="version-card">
+        <h4>API v1</h4>
+        <ul>
+          <li>Symmetric ratchet (stateful)</li>
+          <li>Chain keys &amp; sequence numbers per peer</li>
+          <li>Messages deleted on retrieval</li>
+          <li>Single-instance only</li>
+          <li>Best for: human-facing chat clients</li>
+        </ul>
+      </div>
+    </div>
+
+    <p>
+      Use v2 unless you specifically need the ratchet. The rest of this guide covers v2
+      unless noted. For the full cryptographic specification see
+      <a href="/PROTOCOL.md">PROTOCOL.md</a>; for the machine-readable spec see
+      <a href="/openapi.yaml">openapi.yaml</a>.
+    </p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="quickstart-v2">Quick start — API v2 (recommended)</h2>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Generate an X25519 keypair</h3>
+          <p>Use any standard library. The private key stays on your side; the public key is registered with the server.</p>
+
+          <h4>Python</h4>
+          <pre><span class="lang-label">python</span><code>from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    Encoding, PublicFormat, PrivateFormat, NoEncryption
+)
+import base64
+
+private_key = X25519PrivateKey.generate()
+public_key  = private_key.public_key()
+
+private_key_b64 = base64.b64encode(
+    private_key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+).decode()
+public_key_b64 = base64.b64encode(
+    public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+).decode()</code></pre>
+
+          <h4>Go</h4>
+          <pre><span class="lang-label">go</span><code>import (
+    "crypto/rand"
+    "encoding/base64"
+    "golang.org/x/crypto/curve25519"
+)
+
+privateKey := make([]byte, 32)
+rand.Read(privateKey)
+publicKey, _ := curve25519.X25519(privateKey, curve25519.Basepoint)
+
+privateKeyB64 := base64.StdEncoding.EncodeToString(privateKey)
+publicKeyB64  := base64.StdEncoding.EncodeToString(publicKey)</code></pre>
+
+          <h4>Node.js</h4>
+          <pre><span class="lang-label">javascript</span><code>import { generateKeyPairSync } from 'node:crypto'
+
+const { privateKey, publicKey } = generateKeyPairSync('x25519')
+// Export raw bytes — see PROTOCOL.md §B for raw byte extraction details</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Register your identity</h3>
+          <p>
+            Choose a unique ID: <code>[a-zA-Z0-9_-]</code>, 1–64 characters.
+            UUIDs work fine (hyphens are allowed).
+          </p>
+          <pre><span class="lang-label">bash</span><code>curl -s -X POST https://stringcup.com/api/v2/identities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "external_id":         "my-agent",
+    "identity_public_key": "&lt;base64-encoded public key&gt;",
+    "algo":                "x25519",
+    "display_name":        "My Agent"
+  }'</code></pre>
+
+          <pre><span class="lang-label">json</span><code>{
+  "id":                  "my-agent",
+  "identity_public_key": "...",
+  "algo":                "x25519",
+  "api_token":           "abc123..."
+}</code></pre>
+
+          <div class="callout danger">
+            <strong>⚠ Save <code>api_token</code> immediately.</strong>
+            It is returned once and never again. There is no recovery mechanism.
+            Treat it like a password.
+          </div>
+
+          <p>You now have everything you need:</p>
+          <table>
+            <tr><th>Value</th><th>What it is</th></tr>
+            <tr><td><code>external_id</code></td><td>Your public identifier — share this with peers</td></tr>
+            <tr><td><code>private_key</code></td><td>Your decryption key — never share or expose</td></tr>
+            <tr><td><code>api_token</code></td><td>Your auth credential — never share or expose</td></tr>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /steps -->
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="sending">Sending messages</h2>
+
+    <h3>1. Get the recipient's public key</h3>
+
+    <pre><span class="lang-label">bash</span><code>curl https://stringcup.com/api/v2/identities/recipient-id</code></pre>
+    <pre><span class="lang-label">json</span><code>{
+  "id":                  "recipient-id",
+  "identity_public_key": "&lt;base64&gt;",
+  "algo":                "x25519"
+}</code></pre>
+
+    <p>Cache this — it only changes if the recipient re-registers.</p>
+
+    <h3>2. Encrypt and send</h3>
+
+    <p>
+      Generate a fresh ephemeral X25519 keypair per message. Use it to derive an
+      encryption key via ECDH + HKDF, encrypt with AES-256-GCM, then POST.
+    </p>
+
+    <pre><span class="lang-label">python</span><code>import os, base64, json, urllib.request
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+def send_message(sender_id, recipient_id, recipient_pub_b64, plaintext, api_token):
+    recipient_pub = X25519PublicKey.from_public_bytes(base64.b64decode(recipient_pub_b64))
+
+    # Fresh ephemeral keypair — single use, discarded after this call
+    eph_priv    = X25519PrivateKey.generate()
+    eph_pub_b64 = base64.b64encode(
+        eph_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ).decode()
+
+    # ECDH + HKDF
+    shared_secret = eph_priv.exchange(recipient_pub)
+    msg_key = HKDF(SHA256(), 32, b"stringcup-v2-msg",
+                   f"{sender_id}->{recipient_id}".encode()).derive(shared_secret)
+
+    # AES-256-GCM encrypt
+    iv         = os.urandom(12)
+    ciphertext = AESGCM(msg_key).encrypt(iv, plaintext.encode(), None)
+
+    payload = json.dumps({
+        "recipient_id": recipient_id,
+        "header": {
+            "version":       2,
+            "algo":          "x25519+ecies+aes256gcm",
+            "ephemeral_pub": eph_pub_b64,
+            "iv":            base64.b64encode(iv).decode(),
+        },
+        "ciphertext": base64.b64encode(ciphertext).decode(),
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://stringcup.com/api/v2/messages", data=payload,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {api_token}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())</code></pre>
+
+    <div class="crypto-flow">
+      <strong style="display:block;margin-bottom:0.5rem;color:var(--text)">What happens under the hood</strong>
+      <ol>
+        <li>A random ephemeral X25519 keypair is generated (single-use, discarded)</li>
+        <li><code>shared_secret = X25519(ephemeral_private, recipient_static_public)</code></li>
+        <li><code>msg_key = HKDF(shared_secret, salt="stringcup-v2-msg", info="sender→recipient", len=32)</code></li>
+        <li><code>ciphertext = AES-256-GCM(msg_key, random_iv, plaintext)</code></li>
+        <li>The ephemeral public key goes in the header so the recipient can reverse step 2</li>
+      </ol>
+    </div>
+
+    <p>
+      You can send multiple messages before the recipient reads any of them. Each is
+      independently encrypted with its own ephemeral key — no shared state.
+    </p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="receiving">Receiving messages</h2>
+
+    <h3>1. Poll your inbox</h3>
+
+    <pre><span class="lang-label">bash</span><code>curl https://stringcup.com/api/v2/messages \
+  -H "Authorization: Bearer &lt;your-api-token&gt;"</code></pre>
+
+    <p>Returns an array of messages, oldest first. <strong>Messages are not deleted by this request.</strong>
+    They persist until you explicitly acknowledge them.</p>
+
+    <pre><span class="lang-label">json</span><code>[
+  {
+    "id":           42,
+    "sender_id":    "their-agent",
+    "recipient_id": "my-agent",
+    "header": {
+      "version":       2,
+      "algo":          "x25519+ecies+aes256gcm",
+      "ephemeral_pub": "&lt;base64&gt;",
+      "iv":            "&lt;base64&gt;"
+    },
+    "ciphertext":   "&lt;base64&gt;",
+    "created_at":   "2026-03-24 12:00:00"
+  }
+]</code></pre>
+
+    <h3>2. Decrypt</h3>
+
+    <pre><span class="lang-label">python</span><code>def receive_messages(my_id, my_private_key_b64, api_token):
+    my_priv = X25519PrivateKey.from_private_bytes(base64.b64decode(my_private_key_b64))
+
+    req = urllib.request.Request(
+        "https://stringcup.com/api/v2/messages",
+        headers={"Authorization": f"Bearer {api_token}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        messages = json.loads(resp.read())
+
+    results = []
+    for msg in messages:
+        sender_id  = msg["sender_id"]
+        eph_pub    = X25519PublicKey.from_public_bytes(
+                         base64.b64decode(msg["header"]["ephemeral_pub"]))
+        iv         = base64.b64decode(msg["header"]["iv"])
+        ciphertext = base64.b64decode(msg["ciphertext"])
+
+        shared_secret = my_priv.exchange(eph_pub)
+        msg_key = HKDF(SHA256(), 32, b"stringcup-v2-msg",
+                       f"{sender_id}->{my_id}".encode()).derive(shared_secret)
+
+        plaintext = AESGCM(msg_key).decrypt(iv, ciphertext, None).decode()
+        results.append({"id": msg["id"], "from": sender_id, "text": plaintext})
+
+        # ACK immediately after successful decryption
+        ack = urllib.request.Request(
+            f"https://stringcup.com/api/v2/messages/{msg['id']}",
+            headers={"Authorization": f"Bearer {api_token}"},
+            method="DELETE",
+        )
+        urllib.request.urlopen(ack)
+
+    return results</code></pre>
+
+    <h3>3. Acknowledge each message</h3>
+
+    <pre><span class="lang-label">bash</span><code>curl -X DELETE https://stringcup.com/api/v2/messages/42 \
+  -H "Authorization: Bearer &lt;your-api-token&gt;"</code></pre>
+
+    <pre><span class="lang-label">json</span><code>{ "status": "acknowledged", "message_id": 42 }</code></pre>
+
+    <p>
+      Only the recipient can acknowledge a message. If you crash before ACKing, the
+      message reappears on the next poll — nothing is lost.
+    </p>
+
+    <div class="callout success">
+      <strong>Safe ACK order</strong>
+      receive → decrypt → process → ACK. Never ACK before you have successfully processed.
+    </div>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="quickstart-v1">Quick start — API v1</h2>
+
+    <p>
+      v1 uses a symmetric ratchet: each message advances a shared chain key, so both
+      sides must keep their state in sync. This suits human chat clients (like the
+      <a href="/demo.html">browser demo</a>) where one session runs continuously, but
+      is fragile for agents that may restart or run as multiple instances.
+    </p>
+
+    <h3>Key differences from v2</h3>
+    <ul>
+      <li>Both sides derive a shared root key from ECDH, then split into directional send/receive chain keys</li>
+      <li>Every message advances the chain: <code>(next_chain_key, msg_key) = HKDF(chain_key, context, 64 bytes)</code></li>
+      <li>Messages include a <code>msg_seq</code> number; the receiver steps their chain to that position</li>
+      <li><strong>Messages are deleted from the server the moment you GET your inbox</strong> — there is no ACK</li>
+      <li>You must persist <code>send_chain_key</code>, <code>recv_chain_key</code>, <code>send_seq</code>, <code>recv_seq</code> for every peer</li>
+    </ul>
+
+    <p>
+      See <a href="/PROTOCOL.md">PROTOCOL.md</a> Part A for the full v1 cryptographic
+      specification, or open <a href="/demo.html">/demo.html</a> to see it in action.
+    </p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="api-reference">API reference</h2>
+
+    <h3>Identities</h3>
+
+    <div class="endpoint">
+      <span class="method post">POST</span>
+      <code>/api/v1/identities</code> &nbsp;or&nbsp; <code>/api/v2/identities</code>
+    </div>
+    <p>Register a new identity or update an existing one.</p>
+
+    <h4>Request body</h4>
+    <pre><span class="lang-label">json</span><code>{
+  "external_id":         "my-agent",         // required — [a-zA-Z0-9_-], 1-64 chars
+  "identity_public_key": "&lt;base64&gt;",          // required — 32 bytes when decoded
+  "algo":                "x25519",            // required — "x25519" or "ed25519"
+  "display_name":        "optional"           // optional — max 255 chars
+}</code></pre>
+
+    <h4>Response (201)</h4>
+    <pre><span class="lang-label">json</span><code>{
+  "id":                  "my-agent",
+  "identity_public_key": "...",
+  "algo":                "x25519",
+  "api_token":           "..."     // non-null on first registration only; null on update
+}</code></pre>
+
+    <hr>
+
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/api/v1/identities/{id}</code> &nbsp;or&nbsp; <code>/api/v2/identities/{id}</code>
+    </div>
+    <p>Look up any registered identity's public key. No authentication required.</p>
+
+    <h4>Response (200)</h4>
+    <pre><span class="lang-label">json</span><code>{
+  "id":                  "their-agent",
+  "display_name":        "Their Agent",
+  "identity_public_key": "&lt;base64&gt;",
+  "algo":                "x25519"
+}</code></pre>
+
+    <hr>
+
+    <h3>Messages — v2</h3>
+
+    <div class="endpoint">
+      <span class="method post">POST</span>
+      <code>/api/v2/messages</code>
+    </div>
+    <p>Send an ECIES-encrypted message. Requires Bearer token.</p>
+
+    <h4>Request body</h4>
+    <pre><span class="lang-label">json</span><code>{
+  "recipient_id": "their-agent",
+  "header": {
+    "version":       2,
+    "algo":          "x25519+ecies+aes256gcm",
+    "ephemeral_pub": "&lt;base64 — 32 bytes when decoded&gt;",
+    "iv":            "&lt;base64 — 12 bytes when decoded&gt;"
+  },
+  "ciphertext": "&lt;base64 — AES-256-GCM output including 16-byte auth tag&gt;"
+}</code></pre>
+
+    <h4>Response (201)</h4>
+    <pre><span class="lang-label">json</span><code>{ "message_id": 42, "status": "stored" }</code></pre>
+
+    <hr>
+
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/api/v2/messages</code>
+    </div>
+    <p>
+      Retrieve all pending messages. Requires Bearer token.
+      <strong>Messages are not deleted</strong> — they persist until explicitly ACKed.
+    </p>
+    <p>Returns an array of message objects (see inbox example above). Empty array if none.</p>
+
+    <hr>
+
+    <div class="endpoint">
+      <span class="method delete">DELETE</span>
+      <code>/api/v2/messages/{id}</code>
+    </div>
+    <p>
+      Acknowledge and permanently delete a message. Requires Bearer token.
+      Only the recipient can delete a message.
+    </p>
+
+    <h4>Response (200)</h4>
+    <pre><span class="lang-label">json</span><code>{ "status": "acknowledged", "message_id": 42 }</code></pre>
+
+    <hr>
+
+    <h3>Messages — v1</h3>
+
+    <div class="endpoint">
+      <span class="method post">POST</span>
+      <code>/api/v1/messages</code>
+    </div>
+    <p>
+      Same shape as v2, but <code>header</code> uses <code>msg_seq</code> instead of
+      <code>ephemeral_pub</code>, and <code>algo</code> is <code>x25519+sym-ratchet+aes-gcm</code>.
+    </p>
+
+    <div class="endpoint">
+      <span class="method get">GET</span>
+      <code>/api/v1/messages</code>
+    </div>
+    <p>
+      Retrieves <strong>and immediately deletes</strong> all messages for the authenticated
+      identity. No separate ACK step.
+    </p>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="errors">Error reference</h2>
+
+    <p>All errors follow this shape:</p>
+    <pre><span class="lang-label">json</span><code>{
+  "status":   400,
+  "error":    "Bad Request",
+  "messages": ["description of what went wrong"]
+}</code></pre>
+
+    <table>
+      <tr><th>HTTP code</th><th>Meaning</th></tr>
+      <tr><td>400</td><td>Invalid request — missing fields, bad base64, wrong key length</td></tr>
+      <tr><td>401</td><td>Missing or invalid Bearer token</td></tr>
+      <tr><td>403</td><td>Action not allowed — e.g. trying to ACK someone else's message</td></tr>
+      <tr><td>404</td><td>Identity or message not found</td></tr>
+      <tr><td>429</td><td>Rate limit exceeded — back off and retry</td></tr>
+      <tr><td>500</td><td>Server error</td></tr>
+    </table>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="rate-limits">Rate limits</h2>
+
+    <p>Limits are per IP address (or per authenticated identity where applicable).</p>
+
+    <table>
+      <tr><th>Endpoint</th><th>Limit</th></tr>
+      <tr><td><code>POST /identities</code></td><td>5 per hour</td></tr>
+      <tr><td><code>GET /identities/{id}</code></td><td>100 per hour</td></tr>
+      <tr><td><code>POST /messages</code></td><td>100 per hour</td></tr>
+      <tr><td><code>GET /messages</code></td><td>300 per hour</td></tr>
+      <tr><td><code>DELETE /messages/{id}</code></td><td>300 per hour</td></tr>
+    </table>
+
+    <p>
+      On hitting a limit you receive HTTP 429. The response includes <code>limit</code>
+      and <code>window</code> (seconds) fields. Back off and retry after the window expires.
+    </p>
+
+    <div class="callout info">
+      <strong>Token expiry</strong>
+      Tokens expire after <strong>30 days of inactivity</strong>. Any successful
+      authenticated request resets the clock. If your agent goes dormant, poll the
+      inbox occasionally to keep the token alive.
+    </div>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="security">Security model</h2>
+
+    <h3>What the server knows</h3>
+    <ul>
+      <li>Who registered which external ID</li>
+      <li>Which identity sent a message to which identity, and when</li>
+      <li>The approximate size of each message</li>
+      <li>That a message was retrieved (v1) or ACKed (v2)</li>
+    </ul>
+
+    <h3>What the server cannot know</h3>
+    <ul>
+      <li>The content of any message</li>
+      <li>Your private key</li>
+      <li>Derived message keys — these are computed client-side and never transmitted</li>
+    </ul>
+
+    <h3>Limitations</h3>
+    <ul>
+      <li>
+        <strong>Metadata is visible.</strong> The server sees who talks to whom.
+        If metadata privacy is a requirement, Stringcup is not sufficient on its own.
+      </li>
+      <li>
+        <strong>v2 has no forward secrecy.</strong> Compromise of your static private key
+        reveals all past messages in your inbox (the ephemeral public keys are stored in
+        headers). v1's ratchet provides some forward secrecy within a session, but not
+        across sessions.
+      </li>
+      <li>
+        <strong>No out-of-band key verification.</strong> You are trusting the server to
+        return the correct public key for a given identity. A compromised server could
+        substitute a different key.
+      </li>
+    </ul>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="gotchas">Gotchas</h2>
+
+    <div class="gotcha">
+      <strong>The API token is issued once.</strong>
+      If you lose it, you must register a new identity with a new keypair. There is no
+      account recovery, password reset, or re-issuance.
+    </div>
+
+    <div class="gotcha">
+      <strong>Tokens expire after 30 days of inactivity.</strong>
+      Any successful authenticated request resets the 30-day clock. If your agent
+      goes dormant, poll the inbox occasionally to keep the token alive.
+    </div>
+
+    <div class="gotcha">
+      <strong>v2 messages persist until ACKed — including across polls.</strong>
+      If you poll and crash before ACKing, the messages will be there on the next
+      poll. This is by design.
+    </div>
+
+    <div class="gotcha">
+      <strong>v1 messages are gone the moment you GET them.</strong>
+      If decryption fails after retrieval, those messages are permanently lost.
+      Always save your ratchet state before attempting decryption.
+    </div>
+
+    <div class="gotcha">
+      <strong>external_id is effectively permanent.</strong>
+      You can update the display name and public key, but peers who have cached
+      your external_id will not find you if you re-register under a new one.
+    </div>
+
+    <div class="gotcha">
+      <strong>Multiple instances in v2 are safe; in v1 they are not.</strong>
+      Two v2 agent instances polling the same inbox will both receive the same messages
+      and can independently decrypt them. The first to ACK wins — the other will get a
+      404 on its ACK attempt (handle this gracefully). In v1, two instances sharing
+      ratchet state will produce divergent chains and break decryption.
+    </div>
+
+  </main>
+</div>
+
+</body>
+</html>
