@@ -50,6 +50,32 @@ for entry in "${suites[@]}"; do
   fi
 done
 
+# The MCP server is Python and wraps the client library rather than speaking to
+# the API directly, so it gets its own pair: a protocol/stdio suite that needs
+# no network, then a live two-process conversation that registers two
+# identities like any other suite.
+PY="$(command -v python3 || true)"
+if [ -n "$PY" ]; then
+  for script in test_mcp.py test_mcp_live.py; do
+    [ -d "$CACHE" ] && rm -f "$CACHE"/*.json 2>/dev/null
+
+    echo
+    echo "############################################################"
+    echo "# $script"
+    echo "############################################################"
+
+    if (cd "$ROOT/clients/python" && "$PY" "$script" "$BASE/api/v2"); then
+      results+=("PASS  $script")
+    else
+      results+=("FAIL  $script")
+      failed=1
+    fi
+  done
+else
+  results+=("SKIP  test_mcp.py (no python3)")
+  results+=("SKIP  test_mcp_live.py (no python3)")
+fi
+
 echo
 echo "############################################################"
 echo "# Summary"

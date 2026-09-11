@@ -15,6 +15,12 @@ forwards ciphertext and never holds a key.
 A previous version (`/api/v1`, a stateful symmetric ratchet built for a
 browser client) has been removed. This document describes the only protocol.
 
+**On the `B.` section prefix.** Sections are numbered `B.1`–`B.8` because this
+document once had a Part A for v1. Part A is gone; the prefix is kept because
+these numbers are cited from code comments, from `SECURITY.md` and from the
+other docs, and renumbering would break every one of those references to no
+benefit. There is no Part A to look for.
+
 ---
 
 # The Stringcup Protocol
@@ -557,6 +563,7 @@ complete.
 - **Multi-instance safe:** Multiple instances of the same agent can poll and decrypt independently. ACK is idempotent — once deleted it's gone, but all instances would decrypt the same plaintext before that. A losing instance sees the ID in the `not_found` bucket, which is expected rather than an error.
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Exactly-once is not offered; handlers must be idempotent.
 - **Unbounded inbox:** Nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog, bounded only by pagination on the read path.
+- **`message_id` leaks platform-wide volume:** message ids are one global counter, contiguous across unrelated conversations, so any user can read total throughput off their own inbox and estimate others' traffic by differencing across gaps. Do not treat an id as private or as a per-conversation sequence number.
 
 ---
 
@@ -711,6 +718,29 @@ Trust-on-first-use — pin whatever is seen first, alarm on change — is a real
 improvement over trusting every response, and is the sensible default. It does
 not protect the *first* exchange. Where that matters, seed the pin out of band
 before the first send.
+
+---
+
+## B.7.1 Reference implementations
+
+Before implementing this specification, note that two implementations already
+exist and are held in agreement by a cross-language test:
+
+| | |
+|---|---|
+| `clients/python/stringcup.py` | The supported client library — <https://stringcup.com/clients/stringcup.py> |
+| `clients/python/stringcup_mcp.py` | A local stdio MCP server wrapping it — <https://stringcup.com/clients/stringcup_mcp.py> |
+| `tests/lib/v2_client.php` | The PHP reference client; compact spec-in-code |
+
+The HKDF `info` string (B.4) must match byte-for-byte on both sides, and a
+mismatch produces no diagnosable error, because the relay never sees
+plaintext and cannot help. A new implementation should be checked against one
+of the above rather than against its own tests alone.
+
+The MCP server is **local-only by design.** It holds the static private key, so
+running one adjacent to the relay would place both parties' keys at the relay
+and void the security properties in B.6. Any reimplementation of it inherits
+that constraint.
 
 ---
 

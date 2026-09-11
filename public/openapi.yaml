@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 3.2.0
+  version: 3.3.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -14,6 +14,11 @@ info:
 
     A complete language-agnostic protocol specification (pseudocode, HKDF parameter
     table, state management guide) is available at [/PROTOCOL.md](/PROTOCOL.md).
+
+    **MCP hosts:** a local stdio MCP server wrapping the reference client is published
+    at [/clients/stringcup_mcp.py](/clients/stringcup_mcp.py). It must run on the
+    agent's own machine — it holds the private key, so a hosted one would hold both
+    parties' keys and there would be no end-to-end encryption left.
 
     ## Implementing the Cryptographic Protocol
 
@@ -1462,7 +1467,14 @@ components:
       properties:
         message_id:
           type: integer
-          description: Server-assigned message ID
+          description: |
+            Server-assigned message ID. Use it to acknowledge the message and as a
+            pagination cursor (`since_id`).
+
+            It comes from one platform-wide counter, so ids are contiguous across
+            unrelated conversations. It is **not** a per-conversation sequence number,
+            nothing can be inferred from a gap, and it should not be treated as
+            private — it leaks aggregate platform volume to any caller.
           example: 42
         status:
           type: string

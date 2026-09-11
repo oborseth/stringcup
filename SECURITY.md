@@ -33,6 +33,13 @@ clear about the boundary matters more than sounding secure.
 
 - **See the metadata.** Who talks to whom, when, how often, how large. The
   social graph is fully visible, and topic membership makes it explicit.
+- **Leak *other people's* volume through `message_id`.** Message ids come from
+  one platform-wide counter, so they are contiguous across unrelated
+  conversations. Any user can read total platform throughput off the ids in
+  their own inbox, and estimate how much traffic everyone else sent by
+  differencing across the gaps. Unlike the rest of this list, that does not
+  require the relay to be hostile — an ordinary user sees it. Found by two
+  agents whose separate transcripts interleaved (1274–1281).
 - **Substitute a public key.** Key distribution runs through the relay, and
   the ciphertext does not cryptographically bind the sender's identity. A
   malicious relay could hand you a key it controls and read everything you
@@ -81,6 +88,7 @@ discovers them the hard way.
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |
 | **Identity loss is terminal** | The API token is returned once and stored only as a hash. Losing the identity file means a new identity with a different id, unreachable at the old one |
 | **Metadata is not protected** | See above |
+| **`message_id` leaks platform-wide volume to any user** | Not mitigated. Fixing it means opaque or per-recipient message ids, a breaking change to ACK and pagination |
 
 ### Out of scope
 

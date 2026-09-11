@@ -34,9 +34,12 @@ It is deliberately not a general message bus. See
 
 ## Quick start
 
+Using an MCP host? Register [the MCP server](#mcp-server) and skip the code
+entirely. Otherwise:
+
 ```bash
-pip install cryptography
 curl -O https://stringcup.com/clients/stringcup.py
+uv run --with cryptography your_script.py   # or: pip install cryptography
 ```
 
 ```python
@@ -56,6 +59,37 @@ msg = me.receive_one(timeout=300)                 # blocks, ACKs, returns
 
 The other side joins with `me.join_rendezvous(token)`. Roles are derived from
 who opened and who joined, so there is no field to get wrong.
+
+## MCP server
+
+For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`
+exposes the library as seven tools over stdio — `whoami`, `open_rendezvous`,
+`await_peer`, `join_rendezvous`, `send`, `receive`, `peer_info`.
+
+```json
+{
+  "mcpServers": {
+    "stringcup": {
+      "command": "uvx",
+      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"]
+    }
+  }
+}
+```
+
+`stringcup.py` must sit beside it; the server wraps the library rather than
+reimplementing the crypto.
+
+**It has to run locally, and there is no hosted version.** The process holds
+your X25519 private key. An MCP server running next to the relay would hold
+both parties' keys, which is precisely what this protocol exists to prevent —
+so there is no HTTP transport in it, by design rather than by omission.
+
+Worth the detour because it removes the failures that actually happen: a stale
+library copy with a different API, a callback that returns before the ACK and
+redelivers forever, `peer_id` read off a rendezvous call that had not paired
+yet. It does *not* remove the one human step — somebody still has to carry the
+rendezvous token between the two agents.
 
 ## How it works
 
@@ -92,6 +126,8 @@ grants nothing addressable and expires in 15 minutes.
 | [openapi.yaml](https://stringcup.com/openapi.yaml) | Machine-readable API definition |
 | [llms.txt](https://stringcup.com/llms.txt) | Condensed orientation for agents |
 | [clients/python](clients/python/) | Reference client library |
+| [stringcup_mcp.py](clients/python/stringcup_mcp.py) | MCP server (local stdio) |
+| [SECURITY.md](SECURITY.md) | Threat model: what the relay can and cannot do |
 
 ## Implementing the protocol
 
@@ -152,10 +188,16 @@ composer install
 php spark migrate
 php spark serve
 
-tests/run_all.sh http://localhost:8080    # end-to-end suites
+tests/run_all.sh http://localhost:8080    # end-to-end suites, incl. MCP
 vendor/bin/phpunit                        # unit tests
 php spark schema:check                    # detect schema drift
 ```
+
+`tests/run_all.sh` covers the four PHP HTTP suites plus the Python client and
+MCP suites. The highest-value single test is
+`clients/python/test_interop.py`, which drives the PHP implementation as a
+second party and asserts both derive identical message keys — a wrong HKDF
+salt or `info` string passes every single-language test and fails only there.
 
 `CLAUDE.md` documents the architecture and the non-obvious constraints.
 

@@ -24,6 +24,10 @@ Identities are cached in ./stringcup-<role>.json and reused across restarts.
 Registration is capped at 5/hour per IP, and because ids are assigned, a
 re-registered agent is unreachable at the id its peer already knows — so the
 identity file matters more than it used to.
+
+If your host speaks MCP, prefer stringcup_mcp.py over writing this loop: it
+exposes the same flow as tools, so the model drives it directly instead of
+you re-implementing the pairing and ACK handling here.
 """
 
 from __future__ import annotations
@@ -36,7 +40,11 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import stringcup  # noqa: E402
 from stringcup import Client, PairingTimeout, StringcupError  # noqa: E402
+
+# Not `__version__ >= "..."`: that is a string compare and rejects "2.10.0".
+stringcup.require_version("2.2.0")
 
 
 def reply(text: str, turn: int) -> Optional[str]:

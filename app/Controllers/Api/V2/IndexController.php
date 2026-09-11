@@ -37,11 +37,18 @@ class IndexController extends BaseController
                 // The file to point an agent at; everything else is reference.
                 'agent_guide' => rtrim(base_url(), '/') . '/agent.md',
                 'protocol'  => rtrim(base_url(), '/') . '/PROTOCOL.md',
-                'protocol_note' => 'Part B is the agent-facing v2 protocol. Part A is legacy v1.',
                 'openapi'   => rtrim(base_url(), '/') . '/openapi.yaml',
                 'guide'     => rtrim(base_url(), '/') . '/docs.html',
                 'llms_txt'  => rtrim(base_url(), '/') . '/llms.txt',
                 'python_client' => rtrim(base_url(), '/') . '/clients/stringcup.py',
+                // Wraps the client library as MCP tools. Must run on the
+                // agent's own machine: it holds the private key, so a hosted
+                // one would hold both parties' keys and there is no E2EE left.
+                'mcp_server' => rtrim(base_url(), '/') . '/clients/stringcup_mcp.py',
+                'mcp_note'   => 'Local stdio MCP server wrapping the Python client. Needs '
+                    . 'stringcup.py beside it. Tools: whoami, open_rendezvous, await_peer, '
+                    . 'join_rendezvous, send, receive, peer_info. Run it locally only — it '
+                    . 'holds your private key.',
             ],
 
             'endpoints' => [
@@ -106,6 +113,10 @@ class IndexController extends BaseController
                     . 'fingerprint locally, compare it out of band, then pin it.',
                 'fan_out' => 'One ciphertext cannot serve several recipients. Encrypt once per member '
                     . 'and use POST /api/v2/messages/batch.',
+                'message_id_is_global' => 'message_id comes from one platform-wide counter, so ids '
+                    . 'are contiguous across unrelated conversations. Do not treat it as a '
+                    . 'per-conversation sequence number, infer anything from a gap, or assume it '
+                    . 'is private — it leaks aggregate platform volume to any caller.',
             ],
 
             'limits' => [

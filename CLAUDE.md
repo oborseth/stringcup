@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Stringcup is an end-to-end encrypted (E2EE) messaging REST API built on CodeIgniter 4. The server acts as a "dumb relay" that stores and delivers encrypted messages without ever having access to plaintext content.
 
-**Tech Stack:** PHP 8.1+, CodeIgniter 4, MySQL/MariaDB, WebCrypto API, @noble/curves cryptography library
+**Tech Stack:** PHP 8.2, CodeIgniter 4, MySQL/MariaDB (AWS RDS), nginx + PHP-FPM. No server-side cryptography at all — the WebCrypto/@noble/curves stack went out with the browser client. The reference consumers are `clients/python/stringcup.py` (library), `clients/python/stringcup_mcp.py` (MCP server) and `tests/lib/v2_client.php` (PHP test client).
 
 ### One API, agents only
 
@@ -97,7 +97,7 @@ php spark cache:clear
 
 This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
 
-Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **seven** places:
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **nine** places:
 
 - `public/openapi.yaml` — machine-readable spec (agents consume this)
 - `public/docs.md` — prose developer guide
@@ -106,6 +106,10 @@ Public docs are served as static files from `public/` and are **not** generated 
 - `public/agent.md` — the file an AI agent is pointed at to actually run a conversation
 - `public/llms.txt` — condensed orientation for agents; the file crawlers and LLM tooling look for
 - `app/Controllers/Api/V2/IndexController.php` — the self-describing `GET /api/v2` response
+- `clients/python/README.md` — the client library reference, including the MCP setup
+- `clients/python/stringcup_mcp.py` — the MCP tool descriptions *are* documentation; a model reads them instead of the prose
+
+Plus `README.md` and `app/Views/home.php` when the change is user-visible. This duplication is the standing tax on the project; the honest fix is generating `docs.html` from `docs.md`.
 
 ### Agent discovery
 
@@ -117,12 +121,13 @@ An agent given only `https://stringcup.com` must be able to reach a working inte
 /agent.md              the file to point an agent at; it runs the conversation
 /api/v2                self-describing JSON index (IndexController)
 /clients/stringcup.py  the client library, fetchable with curl
+/clients/stringcup_mcp.py  MCP server for hosts that speak MCP
 /clients/example_agent.py  runnable two-role agent
 ```
 
 `agent.md` is the important one: it replaces the wall of prompt text that used to be pasted into each agent, and tells the initiator to stop and hand its operator a block containing the responder's role and token. One copy-paste is the whole handshake. It lives next to the API so it cannot drift the way a prompt in a config file does.
 
-Most of this was missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py`, `clients/example_agent.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing those filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
+Most of this was missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py`, `clients/stringcup_mcp.py`, `clients/example_agent.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing those filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
 
 Verify the chain end to end after touching any of it: fetch `llms.txt`, download the client to an empty directory, and complete a send/receive round trip using nothing else.
 
@@ -282,6 +287,10 @@ Constraints to preserve when touching this:
 - Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
 - Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
 
+### Never version-check with a string comparison
+
+`stringcup.require_version("2.2.0")` exists because the obvious form is wrong: `__version__ >= "2.2.0"` is a *string* compare, so it evaluates `"2.10.0" >= "2.2.0"` as false and rejects a **newer** library. `agent.md` shipped that exact guard — inside the section about refusing stale copies — and two independent agents caught it. `version_info` is the tuple to compare against if you need to compare directly. Do not reintroduce a string comparison anywhere in the docs.
+
 ### Primitives for LLM agents
 
 `listen()` and `drain()` take a callback. An LLM agent cannot reason inside a
@@ -297,6 +306,20 @@ uses `receive_one` for the same reason.
 `Client(transcript="./chat.jsonl")` appends every message in and out. The relay
 deletes a message on ACK, so without it there is no record afterwards — and an
 agent whose context was compacted cannot pick the thread back up.
+
+### The MCP server
+
+`clients/python/stringcup_mcp.py` speaks MCP over **stdio** and wraps `stringcup.py`. It implements the JSON-RPC layer by hand rather than depending on the `mcp` SDK, which would raise the floor to Python 3.10 and add pydantic/anyio — the library's whole distribution story is one file plus `cryptography`, and the server keeps that.
+
+**It must never gain an HTTP transport.** The process holds the private key. A hosted MCP server beside the relay would hold both parties' keys and there would be no end-to-end encryption left. `test_mcp.py` asserts the absence of `HTTPServer`/`http.server` in the source, so a future "add remote mode" commit trips a test rather than a threat model.
+
+Three constraints to preserve:
+
+- **Nothing may write to stdout but JSON-RPC.** A stray `print` corrupts the stream and the server silently fails to load — it does not error, it just never appears. Diagnostics go through `_log()` to stderr. `stringcup.py` is safe today because its only `print` calls sit inside docstrings; check that if you edit it.
+- **`DEFAULT_HOLD` (55s) must stay under the host's tool-call timeout**, which is commonly 60s and is not something the server can discover. Blocking tools answer `{"paired": false}` / `{"received": false}` rather than running past it, and their descriptions tell the model to call again. Raising it past a host's timeout turns a working retry loop into an apparent hang.
+- **The tool descriptions are the documentation an agent actually reads.** They carry the role derivation and the retry contract. Treat them as a published surface, not as comments.
+
+A relay refusal returns `isError: true` with the HTTP status, not a JSON-RPC error — the model can react to the former and never sees the latter.
 
 ### Client-Side State
 
@@ -418,6 +441,7 @@ The server never encrypts or decrypts. It only:
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
 - **Unbounded inbox:** nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog; pagination bounds the read, not the store
+- **`message_id` is a global counter, not per-conversation:** ids are contiguous across unrelated conversations, so any user can read platform-wide message volume off their own inbox. Documented in SECURITY.md; fixing it means opaque or per-recipient ids and a breaking change to ACK and pagination
 - **No server-side fan-out:** one message, one recipient. Broadcasting is N encryptions (batched into one request)
 - **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Server-issued so they always carry full entropy, detectable (409) and time-boxed, but interception in transit is not preventable
 - **Long polling consumes an FPM worker per waiter**, capped by `LongPollGuard`
@@ -473,8 +497,13 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_stringcup.py` | 56 assertions over the client surface |
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
+| `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
+| `test_mcp.py` | 75 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 37 assertions: two MCP processes pair and converse over a live relay |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
+
+`test_mcp_live.py` earns its place the same way: it caught the MCP server reading `peer_public_key` off the rendezvous response when the field is actually `peer_identity_public_key`. Every stub-based assertion passed, because the stub had the same wrong name.
 
 Two constraints worth knowing:
 

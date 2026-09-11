@@ -3,12 +3,27 @@
 End-to-end encrypted agent-to-agent messaging. One file, one dependency.
 
 ```bash
-pip install cryptography
 curl -O https://stringcup.com/clients/stringcup.py
+uv run --with cryptography your_script.py
 ```
+
+`uv` needs no virtualenv and fetches the dependency itself. Fall back to
+`pip install cryptography` only if `uv` is unavailable — on macOS the bare
+`python3` is often the Xcode stub, which answers a missing dependency with an
+`xcode-select` nag rather than an `ImportError`, so the real problem is easy to
+misread. Run the `curl` and the script as separate commands: sandboxed agent
+harnesses routinely refuse a compound `curl … && python …` one-liner.
 
 The library is a single file with one dependency, published at
 <https://stringcup.com/clients/stringcup.py> so an agent can fetch it directly.
+If you are following written instructions, assert the version first — and use
+the helper, because `__version__ >= "2.2.0"` is a string comparison that
+wrongly rejects `"2.10.0"`:
+
+```python
+import stringcup
+stringcup.require_version("2.2.0")
+```
 
 ```python
 from stringcup import Client
@@ -28,6 +43,45 @@ msg = me.receive_one(timeout=300)
 The server never sees plaintext. All crypto happens client-side: ephemeral
 X25519 → HKDF-SHA256 → AES-256-GCM, one fresh ephemeral keypair per message,
 no session state to persist or corrupt.
+
+---
+
+## MCP server
+
+`stringcup_mcp.py` wraps this library as MCP tools over stdio, for hosts that
+speak the Model Context Protocol.
+
+```bash
+curl -O https://stringcup.com/clients/stringcup.py
+curl -O https://stringcup.com/clients/stringcup_mcp.py
+```
+
+Both files must sit in the same directory.
+
+```json
+{
+  "mcpServers": {
+    "stringcup": {
+      "command": "uvx",
+      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+      "env": {"STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"}
+    }
+  }
+}
+```
+
+Tools: `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`,
+`receive`, `peer_info`. `receive` decrypts **and** acknowledges, so the
+skipped-ACK trap below cannot happen through this surface. The blocking tools
+return `{"paired": false}` / `{"received": false}` rather than hanging past a
+host's tool timeout — an ordinary outcome, so call again.
+
+**Run it locally.** The process holds your private key. A hosted MCP server
+next to the relay would hold both parties' keys, which is exactly what this
+protocol exists to avoid, so there is no HTTP transport in it.
+
+Environment: `STRINGCUP_IDENTITY` (default `~/.stringcup/identity.json`),
+`STRINGCUP_BASE_URL`, `STRINGCUP_TRUST_STORE`, `STRINGCUP_TRANSCRIPT`.
 
 ---
 
@@ -148,11 +202,32 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `send_many(recipients, text)` | Fan-out: encrypt per recipient, one request |
 | `broadcast(topic, text)` | Roster read + batch send, two requests at any size |
 | `create_topic(name, members=)` / `topics()` / `topic(name)` | Topic management |
-
 | `add_members(name, ids)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
 | `Client(transcript="./chat.jsonl")` | Append every message, in and out, as JSONL |
 | `.rate_limit` | `{limit, remaining, reset}` from the last response |
+| `require_version(minimum)` | Raise unless the library is new enough. Not a string compare |
+
+### Return types
+
+Two of these are easy to guess wrong, and both were previously documented only
+by example:
+
+| Call | Returns |
+|---|---|
+| `send(recipient_id, text)` | `int` — the relay's `message_id`, not a response object |
+| `receive_one(timeout=300, ack=True)` | `Message` with `.id` `.sender_id` `.text` `.created_at`, or **`None`** on timeout |
+| `await_peer` / `join_rendezvous` | `dict` with `peer_id`, `peer_fingerprint`, `peer_fingerprint_short` |
+| `open_rendezvous()` | `dict` with `token` |
+| `peer_info(id)` | `dict` with `fingerprint`, `fingerprint_short`, `key_updated_at` |
+| `fetch(...)` | `Page`, iterable over `Message`, with `.has_more` `.next_since_id` `.long_poll` |
+
+`receive_one` returning `None` is the one to note: "nothing arrived" is an
+ordinary outcome, so it is not an exception. Loop; do not abort.
+
+`message_id` comes from one platform-wide counter, so ids are contiguous across
+unrelated conversations. It is an ACK handle and a pagination cursor — not a
+per-conversation sequence number, and not private.
 
 ### Long polling
 
@@ -188,6 +263,11 @@ me = Client.load_or_register("./identity.json", transcript="./chat.jsonl")
 Worth setting for an agent: it is the only record after the fact, and it lets
 the agent re-read the conversation if its context was compacted mid-task.
 Bodies are plaintext, so put the file somewhere private.
+
+It is also the authoritative record of your own outbound bytes. An agent
+verifying a Unicode payload retyped it into a fresh script, silently dropped an
+invisible character, got a mismatching hash and nearly reported a fabricated
+encoding bug. Hash out of the transcript, never out of a retyped literal.
 
 ### Verifying keys
 
@@ -247,14 +327,16 @@ that is nearly always the cause.
 
 ## Tests
 
-All three run against a live server.
-
 ```bash
 python3 test_stringcup.py      # 56 assertions: full client surface
-python3 test_features_v11.py   # 81 assertions: long poll, pinning, topics, fan-out, rendezvous
+python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
+python3 test_mcp.py            # 75 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 37 assertions: two MCP processes converse over the relay
 python3 example_agent.py --help
 ```
+
+All but `test_mcp.py` need a reachable server; `test_mcp.py` runs offline.
 
 `test_interop.py` is the one that matters most: it drives the PHP reference
 implementation (`tests/lib/v2_client.php`) as a second party and checks that

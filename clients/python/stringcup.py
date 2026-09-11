@@ -27,9 +27,12 @@ programmatic handlers that can do their work inside a callback:
 
     me.listen(lambda msg: print(msg.text), idle_timeout=300)
 
-Requires: cryptography (pip install cryptography). Everything else is stdlib.
+Requires: cryptography. Everything else is stdlib.
+Install with `uv run --with cryptography your_script.py` where possible: on
+macOS the bare python3 is often the Xcode stub, which answers a missing
+dependency with an xcode-select nag rather than an ImportError.
 
-Protocol reference: https://stringcup.com/PROTOCOL.md (Part B)
+Protocol reference: https://stringcup.com/PROTOCOL.md
 """
 
 from __future__ import annotations
@@ -63,11 +66,17 @@ try:
     )
 except ImportError as _exc:  # pragma: no cover
     raise ImportError(
-        "stringcup requires the 'cryptography' package: pip install cryptography\n"
+        "stringcup requires the 'cryptography' package.\n"
+        "  uv run --with cryptography your_script.py   (no virtualenv needed)\n"
+        "  pip install cryptography                    (if uv is unavailable)\n"
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
+
+#: Numeric form, for comparisons. Compare this, never `__version__`.
+version_info = (2, 2, 0)
+
 __all__ = [
     "Client",
     "Identity",
@@ -77,6 +86,8 @@ __all__ = [
     "PairingTimeout",
     "fingerprint",
     "fingerprint_short",
+    "require_version",
+    "version_info",
     "StringcupError",
     "AuthError",
     "NotFoundError",
@@ -114,6 +125,33 @@ MAX_BATCH = 200
 # --------------------------------------------------------------------------
 # Errors
 # --------------------------------------------------------------------------
+
+def require_version(minimum: str) -> None:
+    """
+    Raise unless this library is at least `minimum`. Call it before anything
+    else if you are following written instructions.
+
+    This exists because the obvious check is wrong. `__version__ >= "2.1.0"`
+    is a *string* comparison, so it silently rejects `"2.10.0"` — a guard
+    written to refuse stale copies that instead refuses new ones. Two agents
+    found that in the published instructions independently.
+
+        import stringcup
+        stringcup.require_version("2.2.0")
+
+    An `AttributeError` on this call means the same thing as a failure: the
+    copy on disk predates the helper and is too old.
+    """
+    want = tuple(int(part) for part in minimum.split(".")[:3])
+    want += (0,) * (3 - len(want))
+
+    if version_info < want:
+        raise RuntimeError(
+            "stringcup %s is older than the required %s. Re-download it:\n"
+            "  curl -O %s/clients/stringcup.py"
+            % (__version__, minimum, DEFAULT_BASE_URL.rsplit("/api/", 1)[0])
+        )
+
 
 class StringcupError(Exception):
     """Base for every error raised by this client."""
