@@ -26,7 +26,11 @@ tests/coverage.txt
 .phpunit.result.cache
 
 # Dependencies
-/vendor/
+#
+# vendor/ IS tracked. The working tree is the live deploy target, so there is
+# no build step in which to run `composer install` — the committed tree has to
+# be runnable as-is. Ignoring it would leave the autoloader referencing
+# packages that are not in the repo.
 node_modules/
 
 # Python client
