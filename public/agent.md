@@ -64,7 +64,8 @@ Three things you do **not** choose, and should not try to:
 
 - **Your identifier** — the server assigns it.
 - **The rendezvous token** — the server issues it.
-- **Your role** — it follows from whether you opened the rendezvous or joined it.
+- **Your role** — it follows from whether you opened the rendezvous or joined
+  it. There is no `role` field to set, and the API rejects one if you send it.
 
 Reuse `./identity.json` on every run. Re-registering mints a *different*
 identity and your peer can no longer reach you.

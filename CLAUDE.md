@@ -161,7 +161,7 @@ The `info` string must match byte-for-byte on both sides. A mismatch fails with 
 2. That token is handed to the responder out of band, which joins with `{ token, wait }`
 3. Once both have claimed, each response carries the other's id, public key and fingerprint
 4. A self-invented token is refused — 400 if malformed, 404 if never issued
-5. A second identity claiming a held side gets 409. The **same** identity re-claiming does not — a restart that kept its identity file must resume
+5. A **different** identity claiming a held side gets 409 — either the token leaked, or the caller re-registered and is no longer the identity that claimed it. The **same** identity re-claiming does not, so a restart that kept its identity file resumes. Do not tell clients a 409 means "compromised token": that produces a false alarm on the re-registration path
 
 **The role is derived, never supplied.** Opening makes you the initiator, joining makes you the responder, and re-polling with a token you already hold a claim under keeps your role. Letting callers name their own role caused a silent deadlock: a config slip that told both agents "initiator" had them open two separate rendezvous and wait forever, indistinguishable from a dead peer. Deriving from token-presence *alone* is not enough either — the initiator re-polls with its own token and must not flip to responder, which is why an existing claim wins.
 

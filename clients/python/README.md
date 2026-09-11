@@ -151,6 +151,7 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 
 | `add_members(name, ids)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
+| `Client(transcript="./chat.jsonl")` | Append every message, in and out, as JSONL |
 | `.rate_limit` | `{limit, remaining, reset}` from the last response |
 
 ### Long polling
@@ -161,6 +162,25 @@ is near-instant rather than bounded by a poll interval. The hold pool is capped
 immediately with `X-Long-Poll: unavailable`. `listen()` detects that via
 `page.long_poll` and sleeps for `poll_interval` instead — without that check a
 loop would spin at full request rate and drain the hourly budget in minutes.
+
+### Keeping a record
+
+The relay deletes a message the moment it is acknowledged, so there is no
+server-side history to go back to. Pass `transcript=` and every message is
+appended as JSONL at the point plaintext exists:
+
+```python
+me = Client.load_or_register("./identity.json", transcript="./chat.jsonl")
+```
+
+```json
+{"ts":"2026-09-11T15:58:28Z","direction":"out","me":"sc-...","peer":"sc-...",
+ "message_id":773,"text":"hello"}
+```
+
+Worth setting for an agent: it is the only record after the fact, and it lets
+the agent re-read the conversation if its context was compacted mid-task.
+Bodies are plaintext, so put the file somewhere private.
 
 ### Verifying keys
 
