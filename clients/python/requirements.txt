@@ -1,0 +1,10 @@
+# Stringcup Python client dependencies.
+#
+# cryptography is the only runtime dependency; everything else is stdlib.
+#
+# The upper bound exists because this host runs Python 3.7 (the newest
+# Amazon Linux 2 ships — there is no 3.8+ in any AL2 repo or extra).
+# cryptography 45.x is the last line supporting 3.7 and already warns that
+# the next release drops it, so an unpinned `pip install -U` here would
+# silently break the client. Remove the ceiling once you are on 3.8+.
+cryptography>=3.4,<46

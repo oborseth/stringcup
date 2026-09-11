@@ -1,0 +1,329 @@
+<?php
+
+/**
+ * Stringcup API v2 — feature test for the agent-oriented additions.
+ *
+ * Covers, against a live server:
+ *   - cursor pagination on the inbox (limit / since_id / has_more)
+ *   - batch ACK, including partial-success reporting
+ *   - idempotent send via Idempotency-Key, and its per-sender scoping
+ *   - token introspection and rotation
+ *   - X-RateLimit-* budget headers
+ *   - input validation on all of the above
+ *
+ * Usage:  php tests/v2_features_test.php [api_base]
+ *
+ * Registration is limited to 5/hr per IP; if re-running trips that, clear
+ * writable/cache/ratelimit/ first.
+ */
+
+require __DIR__ . '/lib/v2_client.php';
+
+$API_BASE = $argv[1] ?? 'https://stringcup.com/api/v2';
+
+$suffix = bin2hex(random_bytes(4));
+
+echo "Stringcup API v2 — Agent Feature Test\n";
+echo "API Base : $API_BASE\n";
+
+// ============================================================
+step('1. Register two agents');
+// ============================================================
+$alice = generate_keypair();
+$bob   = generate_keypair();
+
+[$aliceId, $aliceToken] = register_identity($API_BASE, $alice['pub'], 'Feature Test Alice');
+[$bobId,   $bobToken]   = register_identity($API_BASE, $bob['pub'],   'Feature Test Bob');
+ok('Both identities registered');
+
+// ============================================================
+step('2. Rate limit budget headers');
+// ============================================================
+$res = api('GET', "$API_BASE/messages", null, $bobToken);
+assert_code(200, $res, 'Inbox reachable');
+
+foreach (['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'] as $h) {
+    assert_true(isset($res['headers'][$h]), "Header $h present" . (isset($res['headers'][$h]) ? " = {$res['headers'][$h]}" : ''));
+}
+assert_same('300', $res['headers']['x-ratelimit-limit'], 'Inbox limit advertised as 300/hr');
+
+$remainingFirst = (int) $res['headers']['x-ratelimit-remaining'];
+$res2 = api('GET', "$API_BASE/messages", null, $bobToken);
+$remainingSecond = (int) $res2['headers']['x-ratelimit-remaining'];
+assert_true(
+    $remainingSecond === $remainingFirst - 1,
+    "Remaining decrements per request ($remainingFirst -> $remainingSecond)"
+);
+assert_true((int) $res['headers']['x-ratelimit-reset'] > time(), 'Reset is a future unix timestamp');
+
+// Two different tokens must not share a bucket, even from one IP.
+$aliceRes = api('GET', "$API_BASE/messages", null, $aliceToken);
+assert_same(
+    299,
+    (int) $aliceRes['headers']['x-ratelimit-remaining'],
+    "Alice has her own budget (per-token, not per-IP)"
+);
+
+// ============================================================
+step('3. Token introspection — GET /tokens/current');
+// ============================================================
+$res = api('GET', "$API_BASE/tokens/current", null, $bobToken);
+assert_code(200, $res, 'Token introspection works');
+assert_same($bobId, $res['body']['identity_id'], 'Reports the owning identity');
+assert_true(!empty($res['body']['expires_at']), 'expires_at present: ' . ($res['body']['expires_at'] ?? 'null'));
+assert_same(30, $res['body']['inactivity_ttl_days'], 'TTL reported as 30 days');
+
+$expiresIn = (int) $res['body']['expires_in_seconds'];
+assert_true(
+    $expiresIn > 29 * 86400 && $expiresIn <= 30 * 86400,
+    "expires_in_seconds is ~30 days ($expiresIn)"
+);
+
+$res = api('GET', "$API_BASE/tokens/current", null, 'not-a-real-token');
+assert_code(401, $res, 'Bogus token rejected');
+
+// ============================================================
+step('4. Idempotent send');
+// ============================================================
+drain_inbox($API_BASE, $bobToken);
+
+$idemKey = 'idem-' . bin2hex(random_bytes(8));
+$first = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Idempotency probe', $idemKey);
+assert_code(201, $first, 'First send stored');
+$firstMessageId = $first['body']['message_id'];
+
+$replay = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Idempotency probe', $idemKey);
+assert_code(200, $replay, 'Replay returns 200 rather than 201');
+assert_same($firstMessageId, $replay['body']['message_id'], 'Replay returns the original message_id');
+assert_same(true, $replay['body']['idempotent_replay'], 'Replay is flagged as such');
+
+$res = api('GET', "$API_BASE/messages", null, $bobToken);
+assert_same(1, $res['body']['count'], 'Only one message was actually stored');
+
+// Same key string from a different sender must not collide.
+$bobSend = send_message($API_BASE, $bobId, $aliceId, $alice['pub'], $bobToken, 'Different sender same key', $idemKey);
+assert_code(201, $bobSend, 'Idempotency keys are scoped per sender');
+
+// A key is only consumed by a successful send.
+$badRecipient = api('POST', "$API_BASE/messages", array_merge(
+    ['recipient_id' => 'no-such-identity-' . $suffix],
+    ecies_encrypt($aliceId, 'nobody', $bob['pub'], 'x')
+), $aliceToken, ['Idempotency-Key' => 'reusable-' . $suffix]);
+assert_code(404, $badRecipient, 'Send to unknown recipient fails');
+
+$retry = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Corrected retry', 'reusable-' . $suffix);
+assert_code(201, $retry, 'Key freed after a failed send, so a corrected retry works');
+
+$res = api('POST', "$API_BASE/messages", array_merge(
+    ['recipient_id' => $bobId],
+    ecies_encrypt($aliceId, $bobId, $bob['pub'], 'bad key')
+), $aliceToken, ['Idempotency-Key' => "has space"]);
+assert_code(400, $res, 'Malformed Idempotency-Key rejected');
+
+drain_inbox($API_BASE, $bobToken);
+drain_inbox($API_BASE, $aliceToken);
+
+// ============================================================
+step('5. Inbox pagination');
+// ============================================================
+$total = 12;
+$sentPlaintexts = [];
+for ($i = 1; $i <= $total; $i++) {
+    $text = "Paginated message #$i";
+    $sentPlaintexts[] = $text;
+    $r = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, $text);
+    if ($r['code'] !== 201) {
+        fail("Send $i failed: " . json_encode($r));
+    }
+}
+ok("Alice sent $total messages to Bob");
+
+$res = api('GET', "$API_BASE/messages?limit=5", null, $bobToken);
+assert_code(200, $res, 'First page fetched');
+assert_same(5, $res['body']['count'], 'Page honours limit=5');
+assert_same(true, $res['body']['has_more'], 'has_more true while a backlog remains');
+assert_true($res['body']['next_since_id'] !== null, 'next_since_id supplied: ' . $res['body']['next_since_id']);
+
+// Walk the cursor to the end.
+$collected = [];
+$sinceId   = 0;
+$pages     = 0;
+
+while (true) {
+    $url = "$API_BASE/messages?limit=5" . ($sinceId > 0 ? "&since_id=$sinceId" : '');
+    $page = api('GET', $url, null, $bobToken);
+    if ($page['code'] !== 200) {
+        fail('Pagination poll failed: ' . json_encode($page));
+    }
+    $pages++;
+
+    foreach ($page['body']['messages'] as $m) {
+        $collected[] = $m;
+    }
+
+    if (!$page['body']['has_more']) {
+        break;
+    }
+    $sinceId = $page['body']['next_since_id'];
+
+    if ($pages > 10) {
+        fail('Cursor did not terminate');
+    }
+}
+
+assert_same(3, $pages, 'Walked 12 messages in 3 pages of 5');
+assert_same($total, count($collected), "Cursor returned all $total messages");
+
+$ids = array_column($collected, 'id');
+assert_same(count($ids), count(array_unique($ids)), 'No duplicate messages across pages');
+
+$sorted = $ids;
+sort($sorted, SORT_NUMERIC);
+assert_same($sorted, $ids, 'Messages arrive in ascending id order');
+
+// Content survives the round trip.
+$decrypted = [];
+foreach ($collected as $m) {
+    $decrypted[] = ecies_decrypt($bob['priv'], $m['sender_id'], $bobId, $m);
+}
+assert_same($sentPlaintexts, $decrypted, 'All plaintexts decrypt correctly and in order');
+
+// Cursor past the end.
+$lastId = end($ids);
+$res = api('GET', "$API_BASE/messages?since_id=$lastId", null, $bobToken);
+assert_same(0, $res['body']['count'], 'Cursor past the newest message returns nothing');
+assert_same(false, $res['body']['has_more'], 'has_more false at the end of the stream');
+assert_same($lastId, $res['body']['next_since_id'], 'Empty page holds the cursor steady');
+
+// Default page size.
+$res = api('GET', "$API_BASE/messages", null, $bobToken);
+assert_same($total, $res['body']['count'], 'Default limit (50) returns the whole backlog here');
+
+// ============================================================
+step('6. Pagination input validation');
+// ============================================================
+foreach ([
+    'limit=0'        => 'limit below range',
+    'limit=201'      => 'limit above MAX_LIMIT',
+    'limit=abc'      => 'non-numeric limit',
+    'limit=-1'       => 'negative limit',
+    'since_id=abc'   => 'non-numeric since_id',
+    'since_id=-5'    => 'negative since_id',
+] as $qs => $label) {
+    $res = api('GET', "$API_BASE/messages?$qs", null, $bobToken);
+    assert_code(400, $res, "Rejects $label ($qs)");
+}
+
+$res = api('GET', "$API_BASE/messages?limit=200", null, $bobToken);
+assert_code(200, $res, 'Accepts limit at the maximum (200)');
+
+// ============================================================
+step('7. Batch ACK');
+// ============================================================
+$res = api('GET', "$API_BASE/messages?limit=5", null, $bobToken);
+$batch = array_column($res['body']['messages'], 'id');
+
+$ack = api('POST', "$API_BASE/messages/ack", ['ids' => $batch], $bobToken);
+assert_code(200, $ack, 'Batch ACK accepted');
+assert_same(5, $ack['body']['count'], 'Acknowledged all 5 in one call');
+assert_same($batch, $ack['body']['acknowledged'], 'Reports exactly the acknowledged ids');
+assert_same([], $ack['body']['not_found'], 'Nothing reported missing');
+assert_same([], $ack['body']['forbidden'], 'Nothing reported forbidden');
+
+$res = api('GET', "$API_BASE/messages", null, $bobToken);
+assert_same($total - 5, $res['body']['count'], 'Inbox shrank by exactly 5');
+
+// Re-ACKing is safe and reported, not an error.
+$reAck = api('POST', "$API_BASE/messages/ack", ['ids' => $batch], $bobToken);
+assert_code(200, $reAck, 'Re-ACK of already-deleted ids is not an error');
+assert_same(0, $reAck['body']['count'], 'Nothing acknowledged the second time');
+assert_same($batch, $reAck['body']['not_found'], 'Already-gone ids reported as not_found');
+
+// Cross-recipient protection, mixed with valid ids in one batch.
+$aliceMsg = send_message($API_BASE, $bobId, $aliceId, $alice['pub'], $bobToken, 'For Alice only');
+$aliceMsgId = $aliceMsg['body']['message_id'];
+
+$res = api('GET', "$API_BASE/messages?limit=2", null, $bobToken);
+$bobIds = array_column($res['body']['messages'], 'id');
+
+$mixed = api('POST', "$API_BASE/messages/ack", ['ids' => array_merge($bobIds, [$aliceMsgId])], $bobToken);
+assert_code(200, $mixed, 'Mixed batch processed');
+assert_same($bobIds, $mixed['body']['acknowledged'], 'Own messages acknowledged');
+assert_same([$aliceMsgId], $mixed['body']['forbidden'], "Another recipient's message reported forbidden, not deleted");
+
+$check = api('GET', "$API_BASE/messages", null, $aliceToken);
+assert_true(
+    in_array($aliceMsgId, array_column($check['body']['messages'], 'id'), true),
+    "Alice's message survived Bob's attempt to ACK it"
+);
+
+// Dedupe.
+$res = api('GET', "$API_BASE/messages?limit=1", null, $bobToken);
+$oneId = $res['body']['messages'][0]['id'];
+$dupe = api('POST', "$API_BASE/messages/ack", ['ids' => [$oneId, $oneId, $oneId]], $bobToken);
+assert_same([$oneId], $dupe['body']['acknowledged'], 'Duplicate ids in one batch are collapsed');
+
+// ============================================================
+step('8. Batch ACK input validation');
+// ============================================================
+$cases = [
+    [['ids' => []],                       'empty ids array'],
+    [['ids' => 'nope'],                   'ids not an array'],
+    [['nope' => [1]],                     'missing ids key'],
+    [['ids' => [1, 'abc']],               'non-integer id'],
+    [['ids' => [0]],                      'zero id'],
+    [['ids' => [-3]],                     'negative id'],
+    [['ids' => range(1, 201)],            'more than 200 ids'],
+];
+foreach ($cases as [$body, $label]) {
+    $res = api('POST', "$API_BASE/messages/ack", $body, $bobToken);
+    assert_code(400, $res, "Rejects $label");
+}
+
+$res = api('POST', "$API_BASE/messages/ack", ['ids' => [999999999]], $bobToken);
+assert_code(200, $res, 'Unknown id is a reported miss, not a 400');
+assert_same([999999999], $res['body']['not_found'], 'Unknown id reported in not_found');
+
+$res = api('POST', "$API_BASE/messages/ack", ['ids' => [1]], null);
+assert_code(401, $res, 'Batch ACK requires auth');
+
+// ============================================================
+step('9. Token rotation');
+// ============================================================
+drain_inbox($API_BASE, $bobToken);
+drain_inbox($API_BASE, $aliceToken);
+
+// Leave one message so we can prove the new token reaches the same inbox.
+send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Survives rotation');
+
+$rot = api('POST', "$API_BASE/tokens/rotate", null, $bobToken);
+assert_code(201, $rot, 'Rotation issued a new token');
+assert_true(!empty($rot['body']['api_token']), 'New token returned');
+assert_same($bobId, $rot['body']['identity_id'], 'Bound to the same identity');
+assert_same('revoked', $rot['body']['previous_token'], 'Previous token reported revoked');
+
+$newBobToken = $rot['body']['api_token'];
+assert_true($newBobToken !== $bobToken, 'New token differs from the old one');
+
+$res = api('GET', "$API_BASE/messages", null, $bobToken);
+assert_code(401, $res, 'Old token no longer authenticates');
+
+$res = api('GET', "$API_BASE/messages", null, $newBobToken);
+assert_code(200, $res, 'New token authenticates');
+assert_same(1, $res['body']['count'], 'Same inbox, same pending message');
+
+$decrypted = ecies_decrypt($bob['priv'], $aliceId, $bobId, $res['body']['messages'][0]);
+assert_same('Survives rotation', $decrypted, 'Message still decrypts with the unchanged identity key');
+
+$res = api('POST', "$API_BASE/tokens/rotate", null, $bobToken);
+assert_code(401, $res, 'Revoked token cannot rotate again');
+
+// ============================================================
+step('10. Cleanup');
+// ============================================================
+$removed = drain_inbox($API_BASE, $newBobToken) + drain_inbox($API_BASE, $aliceToken);
+ok("Drained $removed remaining message(s)");
+
+echo "\n================================================\n";
+echo "  ALL TESTS PASSED ({$GLOBALS['sc_assertions']} assertions)\n";
+echo "================================================\n\n";
