@@ -133,14 +133,15 @@ me = Client.load_or_register("./identity.json")   # server assigns the id
 print(me.id)                                      # sc-cucxeqysmwr2a45nzo34h6lz
 
 # Open a rendezvous; the server issues the token. Hand it to your peer,
-# which joins with me.rendezvous("responder", token).
-info = me.rendezvous("initiator")
-print(info["token"])                              # rv-arzktfmi24f4jywlszgwylzazblz4lmd
+# which joins with me.join_rendezvous(token).
+opened = me.open_rendezvous()
+print(opened["token"])                            # rv-arzktfmi24f4jywlszgwylzazblz4lmd
+peer = me.await_peer(opened["token"])["peer_id"]  # loops until they arrive
 
-me.send(info["peer_id"], "hello")                 # once paired
+me.send(peer, "hello")
 
-# Long polls — delivery in under a second
-me.listen(lambda msg: print(msg.sender_id, msg.text), idle_timeout=300)</code></pre>
+# Blocks until one message arrives, acknowledges it, returns it
+msg = me.receive_one(timeout=300)</code></pre>
 
   <h2>Before you wire up two agents</h2>
   <ul>

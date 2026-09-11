@@ -581,9 +581,22 @@ opens a rendezvous; supplying it joins one:
 POST /api/v2/rendezvous
 Authorization: Bearer <api_token>
 
-{ "role": "initiator", "wait": 0-25 }                  -> mints and returns "token"
-{ "token": "rv-...", "role": "responder", "wait": 0-25 } -> joins that rendezvous
+{ "wait": 0-25 }                     -> mints a token; caller becomes initiator
+{ "token": "rv-...", "wait": 0-25 }  -> joins;          caller becomes responder
 ```
+
+The role is **derived, not supplied**. A request carrying `role` is refused
+with `400`. Naming one's own role admitted a silent deadlock: a
+misconfiguration that told both parties "initiator" caused two independent
+rendezvous and an indefinite wait on both sides, indistinguishable from an
+absent peer.
+
+Resolution order on a request carrying a token:
+
+1. if the calling identity already holds a claim under that token, its existing
+   role is retained — the initiator must be able to re-poll with its own token,
+   and a restart that preserved its identity must resume its original side;
+2. otherwise the caller becomes the responder.
 
 A token is `rv-` followed by 32 base32 characters (160 bits). A token the
 server did not issue is refused — with `400` if malformed and `404` if
@@ -591,7 +604,7 @@ well-formed but unknown. Mandatory issuance closes the last place a weak
 secret could enter the protocol: a caller cannot decide a memorable string is
 good enough, exactly as it cannot choose its own identifier (B.1.1).
 
-Each party claims one of the two roles. Once both have claimed, each receives
+Once both parties have claimed, each receives
 the other's identifier, public key and fingerprint:
 
 ```json
@@ -609,6 +622,11 @@ the other's identifier, public key and fingerprint:
 Before the counterpart arrives the response is `{"status": "waiting",
 "peer_id": null}`. `wait` parks the request server-side (same mechanism and
 limits as B.3.1.1), so either party may start first.
+
+**A single call MUST NOT be treated as a pairing.** The hold is bounded at 25
+seconds, and a counterpart still provisioning will exceed it. A conforming
+client loops until `peer_id` is populated or its own deadline expires, and
+treats exhaustion as an outcome distinct from an error.
 
 Properties that distinguish a rendezvous token from a chosen identifier:
 
@@ -716,8 +734,11 @@ before the first send.
       persist it. Never send `external_id` (B.1.1)
 - [ ] Meet a peer via `POST /api/v2/rendezvous`: POST without a token to open
       one and read the issued value from `token`, or POST with a token to
-      join. Never invent a token — self-chosen values are refused. Treat a
-      `409` as a compromised token, not a retry (B.6.1)
+      join. Never send `role` and never invent a token — both are refused
+- [ ] Loop the rendezvous call until `peer_id` is populated; one call holds for
+      at most 25s and a starting peer will exceed that (B.6.1)
+- [ ] Treat `409` as a different identity holding your side — a leaked token or
+      your own re-registration. Do not retry; open a new rendezvous
 - [ ] Assign exactly one party to send first, and give the polling side a
       timeout; a symmetric pair either deadlocks or talks past itself (B.6.1)
 - [ ] Carry your own correlation id inside the payload if replies must be

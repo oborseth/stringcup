@@ -4,6 +4,7 @@ Tests for long polling, key pinning, and topics / fan-out.
 Usage:  python3 test_features_v11.py [base_url]
 """
 
+import json
 import os
 import re
 import secrets
@@ -19,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stringcup import (  # noqa: E402
     AuthError,
     Client,
+    PairingTimeout,
     KeyPinMismatch,
     NotFoundError,
     StringcupError,
@@ -338,49 +340,76 @@ try:
         ok("Roster no longer resolves")
 
     step("6b. Rendezvous")
-    first = a.rendezvous("initiator", wait=0)
-    same("waiting", first["status"], "First arrival waits")
-    same(None, first["peer_id"], "No peer id before the counterpart arrives")
-    same(True, first.get("token_issued"), "Server issued the token")
+    opened = a.open_rendezvous()
+    same("waiting", opened["status"], "Opening returns immediately, unpaired")
+    same("initiator", opened["role"], "Opening derives the initiator role")
+    same(True, opened.get("token_issued"), "Server issued the token")
+    rv = opened["token"]
+    check(re.fullmatch(r"rv-[a-z2-7]{32}", rv) is not None, f"160-bit token: {rv}")
 
-    rv = first["token"]
-    check(re.fullmatch(r"rv-[a-z2-7]{32}", rv) is not None, f"Minted token is 160 bits: {rv}")
+    # The initiator re-polls with its own token and must stay the initiator.
+    again = a.rendezvous(token=rv, wait=0)
+    same("initiator", again["role"], "Re-poll keeps the initiator role")
+    same(None, again["peer_id"], "Still unpaired")
 
-    second = b.rendezvous("responder", rv, wait=0)
-    same("paired", second["status"], "Second arrival completes the pairing")
-    same(a.id, second["peer_id"], "Responder learned the initiator's assigned id")
-    same(a.my_fingerprint, second["peer_fingerprint"], "Peer fingerprint recomputed locally")
+    joined = b.join_rendezvous(rv, timeout=60)
+    same("responder", joined["role"], "Joining derives the responder role")
+    same(a.id, joined["peer_id"], "Responder learned the initiator's id")
+    same(a.my_fingerprint, joined["peer_fingerprint"], "Fingerprint recomputed locally")
 
-    back = a.rendezvous("initiator", rv, wait=0)
-    same(b.id, back["peer_id"], "Initiator learned the responder's assigned id")
+    back = a.await_peer(rv, timeout=60)
+    same(b.id, back["peer_id"], "await_peer returns only once actually paired")
 
+    step("6c. await_peer raises rather than returning None")
+    lone = Client.register(base_url=BASE)
+    solo = lone.open_rendezvous()
+    try:
+        lone.await_peer(solo["token"], timeout=2)
+        fail("Should raise PairingTimeout")
+    except PairingTimeout:
+        ok("PairingTimeout raised instead of a silent None peer_id")
+
+    step("6d. Tokens and roles cannot be self-chosen")
     for bad in ["project-alpha", "hunter2hunter2hunter2"]:
         try:
-            c.rendezvous("responder", bad, wait=0)
+            c.rendezvous(token=bad, wait=0)
             fail(f"Self-chosen token {bad!r} should be rejected")
         except ValidationError:
             pass
-    ok("Self-invented tokens rejected — minting is mandatory")
+    ok("Self-invented tokens rejected")
 
     fake = "rv-" + "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(32))
     try:
-        c.rendezvous("responder", fake, wait=0)
+        c.rendezvous(token=fake, wait=0)
         fail("Unissued token should be rejected")
     except NotFoundError:
-        ok("Well-formed but unissued token rejected by the existence gate")
+        ok("Unissued token rejected by the existence gate")
 
     try:
-        c.rendezvous("initiator", rv, wait=0)
-        fail("A third identity should not take a claimed role")
+        c.rendezvous(token=rv, wait=0)
+        fail("Third identity should not take a held side")
     except StringcupError as exc:
-        same(409, exc.status, "Claimed role returns 409 — a leaked token is detectable")
+        same(409, exc.status, "Held side returns 409")
 
-    # The pairing must actually enable a message.
+    step("6e. The pairing actually carries a message")
     a.send(back["peer_id"], "found you via rendezvous")
-    got = b.receive()
-    same(1, len(got), "Message reached the peer discovered by rendezvous")
-    same("found you via rendezvous", got[0].text, "Plaintext intact")
-    b.ack_all()
+    got = b.receive_one(timeout=30)
+    check(got is not None, "receive_one returned a message")
+    same("found you via rendezvous", got.text, "Plaintext intact")
+    same(0, b.fetch().count, "receive_one acknowledged it — no redelivery")
+
+    same(None, b.receive_one(timeout=2), "receive_one returns None on timeout")
+
+    step("6f. Transcript logging")
+    tpath = os.path.join(work, "transcript.jsonl")
+    logger = Client(a.identity, base_url=BASE, transcript=tpath)
+    logger.send(b.id, "logged message")
+    b.drain(lambda m: None)
+    rows = [json.loads(l) for l in open(tpath)]
+    same(1, len(rows), "One record written")
+    same("out", rows[0]["direction"], "Direction recorded")
+    same("logged message", rows[0]["text"], "Body recorded")
+    check(rows[0]["message_id"] and rows[0]["peer"] == b.id, "Peer and message id recorded")
 
     a.rendezvous_release(rv)
     ok("Claim released")

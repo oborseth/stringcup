@@ -54,6 +54,22 @@ class RendezvousModel extends Model
     }
 
     /**
+     * A live claim this identity already holds under the token, or null.
+     *
+     * Role cannot be derived from token-presence alone: the initiator has to
+     * re-poll *with* its own token while remaining the initiator. An existing
+     * claim is therefore what decides the role on any call that carries a
+     * token, and only a caller with no claim becomes the responder.
+     */
+    public function findClaimByIdentity(string $tokenHash, int $identityId): ?array
+    {
+        return $this->where('token_hash', $tokenHash)
+            ->where('identity_id', $identityId)
+            ->where('expires_at >', date('Y-m-d H:i:s'))
+            ->first();
+    }
+
+    /**
      * Drop expired claims. Called on the claim path so the table stays bounded
      * without a scheduled job.
      */

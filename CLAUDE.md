@@ -157,11 +157,15 @@ The `info` string must match byte-for-byte on both sides. A mismatch fails with 
 4. Client persists id + privkey + token. Re-registering yields a *different* identity
 
 **Meeting a peer**
-1. The initiator `POST /api/v2/rendezvous { role, wait }` with **no token**; the server mints one (160 bits) and returns it with `token_issued: true`
-2. That token is handed to the responder out of band, which joins with `{ token, role, wait }`
+1. The initiator `POST /api/v2/rendezvous { wait }` with **no token**; the server mints one (160 bits) and returns it with `token_issued: true`
+2. That token is handed to the responder out of band, which joins with `{ token, wait }`
 3. Once both have claimed, each response carries the other's id, public key and fingerprint
-4. A self-invented token is refused — 400 if malformed, 404 if never issued — so a weak secret cannot be substituted
-5. A second identity claiming a held role gets 409 — the signal that the token leaked
+4. A self-invented token is refused — 400 if malformed, 404 if never issued
+5. A second identity claiming a held side gets 409. The **same** identity re-claiming does not — a restart that kept its identity file must resume
+
+**The role is derived, never supplied.** Opening makes you the initiator, joining makes you the responder, and re-polling with a token you already hold a claim under keeps your role. Letting callers name their own role caused a silent deadlock: a config slip that told both agents "initiator" had them open two separate rendezvous and wait forever, indistinguishable from a dead peer. Deriving from token-presence *alone* is not enough either — the initiator re-polls with its own token and must not flip to responder, which is why an existing claim wins.
+
+**One rendezvous call is not a pairing.** Each holds for at most 25s then returns `peer_id: null`; a peer still provisioning will exceed that. The client's `await_peer()` / `join_rendezvous()` loop and raise `PairingTimeout`.
 
 **Sending**
 1. Fetch the recipient's public key (cached indefinitely; it changes only on rotation)
@@ -196,7 +200,7 @@ One ciphertext cannot serve several recipients, so a broadcast encrypts per memb
 - `PrekeyBundleModel.php` & `PrekeyModel.php` - Partially implemented Signal-style prekeys
 - `IdempotencyKeyModel.php` - v2 send replay records; 24h retention, pruned opportunistically
 - `TopicModel.php` & `TopicMemberModel.php` - Topic membership; `membersWithKeys()` joins identities so a broadcast needs one roster read, not one lookup per member
-- `RendezvousModel.php` - Pairing claims; tokens stored hashed, unique on `(token_hash, role)` so a role can be claimed once
+- `RendezvousModel.php` - Pairing claims; tokens stored hashed, unique on `(token_hash, role)` so a side can be claimed once. `findClaimByIdentity()` is what lets the initiator re-poll with its own token without being reclassified as the responder
 
 **app/Helpers/**
 - `base32_helper.php` - PHP ships no base32 encoder; assigned ids and rendezvous tokens use it so they stay case-insensitive and URL-safe
@@ -277,6 +281,22 @@ Constraints to preserve when touching this:
 - `MAX_WAIT` (25) must stay below `php.ini max_execution_time` (30) and nginx's default `fastcgi_read_timeout` (60), or a hold ends in a truncated response instead of a real one. `set_time_limit(wait + 10)` is called for the same reason.
 - Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
 - Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
+
+### Primitives for LLM agents
+
+`listen()` and `drain()` take a callback. An LLM agent cannot reason inside a
+callback — it has to return to its own loop — and escaping one early skips the
+ACK, so the message is redelivered. That mismatch cost a real agent two tool
+calls to diagnose.
+
+`receive_one(timeout)` exists for that case: block for one message, acknowledge
+it, return it. **Agent-facing docs must show `receive_one`**, with `listen()`
+described as the option for programmatic handlers. `clients/python/example_agent.py`
+uses `receive_one` for the same reason.
+
+`Client(transcript="./chat.jsonl")` appends every message in and out. The relay
+deletes a message on ACK, so without it there is no record afterwards — and an
+agent whose context was compacted cannot pick the thread back up.
 
 ### Client-Side State
 
@@ -451,7 +471,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `stringcup.py` | The library |
 | `example_agent.py` | Runnable initiator/responder agent template |
 | `test_stringcup.py` | 56 assertions over the client surface |
-| `test_features_v11.py` | 84 assertions: long polling, key pinning, topics, fan-out, rendezvous |
+| `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

@@ -36,7 +36,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from stringcup import Client, StringcupError  # noqa: E402
+from stringcup import Client, PairingTimeout, StringcupError  # noqa: E402
 
 
 def reply(text: str, turn: int) -> Optional[str]:
@@ -112,88 +112,77 @@ def main() -> int:
 
     peer = args.peer
     if peer is None:
-        token = args.session
-        deadline = time.monotonic() + args.rendezvous_timeout
-
-        while peer is None:
-            try:
-                # Mint with wait=0 so the token is printed immediately. Left
-                # at the default the first call would block for the whole
-                # long-poll window before revealing the one value the peer
-                # needs in order to show up at all.
-                info = agent.rendezvous(args.role, token, wait=0 if token is None else 25)
-            except StringcupError as exc:
-                # 409: someone else holds this role under the token.
-                print(f"[{me}] rendezvous failed: {exc}", file=sys.stderr)
-                return 1
-
-            if token is None:
-                token = info["token"]
+        try:
+            if args.session:
+                info = agent.join_rendezvous(args.session, timeout=args.rendezvous_timeout)
+            else:
+                # Opening returns the token at once; print it before waiting,
+                # because nobody can arrive until the operator has it.
+                opened = agent.open_rendezvous()
                 print()
-                print(f"  Rendezvous token:  {token}")
+                print(f"  Rendezvous token:  {opened['token']}")
                 print("  Give it to the responder:")
-                print(f"    python3 example_agent.py --role responder --session {token}")
+                print(f"    python3 example_agent.py --role responder --session {opened['token']}")
                 print()
-                # stdout is block-buffered when redirected, so without this an
-                # orchestrator capturing output would not see the token until
-                # the process exits — by which time the pairing has timed out.
                 sys.stdout.flush()
 
-            peer = info.get("peer_id")
-            if peer is None and time.monotonic() > deadline:
-                print(f"[{me}] peer did not arrive within "
-                      f"{args.rendezvous_timeout:.0f}s", file=sys.stderr)
-                return 1
+                info = agent.await_peer(opened["token"], timeout=args.rendezvous_timeout)
+        except PairingTimeout as exc:
+            print(f"[{me}] {exc}", file=sys.stderr)
+            return 1
+        except StringcupError as exc:
+            print(f"[{me}] rendezvous failed: {exc}", file=sys.stderr)
+            return 1
 
+        peer = info["peer_id"]
         print(f"[{me}] paired with {peer} "
               f"(fingerprint {info.get('peer_fingerprint_short')})")
 
-    args.me, args.peer = me, peer
 
     if args.role == "initiator":
         opening = args.open or "Hello — ready to start."
-        agent.send(args.peer, opening)
-        print(f"[{args.me}] -> {opening}")
+        agent.send(peer, opening)
+        print(f"[{me}] -> {opening}")
 
-    state = {"turns": 0, "done": False}
-
-    def handle(msg):
-        if msg.sender_id != args.peer:
-            print(f"[{args.me}] ignoring message from {msg.sender_id}")
-            return
-
-        state["turns"] += 1
-        print(f"[{args.me}] <- {msg.text}")
-
-        if state["turns"] >= args.max_turns:
-            print(f"[{args.me}] turn limit reached")
-            agent.send(args.peer, "DONE")
-            state["done"] = True
-            return
-
-        answer = reply(msg.text, state["turns"])
-        if answer is None:
-            print(f"[{args.me}] peer signalled completion")
-            state["done"] = True
-            return
-
-        agent.send(args.peer, answer)
-        print(f"[{args.me}] -> {answer}")
-
+    # receive_one rather than listen(): an agent has to return to its own
+    # reasoning between messages, which cannot happen inside a callback. It
+    # also acknowledges for us, so escaping the loop cannot skip an ACK.
+    turns = 0
     try:
-        agent.listen(
-            handle,
-            poll_interval=args.poll,
-            idle_timeout=args.idle_timeout,
-            stop=lambda: state["done"],
-        )
+        while turns < args.max_turns:
+            msg = agent.receive_one(timeout=args.idle_timeout)
+
+            if msg is None:
+                print(f"[{me}] nothing for {args.idle_timeout:.0f}s — stopping")
+                break
+
+            if msg.sender_id != peer:
+                print(f"[{me}] ignoring message from {msg.sender_id}")
+                continue
+
+            turns += 1
+            print(f"[{me}] <- {msg.text}")
+
+            answer = reply(msg.text, turns)
+            if answer is None:
+                print(f"[{me}] peer signalled completion")
+                break
+
+            if turns >= args.max_turns:
+                print(f"[{me}] turn limit reached")
+                agent.send(peer, "DONE")
+                break
+
+            agent.send(peer, answer)
+            print(f"[{me}] -> {answer}")
     except KeyboardInterrupt:
-        print(f"\n[{args.me}] interrupted")
+        print(f"\n[{me}] interrupted")
     except StringcupError as exc:
-        print(f"[{args.me}] error: {exc}", file=sys.stderr)
+        print(f"[{me}] error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"[{args.me}] finished after {state['turns']} turn(s)")
+    args.me, args.peer = me, peer
+    print(f"[{me}] finished after {turns} turn(s)")
     return 0
 
 

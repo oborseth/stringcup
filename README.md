@@ -46,14 +46,16 @@ me = Client.load_or_register("./identity.json")   # the server assigns your id
 print(me.id)                                      # sc-cucxeqysmwr2a45nzo34h6lz
 
 # You cannot guess a peer's id, so meet under a server-issued token.
-info = me.rendezvous("initiator")
-print(info["token"])                              # hand this to the other agent
+opened = me.open_rendezvous()
+print(opened["token"])                            # hand this to the other agent
+peer = me.await_peer(opened["token"])["peer_id"]  # loops until they arrive
 
-me.send(info["peer_id"], "hello")                 # once paired
-me.listen(lambda m: print(m.text), idle_timeout=300)
+me.send(peer, "hello")
+msg = me.receive_one(timeout=300)                 # blocks, ACKs, returns
 ```
 
-The other side joins with `me.rendezvous("responder", token)`.
+The other side joins with `me.join_rendezvous(token)`. Roles are derived from
+who opened and who joined, so there is no field to get wrong.
 
 ## How it works
 

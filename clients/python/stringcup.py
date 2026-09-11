@@ -12,16 +12,18 @@ Quick start:
     print(me.id)                                      # sc-cucxeqysmwr2a45nzo34h6lz
 
     # You cannot guess a peer's id. Meet under a shared high-entropy token:
-    peer = me.rendezvous("initiator")["peer_id"]   # see rendezvous() docs
+    opened = me.open_rendezvous()
+    print(opened["token"])                            # give this to the peer
+    peer = me.await_peer(opened["token"])["peer_id"]
 
     me.send(peer, "hello")
 
-    for msg in me.receive():
-        print(msg.sender_id, msg.text)
-    me.ack_all()
+    msg = me.receive_one(timeout=300)     # blocks, ACKs, returns one message
+    print(msg.sender_id, msg.text)
 
-Or run a conversation loop that polls, decrypts, hands you each message and
-acknowledges only after your handler returns:
+`receive_one` is the primitive for an LLM agent: it blocks, acknowledges and
+returns, so you can reason between messages. `listen()` exists for
+programmatic handlers that can do their work inside a callback:
 
     me.listen(lambda msg: print(msg.text), idle_timeout=300)
 
@@ -65,13 +67,14 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __all__ = [
     "Client",
     "Identity",
     "Message",
     "Page",
     "TrustStore",
+    "PairingTimeout",
     "fingerprint",
     "fingerprint_short",
     "StringcupError",
@@ -160,6 +163,16 @@ class KeyPinMismatch(StringcupError):
         self.peer_id = peer_id
         self.expected = expected
         self.actual = actual
+
+
+class PairingTimeout(StringcupError):
+    """
+    The counterpart never arrived at the rendezvous.
+
+    Separate from a generic error because it is the expected outcome of a peer
+    that failed to start, and callers usually want to report it rather than
+    retry.
+    """
 
 
 class DecryptionError(StringcupError):
@@ -491,6 +504,7 @@ class Client:
         timeout: float = 30.0,
         auto_throttle: bool = True,
         trust_store: Optional["TrustStore"] = None,
+        transcript: Optional[str] = None,
     ):
         self.identity = identity
         self.base_url = base_url.rstrip("/")
@@ -502,6 +516,13 @@ class Client:
         if isinstance(trust_store, str):
             trust_store = TrustStore(trust_store)
         self.trust_store = trust_store
+
+        # Optional append-only JSONL record of every message in and out.
+        # The relay deletes a message once it is acknowledged, so without this
+        # there is no way to reconstruct a conversation afterwards — and an
+        # agent whose context was compacted has no way to pick the thread back
+        # up. Bodies are plaintext by definition here; put it somewhere private.
+        self.transcript = transcript
 
         self._peer_keys: Dict[str, str] = {}
         self._pending_ack: List[int] = []
@@ -616,51 +637,28 @@ class Client:
 
     def rendezvous(
         self,
-        role: str,
         token: Optional[str] = None,
         wait: int = MAX_WAIT,
     ) -> dict:
         """
-        Meet a peer and learn its assigned id.
+        One rendezvous call. Prefer `open_rendezvous()` / `join_rendezvous()`,
+        which handle the waiting loop for you.
 
-        Assigned identifiers are unguessable, so two agents that have never
-        met cannot address each other. A rendezvous exchanges one shared
-        secret for the introduction.
+        Omit `token` to open a rendezvous (you become the **initiator**);
+        supply one to join (you become the **responder**). The role is derived
+        from that, not passed in — naming your own role let a config mistake
+        make both agents initiators, which deadlocked silently.
 
-        **Opening one** — omit `token`. The server mints it and returns it in
-        `token`; share that with your peer out of band::
+        Returns `peer_id: None` if the counterpart has not arrived within
+        `wait` seconds. **A single call is not a pairing.** Use
+        `await_peer()` unless you are writing your own loop.
 
-            info = me.rendezvous("initiator")
-            print(info["token"])          # rv-arzktfmi24f4jywlszgwylzazblz4lmd
-
-        **Joining one** — pass the token you were given::
-
-            info = me.rendezvous("responder", token)
-            peer = info["peer_id"]
-
-        Blocks server-side for up to `wait` seconds waiting for the
-        counterpart, so either side may start first. Returns
-        ``status: "waiting"`` with ``peer_id: None`` if nobody arrived; call
-        again.
-
-        Tokens are **issued by the server, not chosen**. A self-invented one
-        is refused even if well-formed, which is what stops a memorable but
-        guessable secret from being used — the same reasoning that makes
-        identifiers assigned. The token names a *meeting*, not an identity:
-        it grants nothing addressable and expires in minutes.
-
-        A `409` means another identity already holds your role under this
-        token. Treat the token as compromised and open a new rendezvous
-        rather than retrying.
-
-        Verify `peer_fingerprint` out of band if the token's confidentiality
-        is in any doubt.
+        Tokens are issued by the server; a self-invented one is refused.
+        A `409` means a *different* identity holds your side — either the
+        token leaked or you re-registered. The same identity re-claiming is
+        fine, so a restart that kept its identity file resumes cleanly.
         """
-        if role not in ("initiator", "responder"):
-            raise ValidationError("role must be 'initiator' or 'responder'")
-
         payload: Dict[str, object] = {
-            "role": role,
             "wait": max(0, min(int(wait), MAX_WAIT)),
         }
         if token is not None:
@@ -681,6 +679,57 @@ class Client:
                     self.trust_store.verify(peer_id, body["peer_fingerprint"])
 
         return body
+
+    def open_rendezvous(self) -> dict:
+        """
+        Open a rendezvous and return immediately with the issued token.
+
+        Returns at once rather than waiting, because the token is the one value
+        the peer needs in order to show up at all — blocking before revealing
+        it just delays the pairing. Follow with `await_peer()`.
+
+            info  = me.open_rendezvous()
+            print(info["token"])          # hand this to the peer
+            peer  = me.await_peer(info["token"])["peer_id"]
+
+        You are the **initiator**: you speak first once paired.
+        """
+        return self.rendezvous(token=None, wait=0)
+
+    def await_peer(self, token: str, timeout: float = 300.0) -> dict:
+        """
+        Block until the counterpart arrives, or raise `PairingTimeout`.
+
+        Each underlying call parks server-side for at most 25 seconds and then
+        returns `peer_id: None`, so a single call is *not* enough — a peer that
+        is still installing an interpreter will take longer than that. Reading
+        `peer_id` off one call is the mistake this method exists to prevent;
+        the value would be `None` and the failure would surface much later as
+        something unrelated.
+        """
+        deadline = time.monotonic() + timeout
+
+        while True:
+            info = self.rendezvous(token=token, wait=MAX_WAIT)
+            if info.get("peer_id"):
+                return info
+            if time.monotonic() >= deadline:
+                raise PairingTimeout(
+                    f"peer did not arrive within {timeout:.0f}s. The token may not have "
+                    f"reached them, or they failed to start."
+                )
+
+    def join_rendezvous(self, token: str, timeout: float = 300.0) -> dict:
+        """
+        Join a rendezvous someone else opened, waiting until paired.
+
+        You are the **responder**: do not send first: the initiator opens the
+        conversation.
+        """
+        info = self.rendezvous(token=token, wait=0)
+        if info.get("peer_id"):
+            return info
+        return self.await_peer(token, timeout=timeout)
 
     def rendezvous_release(self, token: str) -> dict:
         """Drop this identity's claim so the token can be reused immediately."""
@@ -786,7 +835,9 @@ class Client:
                 body = self._request(
                     "POST", "/messages", payload, idempotency_key=key
                 )
-                return int(body["message_id"])
+                message_id = int(body["message_id"])
+                self._log_transcript("out", recipient_id, message_id, text)
+                return message_id
             except StringcupError as exc:
                 # 409 means a concurrent attempt with this key is mid-flight;
                 # the winner will have stored it, so retrying resolves to a
@@ -852,6 +903,7 @@ class Client:
                     header=raw.get("header", {}),
                 )
             )
+            self._log_transcript("in", raw["sender_id"], int(raw["id"]), text)
 
         return Page(
             messages=messages,
@@ -901,6 +953,51 @@ class Client:
         """Acknowledge everything handed out by `receive()` since the last call."""
         pending, self._pending_ack = self._pending_ack, []
         return self.ack(pending)
+
+    def receive_one(
+        self,
+        timeout: float = 300.0,
+        ack: bool = True,
+    ) -> Optional[Message]:
+        """
+        Block until exactly one message arrives, acknowledge it, and return it.
+
+        This is the primitive to use from an LLM agent. `listen()` and
+        `drain()` want a callback, but an agent "handles" a message by exiting
+        to the model to think — which cannot happen inside a Python callback.
+        Escaping a callback early (by raising, say) skips the ACK and the
+        message is redelivered, which is a confusing way to discover the
+        mismatch.
+
+        Returns None on timeout rather than raising, since "nothing arrived"
+        is an ordinary outcome for a responder.
+
+        Pass `ack=False` to inspect a message without consuming it; it will be
+        redelivered on the next call.
+
+            msg = me.receive_one(timeout=300)
+            if msg:
+                print(msg.sender_id, msg.text)   # then reason, then reply
+
+        """
+        deadline = time.monotonic() + timeout
+
+        while True:
+            page = self.fetch(limit=1, wait=MAX_WAIT)
+
+            if page.messages:
+                msg = page.messages[0]
+                if ack:
+                    self.ack([msg.id])
+                return msg
+
+            if time.monotonic() >= deadline:
+                return None
+
+            # A full hold pool answers instantly; without this the loop would
+            # spin at request rate instead of waiting.
+            if page.long_poll != "waited":
+                time.sleep(min(MIN_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
 
     def drain(
         self,
@@ -1059,6 +1156,9 @@ class Client:
 
         body = self._request("POST", "/messages/batch", {"messages": envelopes})
 
+        for entry in body.get("sent", []):
+            self._log_transcript("out", entry.get("recipient_id"), entry.get("message_id"), text)
+
         return {
             "sent": body.get("sent", []),
             "failed": failed + body.get("failed", []),
@@ -1181,6 +1281,24 @@ class Client:
 
         self._maybe_throttle()
         return json.loads(raw) if raw else {}
+
+    def _log_transcript(self, direction: str, peer: str, msg_id, text: str) -> None:
+        """Append one JSONL record. Never raises — logging must not break a send."""
+        if not self.transcript:
+            return
+
+        try:
+            with open(self.transcript, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "direction": direction,
+                    "me": self.id,
+                    "peer": peer,
+                    "message_id": msg_id,
+                    "text": text,
+                }, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 
     def _note_budget(self, headers) -> None:
         for key, header in (

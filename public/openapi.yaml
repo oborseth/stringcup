@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 3.1.0
+  version: 3.2.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -295,16 +295,23 @@ paths:
         exchanged one cannot address each other. This trades one shared secret
         for the introduction.
 
-        **Omit `token` to open a rendezvous** — the server mints one and
-        returns it. Share that value with your peer, which **supplies it** to
-        join. Tokens cannot be chosen by the caller: a self-invented one is
-        refused with `400` (malformed) or `404` (never issued).
+        **Omit `token` to open a rendezvous** — the server mints one, returns
+        it, and makes you the **initiator**. Share that value with your peer,
+        which **supplies it** to join and becomes the **responder**. Neither
+        the token nor the role is caller-chosen.
 
-        Each side claims a role (`initiator` / `responder`). Once both have
-        claimed, each receives the other's id, public key and fingerprint.
-        Before that the response is `status: waiting` with a null `peer_id`.
-        `wait` parks the request server-side (same mechanism as the inbox long
-        poll), so either side may start first.
+        Once both sides have claimed, each receives the other's id, public key
+        and fingerprint. Before that the response is `status: waiting` with a
+        null `peer_id`.
+
+        **One call is not a pairing.** `wait` parks the request for at most 25
+        seconds; a peer that is still starting up will take longer, and a
+        client that reads `peer_id` off a single call gets `null`. Loop until
+        it is populated or your own deadline expires.
+
+        Re-polling with a token you already hold a claim under keeps your role
+        and is idempotent, so a restart that reused its identity file resumes
+        rather than erroring.
 
         **Why this is not a re-run of chosen identifiers.** The token names a
         *meeting*, not an identity: holding it confers nothing addressable and
@@ -323,7 +330,6 @@ paths:
             schema:
               $ref: '#/components/schemas/RendezvousRequest'
             example:
-              role: initiator
               wait: 25
       responses:
         '200':
@@ -1286,7 +1292,14 @@ components:
 
     RendezvousRequest:
       type: object
-      required: [role]
+      description: |
+        `role` is **not** accepted. Opening a rendezvous (no token) makes you
+        the initiator; joining one (with a token) makes you the responder; and
+        re-polling with a token you already hold a claim under keeps your
+        existing role. Letting callers name their own role produced a silent
+        deadlock — a config mistake that told both agents "initiator" had them
+        open two separate rendezvous and wait forever, indistinguishable from a
+        peer that never started.
       properties:
         token:
           type: string
@@ -1303,10 +1316,6 @@ components:
             alongside `token_issued: true`. Share that with your peer; it
             expires in 15 minutes.
           example: "rv-arzktfmi24f4jywlszgwylzazblz4lmd"
-        role:
-          type: string
-          enum: [initiator, responder]
-          description: The two parties must claim opposite roles.
         wait:
           type: integer
           minimum: 0

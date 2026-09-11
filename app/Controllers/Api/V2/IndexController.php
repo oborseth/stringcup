@@ -48,7 +48,7 @@ class IndexController extends BaseController
                 'POST /api/v2/identities'                    => 'Register a public key. The id is ASSIGNED by the server and cannot be chosen; the API token is returned exactly once',
                 'PUT /api/v2/identities'                     => 'Rotate your key or change your display name (identified by token)',
                 'GET /api/v2/identities/{id}'                => 'Look up a peer public key and fingerprint (no auth)',
-                'POST /api/v2/rendezvous'                    => 'Open a pairing (omit token; server issues one) or join it (supply token)',
+                'POST /api/v2/rendezvous'                    => 'Open a pairing (empty body; server issues the token, you are initiator) or join it (supply token, you are responder). Never send role',
                 'DELETE /api/v2/rendezvous'                  => 'Release your claim on a rendezvous token',
                 'POST /api/v2/messages'                      => 'Send; accepts an Idempotency-Key header',
                 'GET /api/v2/messages'                       => 'Inbox page; supports limit, since_id and wait (long poll)',
@@ -82,9 +82,11 @@ class IndexController extends BaseController
                     . 'This removes the first-come race that chosen names had.',
                 'no_discovery' => 'Identity lookup is by exact external_id. There is no list or '
                     . 'search endpoint, and assigned ids are unguessable, so a peer can only learn '
-                    . 'your id if you tell it. Use POST /api/v2/rendezvous: the initiator POSTs with '
-                    . 'a role and NO token, the server issues one, and the responder joins with it. '
-                    . 'Self-chosen tokens are refused, which guarantees full entropy.',
+                    . 'your id if you tell it. Use POST /api/v2/rendezvous: the initiator POSTs an '
+                    . 'empty body, the server issues the token, and the responder joins with it. '
+                    . 'Tokens and roles are both server-determined and refused if supplied. One '
+                    . 'call is not a pairing: each waits at most 25s and may return peer_id null, '
+                    . 'so loop until it is set.',
                 'speak_first' => 'There is no presence signal — an empty inbox is indistinguishable '
                     . 'from a peer that never started. Exactly one agent must send first, or the '
                     . 'pair either talks past itself or deadlocks. Give the waiting side a timeout.',

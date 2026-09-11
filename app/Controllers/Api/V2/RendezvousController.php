@@ -61,11 +61,18 @@ class RendezvousController extends BaseController
     /**
      * POST /api/v2/rendezvous
      *
-     * Body: { "token": "<shared secret>", "role": "initiator"|"responder", "wait": 0-25 }
+     * Body: { "token": "<issued token>"?, "wait": 0-25 }
      *
-     * Claims a role under the token and returns the counterpart's identifier
-     * once both sides have arrived. Idempotent for the same identity: a retry
-     * re-reads the same claim rather than conflicting with itself.
+     * **The role is derived, not supplied.** Opening a rendezvous (no token)
+     * makes you the initiator; joining one (with a token) makes you the
+     * responder. Letting the caller name its own role produced a silent
+     * deadlock: a config mistake that told both agents "initiator" had them
+     * open two separate rendezvous and wait forever, and the failure was
+     * indistinguishable from a peer that never started.
+     *
+     * Idempotent for the same identity: a retry re-reads the same claim
+     * rather than conflicting with itself, so a restart that reuses its
+     * identity file resumes instead of erroring.
      */
     public function pair()
     {
@@ -75,9 +82,17 @@ class RendezvousController extends BaseController
                 return $this->failUnauthorized('Missing or invalid token');
             }
 
-            $req = $this->request->getJSON(true);
-            if (!is_array($req) || empty($req['role'])) {
-                return $this->failValidationErrors('role is required');
+            $req = $this->request->getJSON(true) ?? [];
+            if (!is_array($req)) {
+                return $this->failValidationErrors('Body must be a JSON object');
+            }
+
+            if (array_key_exists('role', $req)) {
+                return $this->failValidationErrors(
+                    'role is derived, not supplied: opening a rendezvous (no token) '
+                    . 'makes you the initiator, joining one (with a token) makes you '
+                    . 'the responder. Omit it.'
+                );
             }
 
             // Omitting the token opens a new rendezvous; supplying one joins
@@ -86,18 +101,13 @@ class RendezvousController extends BaseController
             $minting = !isset($req['token']) || $req['token'] === '' || $req['token'] === null;
             $token   = $minting ? null : (string) $req['token'];
 
+
+
             if (!$minting && !preg_match(self::TOKEN_PATTERN, $token)) {
                 return $this->failValidationErrors(
                     'Malformed rendezvous token. Tokens are issued by this endpoint — '
                     . 'POST without a token to open a rendezvous, then share the returned '
                     . 'token with your peer. Self-chosen tokens are not accepted.'
-                );
-            }
-
-            $role = strtolower((string) $req['role']);
-            if (!in_array($role, RendezvousModel::ROLES, true)) {
-                return $this->failValidationErrors(
-                    'role must be one of: ' . implode(', ', RendezvousModel::ROLES)
                 );
             }
 
@@ -121,6 +131,18 @@ class RendezvousController extends BaseController
             }
 
             $tokenHash = RendezvousModel::hashToken($token);
+
+            // Role resolution. Opening makes you the initiator. Carrying a
+            // token makes you the responder *unless* you already hold a claim
+            // under it — the initiator must be able to re-poll with its own
+            // token without being reclassified, and a restart that reused its
+            // identity file must resume its original side.
+            if ($minting) {
+                $role = 'initiator';
+            } else {
+                $held = $model->findClaimByIdentity($tokenHash, $identityId);
+                $role = $held !== null ? $held['role'] : 'responder';
+            }
 
             if (!$minting) {
                 // A token that names no live rendezvous is either expired,
@@ -148,9 +170,16 @@ class RendezvousController extends BaseController
                     'role'      => $role,
                     'requester' => $identity['external_id'],
                 ]);
+                // Deliberately does NOT fire when the same identity re-claims:
+                // a restart that kept its identity file must be able to resume.
                 return $this->fail(
-                    'That role is already claimed by another identity under this token. '
-                    . 'Treat the token as compromised and start a new pairing.',
+                    sprintf(
+                        'The %s side of this rendezvous is already held by a different '
+                        . 'identity. Either a third party has the token, or you '
+                        . 're-registered and are no longer the identity that claimed it. '
+                        . 'Do not retry — open a new rendezvous.',
+                        $role
+                    ),
                     409
                 );
             }

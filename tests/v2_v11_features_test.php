@@ -286,53 +286,63 @@ assert_code(401, $res, 'PUT requires a token');
 // ============================================================
 step('8. Rendezvous');
 // ============================================================
-$res = api('POST', "$API_BASE/rendezvous", ['role' => 'initiator'], $aliceToken);
-assert_code(200, $res, 'Initiator opens a rendezvous with no token');
+$res = api('POST', "$API_BASE/rendezvous", [], $aliceToken);
+assert_code(200, $res, 'Initiator opens a rendezvous with an empty body');
 assert_same(true, $res['body']['token_issued'] ?? null, 'Server issued the token');
+assert_same('initiator', $res['body']['role'], 'Opening derives the initiator role');
 assert_same('waiting', $res['body']['status'], 'Waiting until the counterpart arrives');
 assert_same(null, $res['body']['peer_id'], 'No peer id revealed before pairing');
 
 $rvToken = $res['body']['token'];
 assert_true((bool) preg_match('/^rv-[a-z2-7]{32}$/', $rvToken), "Minted token is 160 bits: $rvToken");
 
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'responder'], $bobToken);
-assert_code(200, $res, 'Responder joins with the issued token');
+step('8b. The role is derived, never supplied');
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'initiator'], $aliceToken);
+assert_code(400, $res, 'Supplying a role is rejected — that footgun made both sides initiators');
+
+// The initiator must be able to re-poll with its own token and stay the
+// initiator; deriving purely from token-presence would flip it to responder.
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], $aliceToken);
+assert_same('initiator', $res['body']['role'], 'Re-polling with own token keeps the initiator role');
+assert_same(null, $res['body']['peer_id'], 'Still unpaired');
+
+step('8c. Joining derives the responder role');
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], $bobToken);
+assert_code(200, $res, 'Responder joins');
+assert_same('responder', $res['body']['role'], 'Joining derives the responder role');
 assert_same('paired', $res['body']['status'], 'Pairing completes on the second arrival');
 assert_same($aliceId, $res['body']['peer_id'], "Responder learned the initiator's assigned id");
 assert_same(base64_encode($alice['pub']), $res['body']['peer_identity_public_key'], "Peer's real key returned");
 
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'initiator'], $aliceToken);
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], $aliceToken);
 assert_same('paired', $res['body']['status'], 'Initiator re-reads and is now paired');
 assert_same($bobId, $res['body']['peer_id'], "Initiator learned the responder's assigned id");
+assert_same('initiator', $res['body']['role'], 'Role still initiator after pairing');
 
 $expectedFp = 'sha256:' . rtrim(strtr(base64_encode(hash('sha256', $bob['pub'], true)), '+/', '-_'), '=');
 assert_same($expectedFp, $res['body']['peer_fingerprint'], 'Peer fingerprint accompanies the pairing');
 
-step('8b. Tokens cannot be self-chosen');
+step('8d. Tokens cannot be self-chosen');
 foreach (['project-alpha', 'hunter2hunter2hunter2', str_repeat('a', 40)] as $bad) {
-    $res = api('POST', "$API_BASE/rendezvous", ['token' => $bad, 'role' => 'responder'], $caroToken);
+    $res = api('POST', "$API_BASE/rendezvous", ['token' => $bad], $caroToken);
     assert_code(400, $res, 'Self-invented token rejected: ' . substr($bad, 0, 16));
 }
-
-// Well-formed but never issued: the gate is existence, not just shape.
 $fake = 'rv-' . substr(str_replace(['0','1','8','9'], 'a', bin2hex(random_bytes(24))), 0, 32);
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $fake, 'role' => 'responder'], $caroToken);
-assert_code(404, $res, 'Well-formed but unissued token rejected — minting is mandatory');
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $fake], $caroToken);
+assert_code(404, $res, 'Well-formed but unissued token rejected — issuance is mandatory');
 
-step('8c. Role protection and lifecycle');
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'initiator'], $caroToken);
-assert_code(409, $res, 'A third identity cannot steal a claimed role');
+step('8e. Role protection and lifecycle');
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], $caroToken);
+assert_code(409, $res, 'A third identity cannot take a held side');
 
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'bystander'], $aliceToken);
-assert_code(400, $res, 'Unknown role rejected');
-
-$res = api('POST', "$API_BASE/rendezvous", ['role' => 'initiator'], null);
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], null);
 assert_code(401, $res, 'Rendezvous requires auth');
 
-$res = api('DELETE', "$API_BASE/rendezvous", ['token' => $rvToken], $aliceToken);
-assert_code(200, $res, 'Claim released');
-$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken, 'role' => 'initiator'], $caroToken);
-assert_code(200, $res, 'Released role can be claimed by someone else');
+$res = api('DELETE', "$API_BASE/rendezvous", ['token' => $rvToken], $bobToken);
+assert_code(200, $res, 'Responder released its claim');
+$res = api('POST', "$API_BASE/rendezvous", ['token' => $rvToken], $caroToken);
+assert_code(200, $res, 'Released side can be claimed by someone else');
+assert_same('responder', $res['body']['role'], 'New claimant becomes the responder');
 
 // ============================================================
 step('9. Cleanup');
