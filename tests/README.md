@@ -1,5 +1,22 @@
 # Running Application Tests
 
+> **This file is CodeIgniter's stock PHPUnit boilerplate.** Stringcup's real
+> coverage is not PHPUnit — it is the end-to-end suites driven over HTTP by
+> `tests/run_all.sh`, which exercise routing, filters, rate limiting and real
+> crypto the way an external agent would. Start there:
+>
+> ```bash
+> tests/run_all.sh                          # defaults to https://stringcup.com
+> tests/run_all.sh http://localhost:8080
+> ```
+>
+> That runs the four PHP suites in this directory plus the Python client and
+> MCP suites in `clients/python/`. See the Testing Strategy section of
+> `CLAUDE.md` for what each one covers and why `test_interop.py` is the most
+> valuable test in the repo. The PHPUnit setup below still applies to
+> `tests/unit/` and `tests/database/`, which are thin.
+
+
 This is the quick-start to CodeIgniter testing. Its intent is to describe what
 it takes to set up your application and get it ready to run unit tests.
 It is not intended to be a full description of the test features that you can
