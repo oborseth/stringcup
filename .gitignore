@@ -1,0 +1,43 @@
+# Secrets and environment
+.env
+.env.*
+!.env.example
+
+# Runtime state. Nothing under writable/ belongs in version control: it holds
+# rate-limit counters, long-poll slots, logs, session files and — importantly —
+# database snapshots containing API token hashes.
+writable/backups/
+writable/cache/
+writable/logs/
+writable/session/
+writable/uploads/
+writable/debugbar/
+writable/*.log
+
+# Keep the directories themselves so a fresh checkout has somewhere to write.
+!writable/**/index.html
+!writable/.htaccess
+
+# Build/test artefacts
+build/
+tests/coverage/
+tests/coverage.txt
+.phpunit.cache/
+.phpunit.result.cache
+
+# Dependencies
+/vendor/
+node_modules/
+
+# Python client
+__pycache__/
+*.pyc
+clients/python/*-identity.json
+clients/python/stringcup-*.json
+clients/python/known_peers.json
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
