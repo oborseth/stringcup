@@ -7,6 +7,8 @@ use CodeIgniter\API\ResponseTrait;
 use App\Models\MessageModel;
 use App\Models\IdentityModel;
 use App\Models\ApiTokenModel;
+use App\Models\IdempotencyKeyModel;
+use App\Libraries\LongPollGuard;
 
 /**
  * V2 MessageController
@@ -14,11 +16,59 @@ use App\Models\ApiTokenModel;
  * Key differences from V1:
  * - Stateless ECIES crypto: header contains ephemeral_pub instead of msg_seq
  * - Persistent inbox: GET does NOT delete messages
- * - Explicit ACK: DELETE /api/v2/messages/{id} removes a specific message
+ * - Cursor-paginated inbox: bounded pages via since_id + limit
+ * - Explicit ACK: single (DELETE) or batched (POST /messages/ack)
+ * - Idempotent send via the Idempotency-Key header
  */
 class MessageController extends BaseController
 {
     use ResponseTrait;
+
+    /** Page size used when the client does not ask for one. */
+    public const DEFAULT_LIMIT = 50;
+
+    /** Ceiling on page size, and on the number of IDs in one batch ACK. */
+    public const MAX_LIMIT = 200;
+
+    /** Messages deliverable in one fan-out request. */
+    public const MAX_BATCH = 200;
+
+    /**
+     * Longest a client may park on an empty inbox, in seconds.
+     *
+     * Held below php.ini max_execution_time (30) and nginx's default
+     * fastcgi_read_timeout (60) so the hold always ends in a real response
+     * rather than a truncated one.
+     */
+    public const MAX_WAIT = 25;
+
+    /**
+     * Re-query cadence while parked, in microseconds.
+     *
+     * 500ms adds at most half a second to delivery while keeping the query
+     * count per hold bounded (~50 at the maximum wait) against an index-only
+     * lookup.
+     */
+    private const POLL_SLEEP_US = 500000;
+
+    /** Wire format this controller accepts. */
+    private const ALGO = 'x25519+ecies+aes256gcm';
+
+    /**
+     * Resolve the caller's identity.
+     *
+     * AuthFilter already did this work for every route it covers and stashed
+     * the result on the request; fall back to resolving the token locally so
+     * the controller stays correct if the filter mapping ever changes.
+     */
+    protected function currentIdentity(): ?array
+    {
+        if (isset($this->request->identity) && is_array($this->request->identity)) {
+            return $this->request->identity;
+        }
+
+        return $this->getIdentityForToken();
+    }
 
     protected function getIdentityForToken(): ?array
     {
@@ -51,18 +101,65 @@ class MessageController extends BaseController
     }
 
     /**
+     * One page of the caller's pending v2 messages.
+     *
+     * Over-fetches by one to detect a further page without a second COUNT
+     * query. Served by idx_messages_inbox (recipient_id, api_version, id).
+     *
+     * @return array{0: list<array<string,mixed>>, 1: bool} rows, has_more
+     */
+    private function queryPage(string $recipientExternalId, int $limit, int $sinceId): array
+    {
+        $query = (new MessageModel())
+            ->where('recipient_id', $recipientExternalId)
+            ->where('api_version', 2);
+
+        if ($sinceId > 0) {
+            $query->where('id >', $sinceId);
+        }
+
+        $rows    = $query->orderBy('id', 'ASC')->findAll($limit + 1);
+        $hasMore = count($rows) > $limit;
+
+        if ($hasMore) {
+            array_pop($rows);
+        }
+
+        return [$rows, $hasMore];
+    }
+
+    /**
+     * Shape a stored row for the wire.
+     */
+    private function presentMessage(array $m): array
+    {
+        return [
+            'id'           => (int) $m['id'],
+            'sender_id'    => $m['sender_id'],
+            'recipient_id' => $m['recipient_id'],
+            'header'       => json_decode($m['header_json'], true),
+            'ciphertext'   => base64_encode($m['ciphertext']),
+            'created_at'   => $m['created_at'],
+        ];
+    }
+
+    /**
      * POST /api/v2/messages
      *
      * Accepts ECIES-encrypted messages. Required header fields differ from v1:
      * - ephemeral_pub instead of msg_seq (no ratchet state)
      * - algo must be "x25519+ecies+aes256gcm"
      *
+     * Send is idempotent when the client supplies an Idempotency-Key header:
+     * replaying the same key as the same sender returns the original
+     * message_id with 200 instead of storing a second copy.
+     *
      * Stored with api_version=2; NOT auto-deleted on inbox retrieval.
      */
     public function send()
     {
         try {
-            $currentIdentity = $this->getIdentityForToken();
+            $currentIdentity = $this->currentIdentity();
             if (!$currentIdentity) {
                 $this->logWithContext('warning', 'V2 message send failed: unauthorized');
                 return $this->failUnauthorized('Missing or invalid token');
@@ -91,9 +188,9 @@ class MessageController extends BaseController
 
             // V2 requires ephemeral_pub and iv; algo must be ECIES variant
             $header = $req['header'];
-            if (empty($header['algo']) || $header['algo'] !== 'x25519+ecies+aes256gcm') {
+            if (empty($header['algo']) || $header['algo'] !== self::ALGO) {
                 $this->logWithContext('warning', 'V2 message send failed: invalid or missing algo', ['algo' => $header['algo'] ?? null]);
-                return $this->failValidationErrors('header.algo must be "x25519+ecies+aes256gcm"');
+                return $this->failValidationErrors('header.algo must be "' . self::ALGO . '"');
             }
 
             if (empty($header['ephemeral_pub'])) {
@@ -132,11 +229,47 @@ class MessageController extends BaseController
                 }
             }
 
+            // ---- Idempotency ------------------------------------------------
+            $idemKey = trim($this->request->getHeaderLine('Idempotency-Key'));
+            $idemModel = null;
+            $idemRowId = null;
+
+            if ($idemKey !== '') {
+                if (strlen($idemKey) > 255 || !preg_match('/^[\x21-\x7E]+$/', $idemKey)) {
+                    return $this->failValidationErrors('Idempotency-Key must be 1-255 printable ASCII characters without spaces');
+                }
+
+                $idemModel = new IdempotencyKeyModel();
+
+                $existing = $idemModel->findReplay((int) $currentIdentity['id'], $idemKey);
+                if ($existing !== null) {
+                    return $this->replayResponse($existing, $senderExternalId, $idemKey);
+                }
+
+                // Reserve the key before doing any work, so two concurrent
+                // retries of the same send cannot both reach the insert below.
+                $idemRowId = $this->reserveIdempotencyKey($idemModel, (int) $currentIdentity['id'], $idemKey);
+
+                if ($idemRowId === null) {
+                    // Lost the race: another request holds this key.
+                    $winner = $idemModel->findReplay((int) $currentIdentity['id'], $idemKey);
+                    if ($winner !== null) {
+                        return $this->replayResponse($winner, $senderExternalId, $idemKey);
+                    }
+                    return $this->fail('Could not reserve Idempotency-Key', 409);
+                }
+            }
+            // -----------------------------------------------------------------
+
             $recipientId   = $req['recipient_id'];
             $identityModel = new IdentityModel();
             $recipient     = $identityModel->where('external_id', $recipientId)->first();
 
             if (!$recipient) {
+                // Release the reservation so a corrected retry can reuse the key.
+                if ($idemRowId !== null) {
+                    $idemModel->delete($idemRowId);
+                }
                 $this->logWithContext('warning', 'V2 message send failed: recipient not found', ['recipient_id' => $recipientId]);
                 return $this->failNotFound('Recipient identity not found');
             }
@@ -153,6 +286,11 @@ class MessageController extends BaseController
                 'api_version'  => 2,
             ], true);
 
+            if ($idemRowId !== null) {
+                $idemModel->update($idemRowId, ['message_id' => (int) $messageId]);
+                $idemModel->pruneExpired();
+            }
+
             $this->logWithContext('info', 'V2 message sent successfully', [
                 'message_id'   => $messageId,
                 'sender_id'    => $senderExternalId,
@@ -160,7 +298,7 @@ class MessageController extends BaseController
             ]);
 
             return $this->respondCreated([
-                'message_id' => $messageId,
+                'message_id' => (int) $messageId,
                 'status'     => 'stored',
             ]);
         } catch (\Exception $e) {
@@ -173,47 +311,364 @@ class MessageController extends BaseController
     }
 
     /**
+     * Insert the reservation row, returning null if the unique constraint
+     * rejected it (i.e. a concurrent request already claimed the key).
+     *
+     * The driver either throws or returns false depending on DBDebug, so both
+     * outcomes are treated as "lost the race".
+     */
+    private function reserveIdempotencyKey(IdempotencyKeyModel $model, int $identityId, string $key): ?int
+    {
+        try {
+            $id = $model->insert([
+                'identity_id' => $identityId,
+                'idem_key'    => $key,
+                'message_id'  => 0, // placeholder until the message row exists
+                'created_at'  => date('Y-m-d H:i:s'),
+            ], true);
+
+            return $id ? (int) $id : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Response for a send that was already performed under this key.
+     */
+    private function replayResponse(array $record, string $senderId, string $key)
+    {
+        // message_id 0 means the original request reserved the key but has not
+        // finished storing the message yet.
+        if ((int) $record['message_id'] === 0) {
+            $this->logWithContext('info', 'V2 send: duplicate request still in flight', [
+                'sender_id' => $senderId,
+            ]);
+            return $this->fail('A request with this Idempotency-Key is still in flight', 409);
+        }
+
+        $this->logWithContext('info', 'V2 send: idempotent replay', [
+            'sender_id'  => $senderId,
+            'message_id' => $record['message_id'],
+        ]);
+
+        return $this->respond([
+            'message_id'        => (int) $record['message_id'],
+            'status'            => 'stored',
+            'idempotent_replay' => true,
+        ]);
+    }
+
+    /**
+     * POST /api/v2/messages/batch
+     *
+     * Fan-out: deliver up to MAX_BATCH independently-encrypted messages in one
+     * request. Intended for broadcasting to a topic, where the client has
+     * already encrypted once per member.
+     *
+     * Body: { "messages": [ { recipient_id, header, ciphertext }, ... ] }
+     *
+     * Each entry is validated and stored independently, and the response
+     * reports per-entry outcomes. A bad or unknown recipient in one entry does
+     * not reject the batch — otherwise one departed member would block every
+     * broadcast to a topic. The status is 207-like in spirit but returned as
+     * 200 with `sent` / `failed` arrays, since HTTP 207 is not part of this
+     * API's vocabulary.
+     *
+     * Idempotency-Key is not accepted here: one key cannot describe N distinct
+     * stores. Retry a failed entry through POST /api/v2/messages with its own
+     * key instead.
+     */
+    public function sendBatch()
+    {
+        try {
+            $currentIdentity = $this->currentIdentity();
+            if (!$currentIdentity) {
+                $this->logWithContext('warning', 'V2 batch send failed: unauthorized');
+                return $this->failUnauthorized('Missing or invalid token');
+            }
+
+            $req = $this->request->getJSON(true);
+            if (!is_array($req) || !array_key_exists('messages', $req)) {
+                return $this->failValidationErrors('Body must be a JSON object with a "messages" array');
+            }
+
+            if (!is_array($req['messages']) || $req['messages'] === []) {
+                return $this->failValidationErrors('messages must be a non-empty array');
+            }
+
+            if (count($req['messages']) > self::MAX_BATCH) {
+                return $this->failValidationErrors('messages may contain at most ' . self::MAX_BATCH . ' entries');
+            }
+
+            $senderExternalId = $currentIdentity['external_id'];
+            $identityModel    = new IdentityModel();
+            $messageModel     = new MessageModel();
+            $now              = date('Y-m-d H:i:s');
+
+            // Cache recipient lookups: broadcasting to a topic frequently
+            // repeats the same ids across retries of a partial batch.
+            $recipientCache = [];
+
+            $sent   = [];
+            $failed = [];
+
+            foreach ($req['messages'] as $index => $entry) {
+                $reject = static function (string $reason) use (&$failed, $index, $entry) {
+                    $failed[] = [
+                        'index'        => $index,
+                        'recipient_id' => is_array($entry) ? ($entry['recipient_id'] ?? null) : null,
+                        'error'        => $reason,
+                    ];
+                };
+
+                if (!is_array($entry)) {
+                    $reject('entry must be a JSON object');
+                    continue;
+                }
+
+                $error = $this->validateEnvelope($entry);
+                if ($error !== null) {
+                    $reject($error);
+                    continue;
+                }
+
+                $recipientId = $entry['recipient_id'];
+
+                if (!array_key_exists($recipientId, $recipientCache)) {
+                    $recipientCache[$recipientId] = $identityModel
+                        ->where('external_id', $recipientId)
+                        ->first() ?: null;
+                }
+
+                if ($recipientCache[$recipientId] === null) {
+                    $reject('Recipient identity not found');
+                    continue;
+                }
+
+                $messageId = $messageModel->insert([
+                    'sender_id'    => $senderExternalId,
+                    'recipient_id' => $recipientId,
+                    'header_json'  => json_encode($entry['header']),
+                    'ciphertext'   => base64_decode($entry['ciphertext'], true),
+                    'created_at'   => $now,
+                    'api_version'  => 2,
+                ], true);
+
+                if (!$messageId) {
+                    $reject('Could not store the message');
+                    continue;
+                }
+
+                $sent[] = [
+                    'index'        => $index,
+                    'recipient_id' => $recipientId,
+                    'message_id'   => (int) $messageId,
+                ];
+            }
+
+            $this->logWithContext('info', 'V2 batch send processed', [
+                'sender_id' => $senderExternalId,
+                'requested' => count($req['messages']),
+                'sent'      => count($sent),
+                'failed'    => count($failed),
+            ]);
+
+            return $this->respond([
+                'status' => 'processed',
+                'sent'   => $sent,
+                'failed' => $failed,
+                'count'  => count($sent),
+            ]);
+        } catch (\Exception $e) {
+            $this->logWithContext('error', 'V2 batch send failed: {message}', [
+                'message'   => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
+            return $this->failServerError('An error occurred while sending the messages.');
+        }
+    }
+
+    /**
+     * Validate one message envelope, returning an error string or null.
+     *
+     * Shared by the single and batch send paths so the wire contract cannot
+     * drift between them.
+     */
+    private function validateEnvelope(array $entry): ?string
+    {
+        if (empty($entry['recipient_id']) || empty($entry['ciphertext']) || empty($entry['header'])) {
+            return 'recipient_id, header, and ciphertext are required';
+        }
+
+        if (!is_string($entry['recipient_id']) || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $entry['recipient_id'])) {
+            return 'recipient_id must be 1-64 characters: letters, digits, hyphens, underscores';
+        }
+
+        if (!is_array($entry['header'])) {
+            return 'header must be a JSON object';
+        }
+
+        $header = $entry['header'];
+
+        if (empty($header['algo']) || $header['algo'] !== self::ALGO) {
+            return 'header.algo must be "' . self::ALGO . '"';
+        }
+
+        if (empty($header['ephemeral_pub'])) {
+            return 'header.ephemeral_pub is required';
+        }
+
+        if (empty($header['iv'])) {
+            return 'header.iv is required';
+        }
+
+        $ephemeralPub = base64_decode($header['ephemeral_pub'], true);
+        if ($ephemeralPub === false || strlen($ephemeralPub) !== 32) {
+            return 'header.ephemeral_pub must be base64-encoded X25519 public key (32 bytes)';
+        }
+
+        if (!is_string($entry['ciphertext'])) {
+            return 'ciphertext must be valid base64-encoded data';
+        }
+
+        $ciphertext = base64_decode($entry['ciphertext'], true);
+        if ($ciphertext === false || $ciphertext === '') {
+            return 'ciphertext must be valid base64-encoded data';
+        }
+
+        return null;
+    }
+
+    /**
      * GET /api/v2/messages
      *
-     * Returns all pending v2 messages for the authenticated identity.
-     * Messages are NOT deleted — call DELETE /api/v2/messages/{id} to acknowledge.
+     * Returns a bounded page of pending v2 messages for the authenticated
+     * identity, oldest first. Messages are NOT deleted — acknowledge them with
+     * DELETE /api/v2/messages/{id} or POST /api/v2/messages/ack.
+     *
+     * Query parameters:
+     *   limit    - page size, 1..MAX_LIMIT (default DEFAULT_LIMIT)
+     *   since_id - return only messages with id greater than this cursor
+     *   wait     - seconds to park on an empty inbox, 0..MAX_WAIT (default 0)
+     *
+     * Response envelope:
+     *   { messages: [...], count: n, has_more: bool, next_since_id: int|null }
+     *
+     * Drive the cursor from next_since_id to stream a backlog without
+     * re-reading it, then ACK to drop it permanently.
      */
     public function inbox()
     {
         try {
-            $currentIdentity = $this->getIdentityForToken();
+            $currentIdentity = $this->currentIdentity();
             if (!$currentIdentity) {
                 $this->logWithContext('warning', 'V2 inbox retrieval failed: unauthorized');
                 return $this->failUnauthorized('Missing or invalid token');
             }
 
+            $limitParam = $this->request->getGet('limit');
+            if ($limitParam !== null && $limitParam !== '') {
+                if (!ctype_digit((string) $limitParam)) {
+                    return $this->failValidationErrors('limit must be a positive integer');
+                }
+                $limit = (int) $limitParam;
+                if ($limit < 1 || $limit > self::MAX_LIMIT) {
+                    return $this->failValidationErrors('limit must be between 1 and ' . self::MAX_LIMIT);
+                }
+            } else {
+                $limit = self::DEFAULT_LIMIT;
+            }
+
+            $sinceParam = $this->request->getGet('since_id');
+            $sinceId    = 0;
+            if ($sinceParam !== null && $sinceParam !== '') {
+                if (!ctype_digit((string) $sinceParam)) {
+                    return $this->failValidationErrors('since_id must be a non-negative integer');
+                }
+                $sinceId = (int) $sinceParam;
+            }
+
             $recipientExternalId = $currentIdentity['external_id'];
 
-            $msgModel = new MessageModel();
-            $messages = $msgModel
-                ->where('recipient_id', $recipientExternalId)
-                ->where('api_version', 2)
-                ->orderBy('id', 'ASC')
-                ->findAll();
-
-            $out = [];
-            foreach ($messages as $m) {
-                $out[] = [
-                    'id'           => $m['id'],
-                    'sender_id'    => $m['sender_id'],
-                    'recipient_id' => $m['recipient_id'],
-                    'header'       => json_decode($m['header_json'], true),
-                    'ciphertext'   => base64_encode($m['ciphertext']),
-                    'created_at'   => $m['created_at'],
-                ];
+            $waitParam = $this->request->getGet('wait');
+            $wait      = 0;
+            if ($waitParam !== null && $waitParam !== '') {
+                if (!ctype_digit((string) $waitParam)) {
+                    return $this->failValidationErrors('wait must be a non-negative integer number of seconds');
+                }
+                $wait = min((int) $waitParam, self::MAX_WAIT);
             }
+
+            [$rows, $hasMore] = $this->queryPage($recipientExternalId, $limit, $sinceId);
+
+            // Long poll: park on an empty inbox so delivery is push-like
+            // instead of bounded by the caller's poll interval.
+            $longPoll = $wait > 0 ? 'ready' : 'off';
+            $waited   = 0.0;
+
+            if ($wait > 0 && $rows === []) {
+                $guard = new LongPollGuard();
+
+                if ($guard->acquire($wait)) {
+                    try {
+                        // The default 30s limit would abort a long hold.
+                        @set_time_limit($wait + 10);
+
+                        $deadline = microtime(true) + $wait;
+                        $started  = microtime(true);
+
+                        while (microtime(true) < $deadline) {
+                            usleep(self::POLL_SLEEP_US);
+
+                            [$rows, $hasMore] = $this->queryPage($recipientExternalId, $limit, $sinceId);
+                            if ($rows !== []) {
+                                break;
+                            }
+
+                            // Stop burning a worker on a client that hung up.
+                            if (connection_aborted() !== 0) {
+                                break;
+                            }
+                        }
+
+                        $waited   = microtime(true) - $started;
+                        $longPoll = 'waited';
+                    } finally {
+                        $guard->release();
+                    }
+                } else {
+                    // Pool exhausted. Answer immediately rather than queue for
+                    // a worker; the client falls back to interval polling.
+                    $longPoll = 'unavailable';
+                }
+            }
+
+            $out = array_map([$this, 'presentMessage'], $rows);
+
+            // Hold the cursor steady when a page comes back empty.
+            $nextSinceId = $out === []
+                ? ($sinceId > 0 ? $sinceId : null)
+                : (int) $out[count($out) - 1]['id'];
 
             $this->logWithContext('info', 'V2 inbox retrieved', [
                 'recipient_id'  => $recipientExternalId,
-                'message_count' => count($messages),
+                'message_count' => count($out),
+                'has_more'      => $hasMore,
             ]);
 
-            return $this->respond($out);
+            // Lets a client tell a real long poll from a silent fallback.
+            $this->response->setHeader('X-Long-Poll', $longPoll);
+            if ($longPoll === 'waited') {
+                $this->response->setHeader('X-Long-Poll-Waited', number_format($waited, 2));
+            }
+
+            return $this->respond([
+                'messages'      => $out,
+                'count'         => count($out),
+                'has_more'      => $hasMore,
+                'next_since_id' => $nextSinceId,
+            ]);
         } catch (\Exception $e) {
             $this->logWithContext('error', 'V2 inbox retrieval failed: {message}', [
                 'message'   => $e->getMessage(),
@@ -232,7 +687,7 @@ class MessageController extends BaseController
     public function ack(int $id)
     {
         try {
-            $currentIdentity = $this->getIdentityForToken();
+            $currentIdentity = $this->currentIdentity();
             if (!$currentIdentity) {
                 $this->logWithContext('warning', 'V2 message ACK failed: unauthorized');
                 return $this->failUnauthorized('Missing or invalid token');
@@ -270,6 +725,107 @@ class MessageController extends BaseController
                 'exception' => get_class($e),
             ]);
             return $this->failServerError('An error occurred while acknowledging the message.');
+        }
+    }
+
+    /**
+     * POST /api/v2/messages/ack   { "ids": [1, 2, 3] }
+     *
+     * Acknowledges up to MAX_LIMIT messages in a single request, so draining a
+     * page of the inbox costs one call instead of one call per message.
+     *
+     * Partial success is normal and reported per ID rather than as an error:
+     * already-ACKed IDs land in not_found, IDs belonging to another recipient
+     * land in forbidden, and the response is 200 as long as the request itself
+     * was well-formed.
+     */
+    public function ackBatch()
+    {
+        try {
+            $currentIdentity = $this->currentIdentity();
+            if (!$currentIdentity) {
+                $this->logWithContext('warning', 'V2 batch ACK failed: unauthorized');
+                return $this->failUnauthorized('Missing or invalid token');
+            }
+
+            $req = $this->request->getJSON(true);
+            if (!is_array($req) || !array_key_exists('ids', $req)) {
+                return $this->failValidationErrors('Body must be a JSON object with an "ids" array');
+            }
+
+            if (!is_array($req['ids']) || $req['ids'] === []) {
+                return $this->failValidationErrors('ids must be a non-empty array of message IDs');
+            }
+
+            if (count($req['ids']) > self::MAX_LIMIT) {
+                return $this->failValidationErrors('ids may contain at most ' . self::MAX_LIMIT . ' message IDs');
+            }
+
+            $ids = [];
+            foreach ($req['ids'] as $rawId) {
+                if (!is_int($rawId) && !ctype_digit((string) $rawId)) {
+                    return $this->failValidationErrors('ids must contain only positive integers');
+                }
+                $id = (int) $rawId;
+                if ($id < 1) {
+                    return $this->failValidationErrors('ids must contain only positive integers');
+                }
+                $ids[$id] = true; // dedupe
+            }
+            $ids = array_keys($ids);
+
+            $recipientExternalId = $currentIdentity['external_id'];
+
+            $msgModel = new MessageModel();
+            $rows     = $msgModel
+                ->whereIn('id', $ids)
+                ->where('api_version', 2)
+                ->findAll();
+
+            $acknowledged = [];
+            $forbidden    = [];
+            $seen         = [];
+
+            foreach ($rows as $row) {
+                $id        = (int) $row['id'];
+                $seen[$id] = true;
+
+                if ($row['recipient_id'] !== $recipientExternalId) {
+                    $forbidden[] = $id;
+                    continue;
+                }
+
+                $acknowledged[] = $id;
+            }
+
+            $notFound = array_values(array_diff($ids, array_keys($seen)));
+
+            if ($acknowledged !== []) {
+                // One DELETE for the whole page.
+                $msgModel->whereIn('id', $acknowledged)->delete();
+            }
+
+            $this->logWithContext('info', 'V2 batch ACK processed', [
+                'recipient_id'      => $recipientExternalId,
+                'requested'         => count($ids),
+                'acknowledged'      => count($acknowledged),
+                'not_found'         => count($notFound),
+                'forbidden'         => count($forbidden),
+            ]);
+
+            return $this->respond([
+                'status'       => 'acknowledged',
+                'acknowledged' => $acknowledged,
+                'not_found'    => $notFound,
+                'forbidden'    => $forbidden,
+                'count'        => count($acknowledged),
+            ]);
+        } catch (\Exception $e) {
+            $this->logWithContext('error', 'V2 batch ACK failed: {message}', [
+                'message'   => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
+            return $this->failServerError('An error occurred while acknowledging messages.');
         }
     }
 }

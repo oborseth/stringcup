@@ -22,6 +22,9 @@ class IdentityModel extends Model
         'algo',
         'created_at',
         'updated_at',
+        // Set only when identity_pubkey actually changes, so peers can detect
+        // key rotation independently of unrelated profile edits.
+        'key_updated_at',
     ];
 
     protected $validationRules = [

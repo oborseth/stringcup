@@ -51,9 +51,8 @@ class AuthFilter implements FilterInterface
             return $this->unauthorizedResponse('Invalid or inactive token');
         }
 
-        // Check token expiration (30 days from last use or creation)
-        $expirationDate = $tokenRow['last_used_at'] ?? $tokenRow['created_at'];
-        $expiresAt = strtotime($expirationDate . ' +30 days');
+        // Check token expiration (inactivity window from last use or creation)
+        $expiresAt = ApiTokenModel::expiresAtTimestamp($tokenRow);
 
         if (time() > $expiresAt) {
             // Mark token as inactive
@@ -75,6 +74,7 @@ class AuthFilter implements FilterInterface
 
         // Store identity in request for controllers to access
         $request->identity = $identity;
+        $request->apiToken = $tokenRow;
 
         return $request;
     }

@@ -108,14 +108,24 @@ class Filters extends BaseFilters
     public array $filters = [
         'ratelimit' => [
             'before' => [
-                'api/v1/*',  // Apply rate limiting to all v1 API endpoints
                 'api/v2/*',  // Apply rate limiting to all v2 API endpoints
+            ],
+            'after' => [
+                // Same routes: the after pass attaches the X-RateLimit-*
+                // budget headers using state recorded during before().
+                'api/v2/*',
             ],
         ],
         'auth' => [
             'before' => [
-                'api/v1/messages*',  // Require auth for all v1 message operations
                 'api/v2/messages*',  // Require auth for all v2 message operations
+                'api/v2/tokens*',    // Rotation/introspection authenticate with the current token
+                'api/v2/topics*',    // Topic membership is visible only to members
+                'api/v2/rendezvous*',// Pairing requires an established identity
+                // NOT api/v2/identities: filters match by path, not method,
+                // so listing it here would demand a token on POST — which is
+                // registration, the one call that cannot have one yet. PUT
+                // resolves the caller itself.
             ],
         ],
     ];
