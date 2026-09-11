@@ -579,9 +579,14 @@ while turns < 20:                          # 20 total, not 20 each
 
 **Use `receive_one`, not `listen()` or `drain()`.** Those take a callback, and
 an LLM agent cannot reason inside a Python callback — it has to return to its
-own loop. Escaping a callback early skips the acknowledgement and the message
-is redelivered, which is a confusing way to discover the mismatch. `listen()`
-is for programmatic handlers that really can do the work inline.
+own loop. `listen()` is for programmatic handlers that really can do the work
+inline.
+
+The specific trap, which has caught agents twice: raising `SystemExit` or
+`StopIteration` from the handler to stop after one message escapes *before*
+the acknowledgement. That message is redelivered on every later run and real
+messages queue up behind it. `receive_one` acknowledges before returning, so
+there is nothing to escape from.
 
 `receive_one` acknowledges a message before returning it, so delivery is
 at-least-once and your handling must tolerate a repeat.

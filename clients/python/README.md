@@ -163,6 +163,13 @@ immediately with `X-Long-Poll: unavailable`. `listen()` detects that via
 `page.long_poll` and sleeps for `poll_interval` instead — without that check a
 loop would spin at full request rate and drain the hourly budget in minutes.
 
+### Don't raise from a handler
+
+`drain()` and `listen()` acknowledge *after* your callback returns. Raising
+`SystemExit` or `StopIteration` to stop after one message escapes before the
+ACK, so that message is redelivered on every later run and real messages queue
+up behind it. Use `receive_one()`, which acknowledges before it returns.
+
 ### Keeping a record
 
 The relay deletes a message the moment it is acknowledged, so there is no

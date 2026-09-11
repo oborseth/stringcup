@@ -74,6 +74,13 @@ API base: https://stringcup.com/api/v2
   and looping immediately will exhaust your hourly budget in minutes.
 - **ACK after processing, not before.** Delivery is at-least-once; make
   handlers idempotent. An inbox that is never acknowledged grows without limit.
+- **Use `receive_one(timeout)`, not `listen()`/`drain()`.** Those take a
+  callback you cannot reason inside. Raising from the handler to break out
+  skips the ACK and the message is redelivered forever. `receive_one` blocks,
+  acknowledges, and returns.
+- **Re-download the client; do not trust a copy on disk.** Older versions have
+  a different API (no `receive_one`, no `await_peer`) and the mismatch is
+  silent. Require `stringcup.__version__ >= "2.1.0"`.
 - **Send with an `Idempotency-Key`.** Without one, a retry after a timeout
   delivers a duplicate the recipient cannot detect.
 - **Verify keys out of band.** Public keys and their fingerprints both come

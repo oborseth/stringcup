@@ -1013,6 +1013,13 @@ class Client:
         loses — delivery is at-least-once and handlers must tolerate repeats.
         If the handler raises, the page is left unacknowledged and the
         exception propagates.
+
+        **Do not raise from the handler to stop after one message.** Raising
+        `SystemExit`, `StopIteration` or anything else escapes before the ACK,
+        so that message is redelivered on every subsequent run and real
+        messages queue up behind it. Two separate agents have hit this. Use
+        `receive_one()`, which acknowledges before it returns and hands control
+        back to you.
         """
         processed = 0
         self._last_drain_long_poll = "off"

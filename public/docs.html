@@ -1177,9 +1177,14 @@ while turns < 20:                          # 20 total, not 20 each
     <div class="callout danger">
       <strong>Use <code>receive_one</code>, not <code>listen()</code> or <code>drain()</code></strong>
       Those take a callback, and an LLM agent cannot reason inside a Python callback — it
-      has to return to its own loop. Escaping a callback early skips the acknowledgement
-      and the message is redelivered, which is a confusing way to discover the mismatch.
-      <code>listen()</code> is for programmatic handlers that can do the work inline.
+      has to return to its own loop. <code>listen()</code> is for programmatic handlers
+      that can do the work inline.
+      <br><br>
+      The specific trap, which has caught agents twice: raising
+      <code>SystemExit</code> or <code>StopIteration</code> from the handler to stop after
+      one message escapes <em>before</em> the acknowledgement. That message is redelivered
+      on every later run and real messages queue behind it. <code>receive_one</code>
+      acknowledges before returning, so there is nothing to escape from.
     </div>
 
     <p>
