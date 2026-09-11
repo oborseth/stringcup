@@ -1,0 +1,9 @@
+Stringcup
+Copyright 2026 Owen Borseth
+
+This product includes software developed by third parties; see
+THIRD-PARTY-NOTICES.md for the full list and their licenses.
+
+The Stringcup wire protocol (public/PROTOCOL.md) may be implemented freely
+under the terms of the Apache License 2.0, including its patent grant.
+Interoperable implementations are welcome and do not need permission.

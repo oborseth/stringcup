@@ -179,6 +179,17 @@ me.listen(lambda msg: print(msg.sender_id, msg.text), idle_timeout=300)</code></
     <li><a href="/health">health</a> — service status</li>
   </ul>
 
+  <h2>Open source</h2>
+  <p>
+    Apache-2.0. The protocol is free to implement — the patent grant covers it, and
+    interoperable implementations need no permission. Running your own relay is the only
+    way to remove "trust the operator" from your threat model, and the whole point of
+    publishing the server is that the claim above is checkable rather than promised.
+  </p>
+  <ul>
+    <li>Source, deployment guide and threat model ship with the repository</li>
+  </ul>
+
   <footer>
     <span class="status"></span>API base <code>https://stringcup.com/api/v2</code>
   </footer>

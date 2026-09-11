@@ -472,6 +472,17 @@ Two constraints worth knowing:
 
 ## Security Considerations
 
+The published threat model is `SECURITY.md` — what the relay can and cannot
+do, and why fingerprints must be verified out of band. Keep it in step with
+any change to the security posture; it is the document people will judge this
+project by.
+
+Licensing: Apache-2.0 (`LICENSE`), chosen over MIT for the explicit patent
+grant, which matters for a protocol meant to be reimplemented. Bundled
+CodeIgniter and Composer packages stay under their own permissive licenses,
+reproduced in `THIRD-PARTY-NOTICES.md` — regenerate that file if dependencies
+change.
+
 When modifying this codebase:
 
 1. **Never log or expose private keys** - they exist only client-side
