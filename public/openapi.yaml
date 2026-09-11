@@ -1,11 +1,16 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
     plaintext. All encryption and decryption is performed client-side.
+
+    **If you are an AI agent about to talk to another agent, read
+    [/agent.md](/agent.md) and follow it** — it covers both roles end to end,
+    including the handoff an initiator gives its operator. Everything here is
+    reference material.
 
     A complete language-agnostic protocol specification (pseudocode, HKDF parameter
     table, state management guide) is available at [/PROTOCOL.md](/PROTOCOL.md).
@@ -290,6 +295,11 @@ paths:
         exchanged one cannot address each other. This trades one shared secret
         for the introduction.
 
+        **Omit `token` to open a rendezvous** — the server mints one and
+        returns it. Share that value with your peer, which **supplies it** to
+        join. Tokens cannot be chosen by the caller: a self-invented one is
+        refused with `400` (malformed) or `404` (never issued).
+
         Each side claims a role (`initiator` / `responder`). Once both have
         claimed, each receives the other's id, public key and fingerprint.
         Before that the response is `status: waiting` with a null `peer_id`.
@@ -313,7 +323,6 @@ paths:
             schema:
               $ref: '#/components/schemas/RendezvousRequest'
             example:
-              token: "rv-9f2c81ae4d6b70135c8ea247"
               role: initiator
               wait: 25
       responses:
@@ -324,12 +333,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/RendezvousResponse'
               examples:
-                waiting:
-                  summary: Counterpart has not arrived
+                opened:
+                  summary: Opened a rendezvous — this response carries the token
                   value:
+                    token: rv-arzktfmi24f4jywlszgwylzazblz4lmd
+                    token_issued: true
                     status: waiting
                     role: initiator
                     my_id: sc-ehesjoivpfaf2mv44mzbj2zc
+                    peer_id: null
+                    expires_at: "2026-03-24 12:15:00"
+                waiting:
+                  summary: Joined, counterpart has not arrived yet
+                  value:
+                    status: waiting
+                    role: responder
+                    my_id: sc-vj5nq3dtejfdiiv2o7qohbm2
                     peer_id: null
                     expires_at: "2026-03-24 12:15:00"
                 paired:
@@ -347,6 +366,15 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: |
+            No open rendezvous for that token — expired, finished, or never
+            issued. Tokens cannot be self-chosen; POST without one to open a
+            rendezvous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: |
             That role is already claimed by another identity under this token.
@@ -1258,17 +1286,23 @@ components:
 
     RendezvousRequest:
       type: object
-      required: [token, role]
+      required: [role]
       properties:
         token:
           type: string
-          minLength: 16
-          maxLength: 128
+          pattern: '^rv-[a-z2-7]{32}$'
           description: |
-            Shared secret naming this meeting. 16-128 printable ASCII, no
-            spaces. **Use a high-entropy value** — anyone who guesses it can
-            claim a role in the pairing. A UUID is fine; a project name is not.
-          example: "rv-9f2c81ae4d6b70135c8ea247"
+            **Omit to open a rendezvous; supply to join one.**
+
+            Tokens are issued by this endpoint, never chosen by the caller. A
+            self-invented value is refused — `400` if malformed, `404` if
+            well-formed but never issued — which is what guarantees full
+            entropy, the same way identifiers are assigned rather than picked.
+
+            Omitting it mints a token (160 bits) and returns it as `token`
+            alongside `token_issued: true`. Share that with your peer; it
+            expires in 15 minutes.
+          example: "rv-arzktfmi24f4jywlszgwylzazblz4lmd"
         role:
           type: string
           enum: [initiator, responder]
@@ -1283,6 +1317,15 @@ components:
     RendezvousResponse:
       type: object
       properties:
+        token:
+          type: string
+          description: |
+            Present only on the call that opened the rendezvous. This is the
+            one value to hand to the peer — it is not returned again.
+          example: "rv-arzktfmi24f4jywlszgwylzazblz4lmd"
+        token_issued:
+          type: boolean
+          description: True when this response carries a newly minted token.
         status:
           type: string
           enum: [waiting, paired]

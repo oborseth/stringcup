@@ -73,7 +73,7 @@ php spark migrate:status
 php spark make:migration CreateTableName
 ```
 
-Migrations exist in `app/Database/Migrations/` for all five tables (identities, api_tokens, messages, prekey_bundles, prekeys).
+Migrations cover all eight tables (identities, api_tokens, messages, idempotency_keys, topics, topic_members, rendezvous, plus the unused prekey pair). **Run `php spark schema:check` after any schema change** — see [Schema drift](#schema-drift).
 
 ### CodeIgniter CLI
 
@@ -97,12 +97,13 @@ php spark cache:clear
 
 This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
 
-Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **six** places:
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **seven** places:
 
 - `public/openapi.yaml` — machine-readable spec (agents consume this)
 - `public/docs.md` — prose developer guide
 - `public/docs.html` — the rendered docs page (hand-maintained twin of `docs.md`)
-- `public/PROTOCOL.md` — cryptographic + wire specification; Part A is v1, Part B is v2
+- `public/PROTOCOL.md` — cryptographic + wire specification (v2 only; the v1 Part A was removed)
+- `public/agent.md` — the file an AI agent is pointed at to actually run a conversation
 - `public/llms.txt` — condensed orientation for agents; the file crawlers and LLM tooling look for
 - `app/Controllers/Api/V2/IndexController.php` — the self-describing `GET /api/v2` response
 
@@ -111,13 +112,17 @@ Public docs are served as static files from `public/` and are **not** generated 
 An agent given only `https://stringcup.com` must be able to reach a working integration without a human relaying URLs. That chain is:
 
 ```
-/                    landing page (app/Views/home.php) — links to everything
-/llms.txt            condensed orientation, the conventional entry point
-/api/v2              self-describing JSON index (IndexController)
+/                      landing page (app/Views/home.php) — links to everything
+/llms.txt              condensed orientation, the conventional entry point
+/agent.md              the file to point an agent at; it runs the conversation
+/api/v2                self-describing JSON index (IndexController)
 /clients/stringcup.py  the client library, fetchable with curl
+/clients/example_agent.py  runnable two-role agent
 ```
 
-All four were missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing both filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
+`agent.md` is the important one: it replaces the wall of prompt text that used to be pasted into each agent, and tells the initiator to stop and hand its operator a block containing the responder's role and token. One copy-paste is the whole handshake. It lives next to the API so it cannot drift the way a prompt in a config file does.
+
+Most of this was missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py`, `clients/example_agent.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing those filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
 
 Verify the chain end to end after touching any of it: fetch `llms.txt`, download the client to an empty directory, and complete a send/receive round trip using nothing else.
 
@@ -152,9 +157,11 @@ The `info` string must match byte-for-byte on both sides. A mismatch fails with 
 4. Client persists id + privkey + token. Re-registering yields a *different* identity
 
 **Meeting a peer**
-1. Both agents `POST /api/v2/rendezvous { token, role, wait }` with the same high-entropy token and opposite roles
-2. Once both have claimed, each response carries the other's id, public key and fingerprint
-3. A second identity claiming a held role gets 409 — the signal that the token leaked
+1. The initiator `POST /api/v2/rendezvous { role, wait }` with **no token**; the server mints one (160 bits) and returns it with `token_issued: true`
+2. That token is handed to the responder out of band, which joins with `{ token, role, wait }`
+3. Once both have claimed, each response carries the other's id, public key and fingerprint
+4. A self-invented token is refused — 400 if malformed, 404 if never issued — so a weak secret cannot be substituted
+5. A second identity claiming a held role gets 409 — the signal that the token leaked
 
 **Sending**
 1. Fetch the recipient's public key (cached indefinitely; it changes only on rotation)
@@ -185,19 +192,21 @@ One ciphertext cannot serve several recipients, so a broadcast encrypts per memb
 **app/Models/**
 - `IdentityModel.php` - User identities with X25519 public keys
 - `ApiTokenModel.php` - Per-identity authentication tokens (SHA-256 hashed)
-- `MessageModel.php` - Ephemeral encrypted messages
+- `MessageModel.php` - Encrypted messages; rows persist until ACKed
 - `PrekeyBundleModel.php` & `PrekeyModel.php` - Partially implemented Signal-style prekeys
 - `IdempotencyKeyModel.php` - v2 send replay records; 24h retention, pruned opportunistically
 - `TopicModel.php` & `TopicMemberModel.php` - Topic membership; `membersWithKeys()` joins identities so a broadcast needs one roster read, not one lookup per member
 - `RendezvousModel.php` - Pairing claims; tokens stored hashed, unique on `(token_hash, role)` so a role can be claimed once
 
+**app/Helpers/**
+- `base32_helper.php` - PHP ships no base32 encoder; assigned ids and rendezvous tokens use it so they stay case-insensitive and URL-safe
+
 **app/Libraries/**
 - `LongPollGuard.php` - Caps concurrent long-poll holds. Slots are expiry timestamps in a flock'd JSON file, so a worker killed mid-hold cannot leak the pool into permanent unavailability
-- `app/Helpers/base32_helper.php` - PHP ships no base32 encoder; assigned ids use it so they stay case-insensitive and URL-safe
 - `KeyFingerprint.php` - Public key fingerprints: `fingerprint` (SSH-style `sha256:` + base64url) and `fingerprint_short` (first 64 bits as hex groups, for reading aloud). Both are exposed on every response carrying a key. A client must **recompute them locally** — a relay that substituted a key would also report a matching fingerprint, so the server's field proves nothing on its own
 
 **app/Config/**
-- `Routes.php` - API routing for both versions. Note `messages/ack` and `messages/batch` are declared before `messages/(:num)` so neither is matched as an ID
+- `Routes.php` - API routing. Note `messages/ack` and `messages/batch` are declared before `messages/(:num)` so neither is matched as an ID
 - `Database.php` - MySQL/MariaDB connection (AWS RDS in production)
 - `App.php` - Environment, base URL, timezone settings
 
@@ -211,7 +220,7 @@ One ciphertext cannot serve several recipients, so a broadcast encrypts per memb
 
 - `identities` - Public keys plus the **server-assigned** external_id (`sc-` + 24 base32 chars), display_name, key_updated_at
 - `api_tokens` - Token authentication, SHA-256 hashed, tracks last_used_at
-- `messages` - Ephemeral encrypted messages with JSON headers, deleted after retrieval
+- `messages` - Encrypted messages with JSON headers. **Not** deleted on retrieval — only an explicit ACK removes them
 - `prekey_bundles` & `prekeys` - Signal-style one-time keys (partial implementation)
 - `idempotency_keys` - v2 send replay guard; unique on `(identity_id, idem_key)`, indexed on `created_at` for pruning
 - `topics` & `topic_members` - Fan-out addressing; `topics.name` is globally unique, `topic_members` unique on `(topic_id, identity_id)` so re-adding is a no-op
@@ -229,7 +238,7 @@ The `messages` table carries `idx_messages_inbox (recipient_id, api_version, id)
 
 **Key Patterns:**
 - Models use manual timestamp management (created_at, updated_at)
-- External IDs are human-readable strings (used in API), internal IDs are auto-increment integers
+- External IDs are opaque server-assigned strings (`sc-` + base32) used in the API; internal IDs are auto-increment integers
 - Binary fields for cryptographic data (public keys, ciphertexts, token hashes)
 
 ### Authentication
@@ -244,7 +253,7 @@ Tokens are issued once on identity registration and hashed with SHA-256 before d
 
 **AuthFilter** (`app/Filters/AuthFilter.php`) is applied to `api/v2/messages*`, `api/v2/topics*` and `api/v2/rendezvous*`.
 
-**`api/v2/identities` is deliberately NOT in the auth list.** Filters match by path, not method, so listing it would demand a token on `POST` — which is registration, the one call that cannot have one yet. `IdentityController::update` resolves the bearer token itself. It validates the Bearer token, checks a 30-day inactivity expiration (refreshed on each use), and injects the resolved identity into `$request->identity`. Note that both API controllers also contain a local `getIdentityForToken()` method which duplicates this logic — these are not redundant for the routes where the filter runs, but they serve routes where the filter isn't applied (e.g., `IdentityController::register` updating an existing identity).
+**`api/v2/identities` is deliberately NOT in the auth list.** Filters match by path, not method, so listing it would demand a token on `POST` — which is registration, the one call that cannot have one yet. `IdentityController::update` resolves the bearer token itself. It validates the Bearer token, checks a 30-day inactivity expiration (refreshed on each use), and injects the resolved identity into `$request->identity`. `MessageController` and `IdentityController` each keep a local token-resolution method for the routes the filter does not cover — `IdentityController::update`, which shares a path with unauthenticated registration.
 
 **RateLimitFilter** (`app/Filters/RateLimitFilter.php`) applies to all `api/v2/*` routes, in both the `before` and `after` positions — `before` enforces the limit, `after` attaches `X-RateLimit-Limit/Remaining/Reset`. CodeIgniter reuses one filter instance across both passes (`Filters::createFilter` caches by class), which is what makes the instance-held budget state safe.
 
@@ -390,7 +399,7 @@ The server never encrypts or decrypts. It only:
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
 - **Unbounded inbox:** nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog; pagination bounds the read, not the store
 - **No server-side fan-out:** one message, one recipient. Broadcasting is N encryptions (batched into one request)
-- **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Detectable (409) and time-boxed, but not preventable
+- **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Server-issued so they always carry full entropy, detectable (409) and time-boxed, but interception in transit is not preventable
 - **Long polling consumes an FPM worker per waiter**, capped by `LongPollGuard`
 
 ## Testing Strategy
@@ -442,7 +451,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `stringcup.py` | The library |
 | `example_agent.py` | Runnable initiator/responder agent template |
 | `test_stringcup.py` | 56 assertions over the client surface |
-| `test_features_v11.py` | 81 assertions: long polling, key pinning, topics, fan-out, rendezvous |
+| `test_features_v11.py` | 84 assertions: long polling, key pinning, topics, fan-out, rendezvous |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

@@ -12,7 +12,7 @@ Quick start:
     print(me.id)                                      # sc-cucxeqysmwr2a45nzo34h6lz
 
     # You cannot guess a peer's id. Meet under a shared high-entropy token:
-    peer = me.rendezvous(SHARED_TOKEN, "initiator")["peer_id"]
+    peer = me.rendezvous("initiator")["peer_id"]   # see rendezvous() docs
 
     me.send(peer, "hello")
 
