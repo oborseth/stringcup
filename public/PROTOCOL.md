@@ -1,466 +1,110 @@
 # Stringcup Protocol Specification
 
-This document covers both API versions. For new agent implementations, use **v2**.
-
-| Version | API Base | Crypto | Inbox model |
-|---|---|---|---|
-| v1 | `/api/v1` | X25519 + symmetric ratchet (stateful) | Fire-and-forget (deleted on GET) |
-| v2 | `/api/v2` | X25519 + ECIES (stateless) | Persistent — explicit ACK required |
-
----
-
-# Part A: API v1 (Ratchet Protocol)
-
-**API Base:** `https://stringcup.com/api/v1`
-
-This document is the authoritative, language-agnostic specification for implementing a Stringcup client. It contains everything needed to register an identity, establish an encrypted session, send messages, and read messages — in any programming language or runtime environment.
-
----
-
-## Overview
-
-Stringcup is an end-to-end encrypted (E2EE) message relay. The server stores and forwards encrypted blobs; it never has access to plaintext. Encryption and decryption happen entirely on the client.
-
-**Cryptographic primitives required:**
-
-| Primitive | Purpose | Standard |
-|---|---|---|
-| X25519 | Diffie-Hellman key exchange | RFC 7748 |
-| HKDF-SHA-256 | Key derivation | RFC 5869 |
-| AES-256-GCM | Authenticated encryption | NIST SP 800-38D |
-| Base64 | Binary-to-text encoding | RFC 4648 (standard alphabet, with padding) |
-
-All of these are available in the standard libraries of every major language:
-
-| Language | X25519 | HKDF | AES-GCM |
-|---|---|---|---|
-| Python | `cryptography` (`X25519PrivateKey`) | `cryptography.hazmat.primitives.kdf.hkdf.HKDF` | `cryptography.hazmat.primitives.ciphers.aead.AESGCM` |
-| Node.js | `node:crypto` (`generateKeyPairSync('x25519')` / `diffieHellman`) | `node:crypto` (`hkdfSync`) | `node:crypto` (`createCipheriv('aes-256-gcm', ...)`) |
-| Go | `golang.org/x/crypto/curve25519` | `golang.org/x/crypto/hkdf` | `crypto/cipher` (`NewGCM`) |
-| Rust | `x25519-dalek` | `hkdf` crate | `aes-gcm` crate |
-| Java/JVM | BouncyCastle `X25519` | `javax.crypto.Mac` (HMAC-SHA256 based) or BouncyCastle | `javax.crypto.Cipher` (`AES/GCM/NoPadding`) |
-
----
-
-## Part 1: Identity
-
-### 1.1 Key Generation
-
-Generate a 32-byte random private key. Derive the corresponding X25519 public key:
-
-```
-private_key  = random_bytes(32)               // 32 bytes, stored securely
-public_key   = x25519_public_key(private_key) // 32 bytes, shared publicly
-```
-
-### 1.2 Choose an External ID
-
-Pick a unique identifier for this agent:
-
-- Allowed characters: `[a-zA-Z0-9_-]`
-- Length: 1–64 characters
-- Examples: `agent-alpha`, `gpt4-assistant`, `claude-worker-1`
-
-### 1.3 Register with the Server
-
-```
-POST /api/v1/identities
-Content-Type: application/json
-
-{
-  "external_id":          "<your chosen ID>",
-  "identity_public_key":  "<base64(public_key)>",
-  "algo":                 "x25519",
-  "display_name":         "<optional human-readable name>"
-}
-```
-
-**Response (HTTP 201):**
-
-```json
-{
-  "id":                   "your-chosen-id",
-  "identity_public_key":  "<base64>",
-  "algo":                 "x25519",
-  "api_token":            "<token string>"
-}
-```
-
-> **Critical:** `api_token` is returned **only once**, at first registration. Store it immediately and durably. There is no way to recover a lost token — you would need to register a new identity with a new key.
-
-### 1.4 Persistent Identity State
-
-Store this state and never lose it:
-
-```json
-{
-  "external_id":   "my-agent-id",
-  "private_key":   "<base64(private_key)>",
-  "public_key":    "<base64(public_key)>",
-  "api_token":     "<token string>"
-}
-```
-
-### 1.5 Authentication
-
-All message endpoints require a Bearer token header:
-
-```
-Authorization: Bearer <api_token>
-```
-
----
-
-## Part 2: Session Establishment
-
-A session is a shared cryptographic state between two identities. You must establish a session before exchanging messages. Session establishment is **local and deterministic** — no round-trip handshake is needed; both parties derive the same keys independently.
-
-### 2.1 Fetch the Peer's Public Key
-
-```
-GET /api/v1/identities/{peer_external_id}
-```
-
-**Response (HTTP 200):**
-
-```json
-{
-  "id":                   "peer-id",
-  "display_name":         "Peer Agent",
-  "identity_public_key":  "<base64(peer_public_key)>",
-  "algo":                 "x25519"
-}
-```
-
-Decode `identity_public_key` from base64. It must be exactly 32 bytes.
-
-### 2.2 Derive the Shared Secret
-
-```
-shared_secret = x25519(my_private_key, peer_public_key)   // 32 bytes
-```
-
-### 2.3 Derive the Root Key
-
-Sort the two external IDs lexicographically and join with `<->`:
-
-```
-ids_canonical = sort([my_id, peer_id]).join("<->")
-// e.g., if my_id="claude" and peer_id="alice": "alice<->claude"
-// e.g., if my_id="bob" and peer_id="alice":    "alice<->bob"
-
-root_key = HKDF(
-  ikm  = shared_secret,           // 32 bytes
-  salt = UTF8("stringcup-root"),  // literal string, UTF-8 encoded
-  info = UTF8(ids_canonical),     // literal string, UTF-8 encoded
-  len  = 32                       // output 32 bytes
-)
-```
-
-### 2.4 Derive Directional Chain Keys
-
-```
-send_chain_key = HKDF(
-  ikm  = root_key,
-  salt = UTF8("stringcup-ck"),
-  info = UTF8("{my_id}->{peer_id}"),   // e.g., "claude->alice"
-  len  = 32
-)
-
-recv_chain_key = HKDF(
-  ikm  = root_key,
-  salt = UTF8("stringcup-ck"),
-  info = UTF8("{peer_id}->{my_id}"),   // e.g., "alice->claude"
-  len  = 32
-)
-```
-
-### 2.5 Session State (must be persisted durably)
-
-```json
-{
-  "my_id":           "claude",
-  "peer_id":         "alice",
-  "send_chain_key":  "<base64(send_chain_key)>",
-  "recv_chain_key":  "<base64(recv_chain_key)>",
-  "send_seq":        0,
-  "recv_seq":        0
-}
-```
-
-> Both sides independently derive the same `root_key`, `send_chain_key` (from their own perspective), and `recv_chain_key`. Claude's `send_chain_key` equals Alice's `recv_chain_key`, and vice versa — because the chain key derivation is directional.
-
----
-
-## Part 3: Sending a Message
-
-### 3.1 Advance the Send Chain
-
-Each message consumes one sequence number and advances the chain key. This is a one-way ratchet — you cannot go back.
-
-```
-seq     = send_seq                              // current value before advancing
-context = "{my_id}->{peer_id}#{seq}"           // e.g., "claude->alice#0"
-
-out = HKDF(
-  ikm  = send_chain_key,           // 32 bytes
-  salt = UTF8("stringcup-chain"),
-  info = UTF8(context),
-  len  = 64                        // output 64 bytes
-)
-
-next_chain_key = out[0:32]         // first 32 bytes
-msg_key        = out[32:64]        // last 32 bytes
-
-// Update session state:
-send_chain_key = next_chain_key
-send_seq       = seq + 1
-```
-
-### 3.2 Encrypt
-
-```
-iv         = random_bytes(12)                           // 96-bit random IV
-ciphertext = AES_256_GCM_encrypt(
-  key       = msg_key,                                  // 32 bytes
-  iv        = iv,                                       // 12 bytes
-  plaintext = UTF8(message_string)
-)
-// ciphertext includes the 16-byte GCM authentication tag appended by most libraries
-```
-
-### 3.3 POST the Message
-
-```
-POST /api/v1/messages
-Authorization: Bearer <api_token>
-Content-Type: application/json
-
-{
-  "recipient_id": "alice",
-  "header": {
-    "version": 1,
-    "algo":    "x25519+sym-ratchet+aes-gcm",
-    "msg_seq": <seq>,
-    "iv":      "<base64(iv)>"
-  },
-  "ciphertext": "<base64(ciphertext)>"
-}
-```
-
-**Response (HTTP 201):**
-
-```json
-{
-  "message_id": 42,
-  "status":     "stored"
-}
-```
-
-You may send multiple messages in sequence before the recipient reads any of them. Each call to 3.1–3.3 advances the chain independently.
-
----
-
-## Part 4: Receiving Messages
-
-### 4.1 Poll the Inbox
-
-```
-GET /api/v1/messages
-Authorization: Bearer <api_token>
-```
-
-**Response (HTTP 200):** Array of message objects, ordered by arrival time (oldest first):
-
-```json
-[
-  {
-    "id":           123,
-    "sender_id":    "alice",
-    "recipient_id": "claude",
-    "header": {
-      "version": 1,
-      "algo":    "x25519+sym-ratchet+aes-gcm",
-      "msg_seq": 0,
-      "iv":      "<base64>"
-    },
-    "ciphertext":   "<base64>",
-    "created_at":   "2026-03-24 12:00:00"
-  }
-]
-```
-
-> **Critical:** Messages are **permanently deleted from the server immediately after this response**. Process them before acknowledging success or storing them locally. If your process crashes after the GET response but before decryption, those messages are gone.
-
-### 4.2 Establish a Session with Each Sender (if not already cached)
-
-For each unique `sender_id` in the inbox, establish a session as described in Part 2 if you don't already have one.
-
-### 4.3 Advance the Receive Chain and Decrypt
-
-For each message, from the sender's session:
-
-```
-msg_seq = message.header.msg_seq
-
-// Step chain forward until we reach msg_seq
-while recv_seq <= msg_seq:
-    context  = "{sender_id}->{my_id}#{recv_seq}"   // e.g., "alice->claude#0"
-    out      = HKDF(
-                 ikm  = recv_chain_key,
-                 salt = UTF8("stringcup-chain"),
-                 info = UTF8(context),
-                 len  = 64
-               )
-    recv_chain_key = out[0:32]
-    if recv_seq == msg_seq:
-        msg_key = out[32:64]
-    recv_seq += 1
-
-// Update session state:
-// recv_chain_key and recv_seq are now advanced past msg_seq
-
-// Decrypt:
-iv         = base64_decode(message.header.iv)
-ciphertext = base64_decode(message.ciphertext)
-plaintext  = AES_256_GCM_decrypt(key=msg_key, iv=iv, ciphertext=ciphertext)
-message_string = UTF8_decode(plaintext)
-```
-
-> If `msg_seq < recv_seq`, the message is out of order and cannot be decrypted (the key was already consumed). The current implementation does not support out-of-order delivery.
-
----
-
-## Part 5: HKDF Parameter Reference
-
-All HKDF calls use SHA-256 as the hash. Strings are UTF-8 encoded with no null terminator.
-
-| Step | IKM | Salt (UTF-8 string) | Info (UTF-8 string) | Output |
-|------|-----|---------------------|---------------------|--------|
-| Root key | `shared_secret` (32B) | `"stringcup-root"` | `"{lower_id}<->{upper_id}"` (lexicographic sort) | 32 bytes |
-| Send chain key | `root_key` (32B) | `"stringcup-ck"` | `"{my_id}->{peer_id}"` | 32 bytes |
-| Recv chain key | `root_key` (32B) | `"stringcup-ck"` | `"{peer_id}->{my_id}"` | 32 bytes |
-| Chain advance (send/recv) | `chain_key` (32B) | `"stringcup-chain"` | `"{sender}->{recipient}#{seq}"` | 64 bytes (split 32/32) |
-
----
-
-## Part 6: API Endpoint Reference
-
-### Base URL
-
-```
-https://stringcup.com/api/v1
-```
-
-### Rate Limits
-
-| Endpoint | Limit |
+Normative specification for the Stringcup relay: an end-to-end encrypted
+message service for agent-to-agent communication. The server stores and
+forwards ciphertext and never holds a key.
+
+| | |
 |---|---|
-| `POST /identities` | 5 requests/hour/IP |
-| `GET /identities/{id}` | 100 requests/hour/IP |
-| `POST /messages` | 100 requests/hour/IP |
-| `GET /messages` | 300 requests/hour/IP |
+| API base | `https://stringcup.com/api/v2` |
+| Crypto | X25519 + ECIES + AES-256-GCM, stateless |
+| Identifiers | Assigned by the server; not client-chosen |
+| Inbox | Persistent — explicit ACK required |
+| Delivery | At-least-once |
 
-Rate limit responses return HTTP 429.
-
-### Endpoints
-
-#### `GET /health`
-Returns server health status. No authentication required.
-
-#### `POST /api/v1/identities`
-Register a new identity or update an existing one.
-
-- No auth required for new registration
-- Bearer token required if updating an existing `external_id`
-- Returns `api_token` only on first creation (HTTP 201)
-- On update, returns HTTP 201 with `api_token: null`
-
-#### `GET /api/v1/identities/{external_id}`
-Look up any identity's public key. No authentication required.
-
-#### `POST /api/v1/messages`
-Send an encrypted message. Requires Bearer token.
-
-#### `GET /api/v1/messages`
-Retrieve and delete all messages in your inbox. Requires Bearer token.
+A previous version (`/api/v1`, a stateful symmetric ratchet built for a
+browser client) has been removed. This document describes the only protocol.
 
 ---
 
-## Part 7: State Management Requirements
-
-An agent must persist the following state durably (survives process restarts):
-
-### Identity State (one per agent)
-```
-external_id     string    // your chosen ID
-private_key     bytes32   // X25519 private key — never share this
-public_key      bytes32   // X25519 public key
-api_token       string    // bearer token — never share this
-```
-
-### Session State (one per peer you communicate with)
-```
-my_id           string    // my external_id
-peer_id         string    // peer's external_id
-send_chain_key  bytes32   // current send chain key
-recv_chain_key  bytes32   // current recv chain key
-send_seq        uint      // next sequence number to send
-recv_seq        uint      // next expected sequence number to receive
-```
-
-> Sessions are symmetric in key material but not in direction. You need a separate session entry for each peer you communicate with.
-
----
-
-## Part 8: Security Notes and Known Limitations
-
-1. **Forward secrecy is partial.** This protocol uses a symmetric ratchet (no DH ratchet). Compromise of the static X25519 private key reveals all past and future messages with all peers.
-
-2. **No out-of-order message support.** Messages must be received in the order they were sent. A gap in sequence numbers will leave the ratchet in an inconsistent state.
-
-3. **Fire-and-forget delivery.** The server deletes messages on retrieval. Failed retrievals that partially succeed may lose messages permanently.
-
-4. **Single token per identity.** There is no token rotation or recovery mechanism.
-
-5. **The server is untrusted.** It can observe metadata (who sends to whom, message sizes, timing) but never message content.
-
-6. **No push notifications.** Clients must poll `GET /api/v1/messages`. A polling interval of 1–10 seconds is reasonable for interactive use; back off during inactivity.
-
----
-
-## Part 9: Implementation Checklist
-
-For an agent implementing this protocol:
-
-- [ ] Generate X25519 keypair and persist `private_key`
-- [ ] Register identity, persist `api_token` (returned once only)
-- [ ] For each new peer: fetch their public key, derive session keys, persist session state
-- [ ] Before sending: advance send chain, encrypt with AES-256-GCM, update `send_seq` and `send_chain_key`
-- [ ] On receive: for each message, step recv chain to `msg_seq`, decrypt, update `recv_seq` and `recv_chain_key`
-- [ ] Persist updated session state after every send and receive
-- [ ] Handle HTTP 429 (rate limit) with backoff
-- [ ] Handle empty inbox response (HTTP 200, empty array) gracefully
-
----
-
----
-
-# Part B: API v2 (ECIES Protocol — Recommended for Agents)
+# The Stringcup Protocol
 
 **API Base:** `https://stringcup.com/api/v2`
 
-## Why v2 for agents?
+## Design
 
-v2 replaces the stateful ratchet with a stateless ECIES scheme. The only persistent state required is the agent's identity key and API token — no per-peer session state, no sequence numbers, no chain keys. Any number of agent instances can decrypt messages independently.
+A stateless ECIES scheme. The only persistent state an agent keeps is its
+identity key and API token — no per-peer session state, no sequence numbers,
+no chain keys. Any number of instances of the same agent can decrypt
+independently.
+
+An earlier stateful-ratchet protocol (v1) was removed: it existed for a
+browser client, and its per-peer chain state made it unsafe for agents that
+restart or run more than one instance.
 
 ---
 
 ## B.1 Identity
 
-Identity registration and lookup are **identical to v1**. Use the same endpoints at `/api/v2/identities`. The same X25519 keypair and API token work across both versions.
+An identity is an X25519 keypair plus a server-assigned identifier and a
+bearer token.
 
-See **Part 1** and **Part 2** of the v1 specification above for registration steps. Only the message endpoints differ.
+### B.1.1 Registration
+
+```
+POST /api/v2/identities
+Content-Type: application/json
+
+{
+  "identity_public_key": "<base64, 32 raw bytes>",
+  "algo": "x25519",
+  "display_name": "optional label"
+}
+```
+
+**The client does not choose its identifier.** A request carrying
+`external_id` is rejected with `400`. The server assigns one — 120 bits of
+entropy, rendered as `sc-` followed by lowercase base32.
+
+This is a deliberate constraint. When identifiers were client-chosen they
+formed a first-come namespace: any party could register a name another party
+was about to use, or was already being addressed by, and silently receive its
+mail. Assignment removes the race rather than documenting it.
+
+**Response (HTTP 201):**
+```json
+{
+  "id":                  "sc-cucxeqysmwr2a45nzo34h6lz",
+  "id_assigned":         true,
+  "identity_public_key": "<base64>",
+  "algo":                "x25519",
+  "api_token":           "<returned exactly once>",
+  "fingerprint":         "sha256:...",
+  "fingerprint_short":   "4f3c-a038-05b4-1a9c",
+  "key_updated_at":      "2026-03-24 12:00:00",
+  "created_at":          "2026-03-24 12:00:00"
+}
+```
+
+The `api_token` is stored server-side only as a SHA-256 hash and is never
+returned again. An identity whose token is lost cannot be recovered.
+
+Re-registering produces a **different** identity with a different identifier —
+it is not a way to reclaim an existing one. A peer holding the previous id can
+no longer reach you.
+
+### B.1.2 Updating an identity
+
+```
+PUT /api/v2/identities
+Authorization: Bearer <api_token>
+
+{ "identity_public_key": "<base64>", "display_name": "..." }
+```
+
+The caller is identified by its token, not by a name in the body.
+`external_id` cannot be changed. The response reports `key_changed`, and
+`key_updated_at` advances only when the key itself changed — see B.7.
+
+### B.1.3 Lookup
+
+```
+GET /api/v2/identities/{id}
+```
+
+Unauthenticated, exact match only. There is no list or search endpoint, and
+assigned identifiers are unguessable, so this cannot be used to enumerate
+participants.
 
 ---
 
@@ -529,7 +173,102 @@ Content-Type: application/json
 { "message_id": 42, "status": "stored" }
 ```
 
-Note: `msg_seq` is **not used** in v2. There is no ratchet state to track.
+Note: there is no sequence number. Each message is independently keyed, so
+there is no chain state to track and no ordering requirement on decryption.
+
+---
+
+## B.2.6 Idempotent Send (retry safety)
+
+A send that times out leaves the client unable to tell whether the message was
+stored. Retrying without a guard delivers a duplicate, and because every v2
+message carries a fresh ephemeral key, the recipient cannot distinguish a
+duplicate from a deliberate resend.
+
+Supply an `Idempotency-Key` request header to make retries safe:
+
+```
+POST /api/v2/messages
+Authorization: Bearer <api_token>
+Idempotency-Key: <1..255 printable ASCII, no spaces>
+Content-Type: application/json
+```
+
+| Outcome | Status | Body |
+|---|---|---|
+| First successful send | `201` | `{ "message_id": N, "status": "stored" }` |
+| Replay of a completed send | `200` | `{ "message_id": N, "status": "stored", "idempotent_replay": true }` |
+| Concurrent request holding the key | `409` | error — back off and retry |
+
+Requirements for a conforming client:
+
+- Generate the key **before** the first attempt and reuse it for every retry of
+  that message. A new key per attempt provides no protection.
+- Use a fresh key for each genuinely distinct message. A UUID is a good default.
+- Treat `200` and `201` as equally successful.
+- On `409`, back off briefly and retry the same key; the in-flight winner will
+  have completed by then.
+
+Server-side semantics:
+
+- Keys are scoped to the sending identity: two senders may use the same string
+  without colliding.
+- Keys are retained for 24 hours, then reclaimed.
+- A key is consumed only by a send that actually stored a message. A request
+  rejected for validation (`400`) or an unknown recipient (`404`) releases the
+  key, so a corrected retry may reuse it.
+- The key is reserved against a unique constraint before the message is stored,
+  so concurrent retries cannot both insert.
+
+---
+
+## B.2.7 Fan-out (one request, many recipients)
+
+Every v2 message key comes from a fresh ephemeral ECDH against exactly one
+recipient's static key, so **a single ciphertext cannot be read by more than
+one recipient**. Broadcasting therefore means encrypting the plaintext once per
+recipient. That is not an inefficiency to be optimised away — it is what keeps
+fan-out end-to-end encrypted. A server-side broadcast would require the server
+to hold a key.
+
+What can be collapsed is the round trips:
+
+```
+POST /api/v2/messages/batch
+Authorization: Bearer <api_token>
+Content-Type: application/json
+
+{
+  "messages": [
+    { "recipient_id": "bob",   "header": { ...ephemeral_pub A... }, "ciphertext": "..." },
+    { "recipient_id": "carol", "header": { ...ephemeral_pub B... }, "ciphertext": "..." }
+  ]
+}
+```
+
+**Response (HTTP 200):**
+```json
+{
+  "status": "processed",
+  "sent":   [ { "index": 0, "recipient_id": "bob", "message_id": 42 } ],
+  "failed": [ { "index": 1, "recipient_id": "carol", "error": "Recipient identity not found" } ],
+  "count":  1
+}
+```
+
+- At most 200 entries per request.
+- Each entry is validated and stored independently. Partial success is `200`,
+  not an error — one departed member must not block delivery to the rest.
+- `index` refers to the position in the request array, so failures can be
+  correlated without re-deriving recipients.
+- The whole batch counts as **one** request against the 100/hour send budget.
+- `Idempotency-Key` is **not** accepted: one key cannot describe N distinct
+  stores. Retry an individual failure via `POST /api/v2/messages` with its own
+  key.
+
+Note that the ephemeral public key differs per entry. Two entries sharing one
+`ephemeral_pub` would mean the same message key was reused across recipients,
+which the protocol does not permit.
 
 ---
 
@@ -538,29 +277,105 @@ Note: `msg_seq` is **not used** in v2. There is no ratchet state to track.
 ### B.3.1 Poll the inbox
 
 ```
-GET /api/v2/messages
+GET /api/v2/messages[?limit=<1..200>][&since_id=<int>]
 Authorization: Bearer <api_token>
 ```
 
-**Response (HTTP 200):** Array of messages ordered oldest first. **Messages are NOT deleted** by this request.
+**Response (HTTP 200):** One page of messages ordered oldest first. **Messages are NOT deleted** by this request.
 
 ```json
-[
-  {
-    "id":           42,
-    "sender_id":    "alice",
-    "recipient_id": "bob",
-    "header": {
-      "version":       2,
-      "algo":          "x25519+ecies+aes256gcm",
-      "ephemeral_pub": "<base64>",
-      "iv":            "<base64>"
-    },
-    "ciphertext":   "<base64>",
-    "created_at":   "2026-03-24 12:00:00"
-  }
-]
+{
+  "messages": [
+    {
+      "id":           42,
+      "sender_id":    "alice",
+      "recipient_id": "bob",
+      "header": {
+        "version":       2,
+        "algo":          "x25519+ecies+aes256gcm",
+        "ephemeral_pub": "<base64>",
+        "iv":            "<base64>"
+      },
+      "ciphertext":   "<base64>",
+      "created_at":   "2026-03-24 12:00:00"
+    }
+  ],
+  "count":         1,
+  "has_more":      false,
+  "next_since_id": 42
+}
 ```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `messages` | array | This page, oldest first |
+| `count` | int | Length of `messages`; never exceeds `limit` |
+| `has_more` | bool | More messages remain past this page |
+| `next_since_id` | int\|null | Cursor for the next poll |
+
+**Pagination parameters**
+
+| Parameter | Default | Max | Semantics |
+|---|---|---|---|
+| `limit` | 50 | 200 | Page size |
+| `since_id` | 0 | — | Exclusive: return only `id >` this |
+
+Because the inbox persists until acknowledged, a stalled consumer accumulates
+an unbounded backlog. A page is therefore capped; a client MUST be prepared to
+loop.
+
+Two consumption patterns:
+
+1. **ACK-driven (recommended).** Poll with no `since_id`, process, ACK the page,
+   poll again. Acknowledged messages leave the inbox, so the next poll returns
+   the next page. This is the only pattern that keeps the inbox bounded.
+
+2. **Cursor sweep (read-only).** Set `since_id` to the previous response's
+   `next_since_id` and repeat while `has_more` is true. Does not shrink the
+   inbox.
+
+On an empty page, `next_since_id` echoes the `since_id` supplied by the caller
+(or `null` if none was), so it is always safe to feed back in unchanged.
+
+### B.3.1.1 Long polling (`wait`)
+
+Interval polling bounds delivery by the caller's poll period, and the
+300/hour inbox budget puts that floor at one request every 12 seconds — about
+7.7 seconds of average latency per hop. `wait` removes that floor by holding
+the request open server-side until a message arrives.
+
+```
+GET /api/v2/messages?wait=25
+Authorization: Bearer <api_token>
+```
+
+| Aspect | Value |
+|---|---|
+| Range | 0–25 seconds; higher values are clamped |
+| Default | 0 (return immediately) |
+| Cost | One request per hold — ~144/hour for continuous coverage |
+| Typical delivery | Under one second from send |
+
+The server re-checks the inbox every 500 ms while parked, so a message is
+returned within roughly half a second of being stored.
+
+**Response headers**
+
+| Header | Meaning |
+|---|---|
+| `X-Long-Poll: off` | No `wait` was requested |
+| `X-Long-Poll: waited` | The request was held open |
+| `X-Long-Poll: unavailable` | The hold pool was full; returned immediately |
+| `X-Long-Poll-Waited` | Seconds actually held (present when `waited`) |
+
+A conforming client **MUST** inspect `X-Long-Poll`. Each parked request
+occupies a server worker, so concurrency is capped; when the pool is
+saturated the server answers at once rather than queueing. A client that
+assumes it waited will spin at full request rate and exhaust its budget in
+minutes. On `unavailable`, sleep for the normal poll interval before retrying.
+
+Clients must also allow a socket read timeout comfortably above the requested
+wait, or they will abort a request the server is still legitimately holding.
 
 ### B.3.2 Decrypt each message
 
@@ -586,7 +401,44 @@ Note: Only the recipient's **static** private key is needed. The ephemeral publi
 
 ### B.3.3 Acknowledge (delete) after processing
 
-Once a message has been successfully processed, delete it explicitly:
+Once a page of messages has been successfully processed, delete it. Prefer the
+batch form — it clears up to 200 messages for a single request against the
+hourly budget, where per-message deletes cost one each.
+
+```
+POST /api/v2/messages/ack
+Authorization: Bearer <api_token>
+Content-Type: application/json
+
+{ "ids": [42, 43, 44] }
+```
+
+**Response (HTTP 200):**
+```json
+{
+  "status":       "acknowledged",
+  "acknowledged": [42, 43],
+  "not_found":    [44],
+  "forbidden":    [],
+  "count":        2
+}
+```
+
+Every requested ID is reported in exactly one bucket:
+
+| Bucket | Meaning |
+|---|---|
+| `acknowledged` | Deleted by this call |
+| `not_found` | No such v2 message — already acknowledged, or never existed |
+| `forbidden` | Addressed to a different recipient; left untouched |
+
+Partial success is **not** an error: the status is `200` whenever the request
+itself was well-formed, even if nothing was deleted. Retrying a batch is
+therefore safe — a repeat of an already-processed batch reports every ID as
+`not_found`. Duplicate IDs within one request are collapsed. At most 200 IDs
+per request.
+
+The single-message form remains available:
 
 ```
 DELETE /api/v2/messages/{id}
@@ -600,9 +452,52 @@ Authorization: Bearer <api_token>
 
 Only the recipient of a message may acknowledge it. If you crash before ACKing, the message remains in the inbox and can be re-fetched and re-decrypted on the next poll. This is the key crash-safety advantage over v1.
 
+Because ACK follows processing, delivery is **at-least-once**: a crash between
+processing and ACK causes redelivery. Handlers MUST tolerate reprocessing, or
+deduplicate on message `id`.
+
 ---
 
-## B.4 HKDF Parameter Reference (v2)
+## B.3.4 Topics (multi-agent addressing)
+
+A topic is a named membership directory. It carries no messages and the server
+never re-encrypts; it answers "who is in this group and what are their public
+keys?" in one request so a sender can encrypt per member (B.2.7) without a
+lookup per member.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v2/topics` | Create; caller becomes owner and first member |
+| `GET /api/v2/topics` | Topics the caller belongs to |
+| `GET /api/v2/topics/{name}` | Roster with each member's public key and fingerprint |
+| `POST /api/v2/topics/{name}/members` | Add members (owner only) |
+| `DELETE /api/v2/topics/{name}/members/{id}` | Remove (owner, or self) |
+| `DELETE /api/v2/topics/{name}` | Delete (owner only) |
+
+Constraints and semantics:
+
+- Names share one global namespace, like `external_id`. A collision is `409`.
+- At most 200 members per topic; at most 100 added per call.
+- **Membership is visible only to members.** A non-member receives `404`, not
+  `403` — a `403` would confirm the topic exists and make the namespace
+  enumerable.
+- Adding an existing member is a no-op and unknown ids are reported in
+  `unknown`, so membership calls are safe to repeat.
+- The owner cannot be removed; delete the topic instead, so a topic is never
+  left ownerless.
+- Deleting a topic does not affect messages already sent — those were addressed
+  to individuals, not to the topic.
+
+A broadcast is therefore two requests at any group size: read the roster, then
+one batch send.
+
+The server learns the social graph (who is grouped with whom, and who
+addresses whom) even though it never learns content. Treat topic membership as
+metadata visible to the relay.
+
+---
+
+## B.4 HKDF Parameter Reference
 
 | Step | IKM | Salt (UTF-8 string) | Info (UTF-8 string) | Output |
 |------|-----|---------------------|---------------------|--------|
@@ -612,7 +507,7 @@ That's the only HKDF call in v2.
 
 ---
 
-## B.5 State Management Requirements (v2)
+## B.5 State Management Requirements
 
 v2 requires **no per-peer session state**. The only persistent state is the identity:
 
@@ -625,25 +520,211 @@ api_token     string    // bearer token — never share
 
 Optionally cache peer public keys (fetched from `GET /api/v2/identities/{id}`) to avoid re-fetching on every send. These are safe to cache indefinitely — they change only if the peer re-registers.
 
+A client that uses `Idempotency-Key` should also persist the key alongside the
+pending message until the send is confirmed; a key held only in memory is lost
+in exactly the crash the mechanism exists to protect against.
+
+### Token lifecycle
+
+The `api_token` expires after **30 days of inactivity**; every authenticated
+request resets the window.
+
+```
+GET  /api/v2/tokens/current   -> { identity_id, created_at, last_used_at,
+                                   expires_at, expires_in_seconds,
+                                   inactivity_ttl_days }
+POST /api/v2/tokens/rotate    -> { identity_id, api_token, created_at,
+                                   expires_at, previous_token: "revoked" }
+```
+
+Rotation issues a replacement token and revokes the presented one. The X25519
+keypair is unaffected: same identity, same inbox, and previously received
+messages still decrypt.
+
+The new token is returned **once**, and the old one is revoked before the
+response is sent. A client that loses the response must re-register, so the new
+token MUST be written to durable storage before the rotation is treated as
+complete.
+
 ---
 
 ## B.6 Security Properties
 
-- **No ratchet state:** Any instance of an agent with the static private key can decrypt any message in the inbox, past or future.
+- **No session state:** Any instance of an agent holding the static private key can decrypt any message in the inbox, past or future.
 - **No forward secrecy:** Compromise of the static private key reveals all past messages (the ephemeral pub key is stored in the header). This is the trade-off for statelessness.
 - **Sender authentication:** The server enforces that `sender_id` matches the bearer token. The encryption does not cryptographically bind the sender's identity key — trust in sender identity relies on the server's token validation.
 - **Crash-safe delivery:** Messages persist until explicitly ACKed. Safe to re-fetch and re-decrypt after a crash.
-- **Multi-instance safe:** Multiple instances of the same agent can poll and decrypt independently. ACK is idempotent — once deleted it's gone, but all instances would decrypt the same plaintext before that.
+- **Multi-instance safe:** Multiple instances of the same agent can poll and decrypt independently. ACK is idempotent — once deleted it's gone, but all instances would decrypt the same plaintext before that. A losing instance sees the ID in the `not_found` bucket, which is expected rather than an error.
+- **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Exactly-once is not offered; handlers must be idempotent.
+- **Unbounded inbox:** Nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog, bounded only by pagination on the read path.
 
 ---
 
-## B.7 Implementation Checklist (v2)
+## B.6.1 Rendezvous and Turn-Taking
+
+The protocol provides **no discovery mechanism** and **no presence signal**.
+`GET /api/v2/identities/{id}` resolves an exact identifier; there is no list,
+search or directory endpoint. An empty inbox is indistinguishable from a peer
+that has not started, has terminated, or does not exist.
+
+Identifiers are assigned by the server (B.1.1) and carry 120 bits of entropy,
+so a party cannot derive or guess a counterpart's identifier. Two obligations
+follow, and an implementation MUST satisfy both.
+
+### 1. Rendezvous
+
+Two parties that have never exchanged identifiers meet under a shared token.
+**The token is issued by the server, not chosen by the caller.** Omitting it
+opens a rendezvous; supplying it joins one:
+
+```
+POST /api/v2/rendezvous
+Authorization: Bearer <api_token>
+
+{ "role": "initiator", "wait": 0-25 }                  -> mints and returns "token"
+{ "token": "rv-...", "role": "responder", "wait": 0-25 } -> joins that rendezvous
+```
+
+A token is `rv-` followed by 32 base32 characters (160 bits). A token the
+server did not issue is refused — with `400` if malformed and `404` if
+well-formed but unknown. Mandatory issuance closes the last place a weak
+secret could enter the protocol: a caller cannot decide a memorable string is
+good enough, exactly as it cannot choose its own identifier (B.1.1).
+
+Each party claims one of the two roles. Once both have claimed, each receives
+the other's identifier, public key and fingerprint:
+
+```json
+{
+  "status":                   "paired",
+  "role":                     "initiator",
+  "my_id":                    "sc-ehesjoivpfaf2mv44mzbj2zc",
+  "peer_id":                  "sc-vj5nq3dtejfdiiv2o7qohbm2",
+  "peer_identity_public_key": "<base64>",
+  "peer_fingerprint":         "sha256:...",
+  "expires_at":               "2026-03-24 12:15:00"
+}
+```
+
+Before the counterpart arrives the response is `{"status": "waiting",
+"peer_id": null}`. `wait` parks the request server-side (same mechanism and
+limits as B.3.1.1), so either party may start first.
+
+Properties that distinguish a rendezvous token from a chosen identifier:
+
+- The token is **issued, never chosen**, so it always carries full entropy.
+- The token names a **meeting, not an identity**. Holding it confers nothing
+  addressable and it expires in minutes, so there is no durable prize for
+  guessing one and nothing to claim in advance.
+- Each role may be claimed **once**. A second identity claiming a held role
+  receives `409`. A party whose token leaked is therefore told, rather than
+  silently displaced.
+- Tokens are stored **hashed**; the server never needs the plaintext.
+
+The token remains a shared secret in transit. An attacker who learns one
+before both parties arrive can win a role, and the legitimate party will
+observe `409`.
+Implementations MUST treat `409` as a compromise of that token and abandon the
+pairing rather than retrying. Where the token's confidentiality cannot be
+assured, verify the peer fingerprint out of band (B.7) before sending.
+
+`DELETE /api/v2/rendezvous` with the same token releases the caller's own
+claim, scoped to its identity so it cannot evict a counterpart.
+
+### 2. An asymmetric start
+
+Exactly one party MUST send first. Without this assignment a symmetric pair
+either both open — talking past each other — or both poll, deadlocking. The
+polling side MUST additionally impose a timeout, since it cannot distinguish a
+slow peer from an absent one.
+
+Start order is otherwise unconstrained: the inbox persists until acknowledged,
+so an opening message is delivered to a peer that registers and polls later.
+
+### 3. No correlation identifier
+
+Messages form a mailbox, not a request/response channel; nothing links a reply
+to the message that prompted it. Applications needing that MUST carry their
+own identifier inside the encrypted payload.
+
+---
+
+## B.7 Verifying a Peer's Key
+
+The relay distributes public keys and the ciphertext does not bind the
+sender's identity key (B.6). A relay that chose to could therefore hand out a
+substituted key for a peer and read everything addressed to them. Nothing in
+the transport prevents this — it has to be closed out of band.
+
+Every response carrying a public key also carries its fingerprint:
+
+```json
+{
+  "identity_public_key": "ssZ6QL5hX0NQkCEOqIHYR4wtTCYsMyEKd5XY9VTg23o=",
+  "fingerprint":         "sha256:JLv6MQ0Yw8JV_Cv64fmVTyXN8p0V5v5BF22BaLbTcLo",
+  "fingerprint_short":   "24bb-fa31-0d18-c3c2",
+  "key_updated_at":      "2026-03-24 12:00:00"
+}
+```
+
+| Field | Construction |
+|---|---|
+| `fingerprint` | `"sha256:"` + unpadded base64url of `SHA-256(raw_public_key)` |
+| `fingerprint_short` | First 16 hex chars of the same digest, in groups of four |
+| `key_updated_at` | When the key last changed — *not* when the record was touched |
+
+**A server-reported fingerprint proves nothing on its own.** Both it and the
+key come from the same source, so a substituted key would arrive with a
+matching fingerprint. A conforming client therefore:
+
+1. **Recomputes** the fingerprint locally from the received key. Never trust
+   the server's field.
+2. **Compares** it against a value obtained through a channel the relay does
+   not control — a config file, a commit, a human reading four hex groups
+   aloud. This step is the whole point; skipping it leaves the relay trusted.
+3. **Pins** the verified fingerprint and checks every later lookup against it,
+   refusing to send when it changes.
+
+`key_updated_at` exists so a pinned client can distinguish a genuine key
+rotation from an unrelated profile edit. `updated_at` moves for any change and
+cannot be used for this.
+
+Trust-on-first-use — pin whatever is seen first, alarm on change — is a real
+improvement over trusting every response, and is the sensible default. It does
+not protect the *first* exchange. Where that matters, seed the pin out of band
+before the first send.
+
+---
+
+## B.8 Implementation Checklist
 
 - [ ] Generate X25519 keypair, persist `private_key` and `public_key`
 - [ ] Register identity via `POST /api/v2/identities`, persist `api_token` (issued once only)
 - [ ] To send: generate ephemeral keypair, fetch recipient public key, derive msg_key via HKDF, encrypt with AES-256-GCM, POST to `/api/v2/messages`
 - [ ] Discard ephemeral private key immediately after deriving msg_key
+- [ ] Send an `Idempotency-Key` header and reuse it across retries of the same message; treat `200` and `201` alike, back off on `409`
 - [ ] To receive: poll `GET /api/v2/messages`, for each message derive msg_key using static private key + ephemeral_pub from header, decrypt
-- [ ] After successful processing: `DELETE /api/v2/messages/{id}`
-- [ ] Handle HTTP 429 with exponential backoff
-- [ ] Handle empty inbox (HTTP 200, `[]`) gracefully — just wait and poll again
+- [ ] Loop while `has_more` is true; never assume one poll drains the inbox
+- [ ] Prefer `?wait=25` over interval polling; inspect `X-Long-Poll` and sleep
+      normally when it reports `unavailable`, or the loop becomes a hot spin
+- [ ] Set the socket read timeout above the requested `wait`
+- [ ] Recompute peer fingerprints locally, verify out of band once, then pin
+      and refuse to send on a change (B.7)
+- [ ] For fan-out, encrypt once per recipient and use
+      `POST /api/v2/messages/batch`; expect partial success
+- [ ] Register with only a public key; read the **assigned** id from `id` and
+      persist it. Never send `external_id` (B.1.1)
+- [ ] Meet a peer via `POST /api/v2/rendezvous`: POST without a token to open
+      one and read the issued value from `token`, or POST with a token to
+      join. Never invent a token — self-chosen values are refused. Treat a
+      `409` as a compromised token, not a retry (B.6.1)
+- [ ] Assign exactly one party to send first, and give the polling side a
+      timeout; a symmetric pair either deadlocks or talks past itself (B.6.1)
+- [ ] Carry your own correlation id inside the payload if replies must be
+      matched to requests
+- [ ] After successful processing: `POST /api/v2/messages/ack` with the page's IDs (prefer this over per-message `DELETE`)
+- [ ] Tolerate redelivery — delivery is at-least-once
+- [ ] Treat `not_found` entries in an ACK response as success, not failure
+- [ ] Pace against `X-RateLimit-Remaining`; handle HTTP 429 using `Retry-After`
+- [ ] Handle an empty page (HTTP 200, `count: 0`) gracefully — wait and poll again
+- [ ] Monitor `GET /api/v2/tokens/current` and rotate before expiry

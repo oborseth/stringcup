@@ -34,16 +34,22 @@ php spark make:migration AddLastLoginToIdentities
 
 ## Database Schema
 
+> Column types below match the **live production schema**. They previously
+> did not: the database had been altered by hand and drifted from the
+> migrations, so this file documented types that no deployment actually used.
+> Verify with `php spark schema:check`, which fails on drift.
+
 ### Table: `identities`
 
-Stores user identity information and public keys for E2EE.
+Identity records and public keys for E2EE. Shared by both API versions.
 
 **Columns:**
-- `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
-- `external_id` (VARCHAR(64), UNIQUE, NOT NULL) - User-chosen identifier (e.g., "alice", "bob")
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `external_id` (VARCHAR(64), UNIQUE, NOT NULL) - **Server-assigned** identifier, `sc-` + 24 base32 chars (120 bits)
 - `display_name` (VARCHAR(255), NULL) - Optional display name
-- `identity_pubkey` (VARBINARY(255), NOT NULL) - X25519 public key (32 bytes)
-- `algo` (VARCHAR(20), NOT NULL) - Key algorithm ('ed25519' or 'x25519')
+- `identity_pubkey` (VARBINARY(64), NOT NULL) - X25519 public key, 32 raw bytes
+- `algo` (VARCHAR(32), NOT NULL, DEFAULT 'ed25519') - 'ed25519' or 'x25519'
+- `key_updated_at` (DATETIME, NULL) - When `identity_pubkey` last changed
 - `created_at` (DATETIME, NOT NULL)
 - `updated_at` (DATETIME, NOT NULL)
 
@@ -52,146 +58,309 @@ Stores user identity information and public keys for E2EE.
 - UNIQUE KEY on `external_id`
 
 **Notes:**
-- `external_id` is the primary user-facing identifier
-- `identity_pubkey` is stored as binary data (not base64)
-- Keys should be exactly 32 bytes for X25519
+- `external_id` is assigned at registration and cannot be chosen. Client-chosen
+  names made this a first-come namespace where anyone could claim the id another
+  party was about to use; assignment removes the race
+- `identity_pubkey` is raw binary, not base64
+- **`key_updated_at` moves only when the key itself changes.** `updated_at`
+  moves for any edit, so only this column lets a peer that pinned a
+  fingerprint tell a genuine key rotation from a display-name change
+- The `algo` default is a historical artefact; v2 clients always send x25519
 
 ---
 
 ### Table: `api_tokens`
 
-Manages API authentication tokens with 30-day expiration.
+Bearer tokens, stored only as hashes.
 
 **Columns:**
-- `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
-- `identity_id` (INT, NOT NULL, FOREIGN KEY → identities.id)
-- `token_hash` (BINARY(32), NOT NULL) - SHA-256 hash of bearer token
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `identity_id` (BIGINT UNSIGNED, NOT NULL) - FK to `identities.id`, ON DELETE CASCADE
+- `token_hash` (VARBINARY(32), UNIQUE, NOT NULL) - Raw SHA-256 of the plaintext token
 - `created_at` (DATETIME, NOT NULL)
-- `last_used_at` (DATETIME, NULL) - Updated on each use, extends expiration
-- `expires_at` (DATETIME, NULL) - Future use for explicit expiration
-- `is_active` (TINYINT(1), NOT NULL, DEFAULT 1) - 0 = revoked/expired
+- `last_used_at` (DATETIME, NULL) - Refreshed on every authenticated request
+- `is_active` (TINYINT(1), NOT NULL, DEFAULT 1) - Cleared on expiry or rotation
 
 **Indexes:**
 - PRIMARY KEY on `id`
-- KEY on (`token_hash`, `is_active`) - Fast auth lookup
-- KEY on (`expires_at`, `is_active`) - Cleanup expired tokens
-- FOREIGN KEY `identity_id` → `identities.id` (CASCADE DELETE)
+- UNIQUE KEY `uniq_token_hash` on `token_hash`
+- KEY `fk_api_tokens_identity` on `identity_id` (FOREIGN KEY to `identities`)
 
-**Token Lifecycle:**
-1. Issued once during identity registration
-2. Never sent again (one-time display)
-3. Hashed with SHA-256 before storage
-4. Expires 30 days after last use
-5. Can be revoked by setting `is_active = 0`
+**Notes:**
+- There is **no `expires_at` column.** Expiry is computed from `last_used_at`
+  plus `ApiTokenModel::INACTIVITY_TTL_DAYS` (30). An earlier migration created
+  such a column; production never had it, and the reconcile migration drops it
+- Rotation (`POST /api/v2/tokens/rotate`) inserts the replacement first, then
+  clears `is_active` on the old row — never the reverse
 
 ---
 
 ### Table: `messages`
 
-Ephemeral storage for encrypted messages (deleted after retrieval).
+Encrypted messages. Filtered on `api_version = 2`; v1 was removed but the
+column is retained so a future protocol change stays separable.
 
 **Columns:**
-- `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
-- `sender_id` (VARCHAR(64), NOT NULL) - external_id of sender
-- `recipient_id` (VARCHAR(64), NOT NULL) - external_id of recipient
-- `header_json` (TEXT, NOT NULL) - Message metadata (version, algo, seq, IV)
-- `ciphertext` (BLOB, NOT NULL) - AES-256-GCM encrypted message
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT) - Also the inbox cursor
+- `sender_id` (VARCHAR(191), NOT NULL) - external_id of sender
+- `recipient_id` (VARCHAR(191), NOT NULL) - external_id of recipient
+- `header_json` (TEXT, NOT NULL) - Message metadata (version, algo, ephemeral_pub/msg_seq, IV)
+- `ciphertext` (LONGBLOB, NOT NULL) - AES-256-GCM output including the 16-byte tag
+- `created_at` (DATETIME, NOT NULL)
+- `api_version` (TINYINT(1) UNSIGNED, NOT NULL, DEFAULT 1) - always 2 for new rows; retained so a future protocol stays separable
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- KEY `idx_recipient_id` on `recipient_id`
+- KEY `idx_created_at` on `created_at`
+- KEY `idx_messages_inbox` on (`recipient_id`, `api_version`, `id`)
+
+**Message lifecycle:** created → stored → retrieved (non-destructive) →
+**deleted only on explicit ACK**. Delivery is at-least-once; a consumer that
+never ACKs accumulates an unbounded backlog.
+
+**Notes:**
+- `ciphertext` is LONGBLOB, not BLOB. A 64 KB BLOB would silently cap message
+  size; the practical limit is now MySQL's `max_allowed_packet` (16 MB here).
+  256 KB payloads are verified working
+- `idx_messages_inbox` is what serves the v2 paginated inbox
+  (`WHERE recipient_id = ? AND api_version = 2 AND id > ? ORDER BY id`). The
+  older `(recipient_id, created_at)` index cannot satisfy the id-range cursor,
+  so dropping this one degrades every poll to a filesort over the recipient's
+  whole backlog
+- The server never decrypts. It stores opaque blobs and validates envelopes
+
+---
+
+### Table: `idempotency_keys`
+
+Replay guard for `POST /api/v2/messages`.
+
+**Columns:**
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `identity_id` (BIGINT UNSIGNED, NOT NULL) - The sending identity
+- `idem_key` (VARCHAR(255), NOT NULL) - Client-supplied `Idempotency-Key`
+- `message_id` (BIGINT UNSIGNED, NOT NULL) - 0 while the send is in flight
 - `created_at` (DATETIME, NOT NULL)
 
 **Indexes:**
 - PRIMARY KEY on `id`
-- KEY on (`recipient_id`, `created_at`) - Fast inbox queries
-- KEY on `sender_id`
-
-**Message Lifecycle:**
-1. Created via POST /api/v1/messages
-2. Stored temporarily in encrypted form
-3. Retrieved via GET /api/v1/messages
-4. **Deleted immediately after successful retrieval**
+- UNIQUE KEY on (`identity_id`, `idem_key`) - Scoped per sender
+- KEY on `created_at` - Serves pruning
 
 **Notes:**
-- Messages are NOT persisted long-term
-- No message history on server
-- Fire-and-forget delivery model
-- Server never decrypts messages
+- **The unique constraint is the concurrency control.** A send reserves the key
+  (inserting with `message_id = 0`) *before* writing the message, so two
+  concurrent retries cannot both insert. The loser gets 409
+- Separate from `messages` on purpose: the replay guarantee must outlive the
+  recipient ACKing and deleting the message
+- Rows older than 24 hours are pruned opportunistically on the send path, so
+  the table stays bounded without a cron dependency
+- A failed send releases its key, letting a corrected retry reuse it
+
+---
+
+### Table: `topics`
+
+Named membership directories for multi-agent fan-out.
+
+**Columns:**
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `name` (VARCHAR(64), UNIQUE, NOT NULL) - Global namespace, like `external_id`
+- `owner_identity_id` (BIGINT UNSIGNED, NOT NULL) - Only the owner may change membership
+- `created_at` (DATETIME, NOT NULL)
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- UNIQUE KEY on `name`
+- KEY on `owner_identity_id`
+
+---
+
+### Table: `rendezvous`
+
+Pairing claims that let two agents exchange server-assigned identifiers.
+
+**Columns:**
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `token_hash` (VARBINARY(32), NOT NULL) - Raw SHA-256 of the shared token
+- `role` (VARCHAR(16), NOT NULL) - `initiator` or `responder`
+- `identity_id` (BIGINT UNSIGNED, NOT NULL) - The claiming identity
+- `created_at` (DATETIME, NOT NULL)
+- `expires_at` (DATETIME, NOT NULL) - 15 minutes after the claim
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- UNIQUE KEY on (`token_hash`, `role`)
+- KEY on `token_hash` - finding the counterpart
+- KEY on `expires_at` - pruning
+
+**Notes:**
+- **The unique key is the security property.** A role can be claimed once, so a
+  second identity claiming a held role is refused with `409` — an agent whose
+  token leaked is told, rather than silently displaced
+- Tokens are stored **hashed**; the server never needs the plaintext, and a
+  leaked table should not yield live pairing secrets
+- Rows are pruned on the claim path, so the table stays bounded without a cron
+- A rendezvous token names a *meeting*, not an identity. It confers nothing
+  addressable and expires in minutes, which is what distinguishes it from the
+  client-chosen `external_id` it replaced
+
+---
+
+### Table: `topic_members`
+
+**Columns:**
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `topic_id` (BIGINT UNSIGNED, NOT NULL)
+- `identity_id` (BIGINT UNSIGNED, NOT NULL)
+- `added_at` (DATETIME, NOT NULL)
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- UNIQUE KEY on (`topic_id`, `identity_id`) - Re-adding a member is a no-op
+- KEY on `identity_id` - Serves "which topics am I in?"
+
+**Notes:**
+- Topics carry **no messages**. They answer "who is in this group and what are
+  their public keys?" so a sender can encrypt once per member and fan out via
+  `POST /api/v2/messages/batch`. The server never re-encrypts, which is what
+  keeps broadcast end-to-end
+- Membership is readable only by members; a non-member gets 404, not 403, so
+  the namespace cannot be enumerated by probing
+- **These two tables are the one place the server learns the social graph.**
+  Content stays private, but who is grouped with whom is visible to the operator
+- The owner is always a member and cannot be removed — delete the topic instead
 
 ---
 
 ### Table: `prekey_bundles`
 
-Signal-style prekey bundles for asynchronous messaging (partially implemented).
+Signal-style prekeys. **Partially implemented and unused by v1 or v2.**
 
 **Columns:**
-- `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
-- `identity_id` (INT, NOT NULL, FOREIGN KEY → identities.id)
-- `bundle_uuid` (VARCHAR(36), NOT NULL) - UUID for bundle identification
-- `signed_prekey` (BLOB, NULL) - Signed prekey for key agreement
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `identity_id` (BIGINT UNSIGNED, NOT NULL) - FK to `identities.id`, ON DELETE CASCADE
+- `bundle_uuid` (CHAR(36), UNIQUE, NOT NULL)
+- `signed_prekey` (VARBINARY(64), NULL)
 - `created_at` (DATETIME, NOT NULL)
-
-**Indexes:**
-- PRIMARY KEY on `id`
-- KEY on `bundle_uuid`
-- FOREIGN KEY `identity_id` → `identities.id` (CASCADE DELETE)
-
-**Notes:**
-- Part of Signal Double Ratchet protocol
-- Currently not fully utilized in simplified implementation
 
 ---
 
 ### Table: `prekeys`
 
-One-time prekeys for perfect forward secrecy (partially implemented).
-
 **Columns:**
-- `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
-- `bundle_id` (INT, NOT NULL, FOREIGN KEY → prekey_bundles.id)
-- `public_key` (BLOB, NOT NULL) - One-time use public key
-- `is_used` (TINYINT(1), NOT NULL, DEFAULT 0) - 1 = consumed
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `bundle_id` (BIGINT UNSIGNED, NOT NULL) - FK to `prekey_bundles.id`, ON DELETE CASCADE
+- `public_key` (VARBINARY(64), NOT NULL)
+- `is_used` (TINYINT(1), NOT NULL, DEFAULT 0)
 - `created_at` (DATETIME, NOT NULL)
-- `used_at` (DATETIME, NULL) - Timestamp when key was used
-
-**Indexes:**
-- PRIMARY KEY on `id`
-- KEY on (`bundle_id`, `is_used`) - Find unused prekeys
-- FOREIGN KEY `bundle_id` → `prekey_bundles.id` (CASCADE DELETE)
+- `used_at` (DATETIME, NULL)
 
 **Notes:**
-- One-time keys for session establishment
-- Marked as used after consumption
-- Provides forward secrecy in full Signal protocol
+- Surfaced in `GET /api/v?/identities/{id}` as `prekey_bundle`, but no client
+  populates or consumes it. Neither protocol depends on these tables
 
 ---
 
+## Schema drift
+
+The live schema was altered by hand and diverged from the migrations. A fresh
+`php spark migrate` produced a **narrower** schema than production — most
+seriously `messages.ciphertext` as BLOB (64 KB) rather than LONGBLOB, which
+would have silently capped message size for any new deployment, plus `INT`
+rather than `BIGINT` ids across five tables and a phantom
+`api_tokens.expires_at`.
+
+`2026-09-10-000003_ReconcileProductionSchema` converges any database onto the
+production definitions and is a no-op where they already match, so:
+
+- fresh install: earlier migrations create the old types, this corrects them
+- existing dev database: same, converges
+- production: every column already matches, every step skipped
+
+It is deliberately irreversible — rolling back would narrow LONGBLOB to BLOB
+and truncate data, and the pre-drift schema was never correct.
+
+```bash
+php spark schema:check   # exits non-zero on drift
+```
+
+`ReconcileProductionSchema::COLUMNS` is the single source of truth for the
+types it enforces; `SchemaCheck::ALSO_EXPECTED` covers a few extras. Run it
+after any schema change, and add new expectations there rather than letting
+drift accumulate again.
+
 ## Indexing Strategy
 
-### Performance Optimizations
+Verified against the live schema. Run `php spark schema:check` to confirm the
+two indexes the application actually depends on are still present.
 
-1. **Authentication** - `(token_hash, is_active)` compound index on `api_tokens`
-   - Enables fast O(1) token lookups
-   - Filters inactive tokens immediately
+### What each index is for
 
-2. **Inbox Retrieval** - `(recipient_id, created_at)` compound index on `messages`
-   - Retrieves user's messages in chronological order
-   - Critical for `GET /api/v1/messages` performance
+1. **Token authentication** — `uniq_token_hash` UNIQUE on `api_tokens.token_hash`
+   - Every authenticated request is one lookup by raw SHA-256
+   - `is_active` is *not* part of the index; it is filtered after the seek.
+     The hash alone is already unique, so a compound index would add nothing
 
-3. **Sender Queries** - `sender_id` index on `messages`
-   - Optional for analytics or user message history views
+2. **v2 paginated inbox** — `idx_messages_inbox` on
+   (`recipient_id`, `api_version`, `id`)
+   - Serves `WHERE recipient_id = ? AND api_version = 2 AND id > ?
+     ORDER BY id ASC LIMIT ?` as an index-only range scan
+   - **Load bearing.** The older `(recipient_id, created_at)` shape cannot
+     satisfy an `id`-range cursor, so without this every poll degrades to a
+     filesort over the recipient's entire backlog — and since a v2 inbox
+     persists until ACKed, that backlog is unbounded
+   - Also re-scanned every 500 ms by each parked long poll, so its cost is
+     paid far more often than the request rate suggests
 
-4. **Prekey Lookup** - `(bundle_id, is_used)` compound index on `prekeys`
-   - Finds available (unused) prekeys efficiently
+3. **Legacy inbox** — `idx_recipient_id` and `idx_created_at` on `messages`
+   - Predate v2. `idx_recipient_id` still serves the v1 inbox
+   - `idx_created_at` is not used by any current query path; it is a candidate
+     for removal if write throughput ever matters
 
-### Index Maintenance
+4. **Idempotency** — UNIQUE on `idempotency_keys` (`identity_id`, `idem_key`)
+   - Not just a lookup: the uniqueness constraint *is* the concurrency control
+     that stops two racing retries from both storing a message
+   - `created_at` index serves the 24-hour prune
+
+5. **Topic membership** — UNIQUE on `topic_members` (`topic_id`, `identity_id`),
+   plus a plain index on `identity_id`
+   - The unique key makes re-adding a member a no-op
+   - The `identity_id` index answers "which topics am I in?" without a scan
+
+6. **Foreign keys** — `api_tokens.identity_id`, `prekey_bundles.identity_id`,
+   `prekeys.bundle_id`, `topics.owner_identity_id`
+   - Required by InnoDB for the FK constraints, and used by cascade deletes
+
+### Indexes this document previously claimed, which do not exist
+
+Listed so nobody re-adds them believing they were lost:
+
+- `(token_hash, is_active)` compound on `api_tokens` — redundant; the hash is unique
+- `(recipient_id, created_at)` compound on `messages` — these are two separate
+  single-column indexes
+- `sender_id` on `messages` — never created; no query path needs it
+- `(bundle_id, is_used)` compound on `prekeys` — only `bundle_id` exists
+
+### Index maintenance
 
 ```sql
--- Check index usage
-SHOW INDEX FROM identities;
-SHOW INDEX FROM api_tokens;
 SHOW INDEX FROM messages;
+SHOW INDEX FROM api_tokens;
+SHOW INDEX FROM topic_members;
 
--- Analyze table for query optimization
 ANALYZE TABLE messages;
 ANALYZE TABLE api_tokens;
+```
+
+Confirm the inbox index is actually being chosen:
+
+```sql
+EXPLAIN SELECT * FROM messages
+ WHERE recipient_id = 'agent-bob' AND api_version = 2 AND id > 100
+ ORDER BY id ASC LIMIT 51;
+-- expect key: idx_messages_inbox, and no "Using filesort"
 ```
 
 ---
@@ -362,17 +531,44 @@ php spark migrate
 
 ## Schema Versioning
 
-Current schema version: **v1.0** (2024-01-01)
+Current schema version: **v3.0** (2026-09-10)
 
-**Migration History:**
-- `2024-01-01-000001` - Create identities table
-- `2024-01-01-000002` - Create api_tokens table (with expires_at)
-- `2024-01-01-000003` - Create messages table
-- `2024-01-01-000004` - Create prekey_bundles table
-- `2024-01-01-000005` - Create prekeys table
+**Migration history:**
 
-**Future Enhancements:**
-- Add `last_login_at` to identities
-- Add `device_info` to api_tokens (multi-device support)
-- Add `read_at` to messages (read receipts)
-- Add `group_id` to messages (group messaging)
+| Version | Migration |
+|---|---|
+| `2024-01-01-000001` | Create identities table |
+| `2024-01-01-000002` | Create api_tokens table (creates a vestigial `expires_at`, dropped later) |
+| `2024-01-01-000003` | Create messages table |
+| `2024-01-01-000004` | Create prekey_bundles table |
+| `2024-01-01-000005` | Create prekeys table |
+| `2024-01-02-000001` | Add `api_version` to messages (v1/v2 partitioning) |
+| `2026-09-10-000001` | Create idempotency_keys table |
+| `2026-09-10-000002` | Add `idx_messages_inbox` for the v2 paginated inbox |
+| `2026-09-10-000003` | **Reconcile production schema** — see [Schema drift](#schema-drift) |
+| `2026-09-10-000004` | Add `key_updated_at` to identities (key-rotation detection) |
+| `2026-09-10-000005` | Create topics and topic_members |
+| `2026-09-10-000006` | Create rendezvous (agent pairing) |
+
+The `2026-09-10-000003` reconcile migration is the reason the earlier ones can
+be read literally without misleading you: it corrects what they produce to
+match production. Do not "fix" the earlier migrations in place — they have
+already run everywhere, and the reconcile step is what converges them.
+
+**Deliberately not implemented:**
+
+- *Read receipts* (`read_at` on messages) — the server cannot distinguish
+  delivered from read without a client claim, and v2 already has an explicit
+  ACK, which is the honest version of the same signal
+- *Group messaging via `group_id` on messages* — this would mean one ciphertext
+  for many recipients, which the v2 crypto cannot express and which would
+  require the server to hold a key. Fan-out is client-side by design; see
+  `topics` / `topic_members` and `POST /api/v2/messages/batch`
+- *Multi-device* (`device_info` on api_tokens) — v2 is already multi-instance
+  safe, since any holder of the identity key can decrypt independently
+
+**Plausible future work:**
+
+- Retention/TTL on `messages` — nothing currently ages out an unACKed inbox
+- Prekey support, if forward secrecy is ever added (the tables exist but no
+  protocol path uses them)

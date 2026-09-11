@@ -4,9 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Stringcup is an end-to-end encrypted (E2EE) messaging REST API built on CodeIgniter 4. The server acts as a "dumb relay" that stores and delivers encrypted messages without ever having access to plaintext content. Client-side cryptography uses X25519 key exchange with a simplified Signal-like symmetric ratcheting protocol (AES-256-GCM encryption).
+Stringcup is an end-to-end encrypted (E2EE) messaging REST API built on CodeIgniter 4. The server acts as a "dumb relay" that stores and delivers encrypted messages without ever having access to plaintext content.
 
 **Tech Stack:** PHP 8.1+, CodeIgniter 4, MySQL/MariaDB, WebCrypto API, @noble/curves cryptography library
+
+### One API, agents only
+
+The service exposes a **single protocol at `/api/v2`**. A previous v1 (stateful symmetric ratchet, built for a browser client) and its demo (`public/demo.html`, `public/js/e2ee.js`, `public/js/noble/`) were removed — this is now purely agent infrastructure.
+
+| | |
+|---|---|
+| Crypto | X25519 + ECIES + AES-256-GCM, stateless — fresh ephemeral key per message |
+| Identifiers | **Assigned by the server.** Clients cannot choose one |
+| Discovery | None. Peers meet via `POST /api/v2/rendezvous` |
+| Inbox | Persists until explicitly ACKed; cursor-paginated; long-pollable |
+| Delivery | At-least-once |
+| Multi-instance | Safe — no per-peer state to diverge |
+
+The `api_version` column on `messages` survives the removal and is still filtered on (`= 2`). Leave it: it is how any future protocol change stays separable, and dropping it would rewrite the table for no gain.
+
+**Why identifiers are assigned.** Client-chosen `external_id` was a first-come namespace — any party could register the name another was about to use, or was already being addressed by, and silently receive its mail. Assignment removes the race. The cost is that ids are unguessable, so two agents need `rendezvous` to introduce themselves.
 
 ## Development Commands
 
@@ -20,7 +37,7 @@ php spark serve
 php spark serve --host localhost --port 8080
 ```
 
-The application serves from `public/` directory. The main demo client is at `public/demo.html`.
+The application serves from the `public/` directory. There is no browser client; the reference consumer is `clients/python/stringcup.py`.
 
 ### Testing
 
@@ -78,84 +95,137 @@ php spark cache:clear
 
 ### API-First Design
 
-This is a REST API application with minimal server-side views. The primary interface is `public/demo.html`, a full-featured browser-based E2EE messaging client.
+This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
+
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **six** places:
+
+- `public/openapi.yaml` — machine-readable spec (agents consume this)
+- `public/docs.md` — prose developer guide
+- `public/docs.html` — the rendered docs page (hand-maintained twin of `docs.md`)
+- `public/PROTOCOL.md` — cryptographic + wire specification; Part A is v1, Part B is v2
+- `public/llms.txt` — condensed orientation for agents; the file crawlers and LLM tooling look for
+- `app/Controllers/Api/V2/IndexController.php` — the self-describing `GET /api/v2` response
+
+### Agent discovery
+
+An agent given only `https://stringcup.com` must be able to reach a working integration without a human relaying URLs. That chain is:
+
+```
+/                    landing page (app/Views/home.php) — links to everything
+/llms.txt            condensed orientation, the conventional entry point
+/api/v2              self-describing JSON index (IndexController)
+/clients/stringcup.py  the client library, fetchable with curl
+```
+
+All four were missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing both filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
+
+Verify the chain end to end after touching any of it: fetch `llms.txt`, download the client to an empty directory, and complete a send/receive round trip using nothing else.
 
 ### Cryptographic Protocol
 
-**Identity Layer:**
-- Each user has an X25519 static keypair (private key stored client-side only)
-- Public keys registered via `POST /api/v1/identities`
-- Server issues one-time API tokens on registration
+**Identity**
+- X25519 static keypair; the private key never leaves the client
+- Registered via `POST /api/v2/identities` with **no** `external_id` — the server assigns one (120 bits, `sc-` + lowercase base32)
+- One API token per identity, returned once, stored as a SHA-256 hash
 
-**Session Establishment:**
-- ECDH shared secret: `x25519(myPrivKey, theirPubKey)`
-- Root key derived via HKDF-SHA256: `HKDF(sharedSecret, "stringcup-root", sortedIds)`
-- Directional chain keys: `HKDF(rootKey, "stringcup-ck", "sender->recipient")`
+**Message encryption (ECIES, stateless)**
+- Sender generates a fresh ephemeral X25519 keypair per message
+- `shared = x25519(ephemeral_priv, recipient_static_pub)`
+- `msg_key = HKDF(shared, salt="stringcup-v2-msg", info="sender->recipient", 32)`
+- AES-256-GCM with a random 12-byte IV; `ephemeral_pub` travels in the header
+- Recipient reverses with its static private key. One HKDF call total, no session state, no sequence numbers
 
-**Message Encryption:**
-- Per-message keys: `HKDF(chainKey, "stringcup-chain", "sender->recipient#seq")`
-- AES-256-GCM with random IV per message
-- Sequence numbers prevent replay attacks
-- Symmetric ratcheting (no DH ratchet - simplified Signal protocol)
+The `info` string must match byte-for-byte on both sides. A mismatch fails with no diagnosable error — the server never sees plaintext, so it cannot help. `tests/lib/v2_client.php` and `clients/python/stringcup.py` are the two reference implementations, and `clients/python/test_interop.py` asserts they agree.
 
-**Security Model:**
-- Server never sees plaintext (end-to-end encryption)
-- Token-based authentication validates sender identity
-- Messages are ephemeral: deleted immediately after retrieval
-- No forward secrecy on key compromise (symmetric ratcheting only)
+**Security model**
+- Server never sees plaintext
+- Sender identity rests on the token check, not on the ciphertext — the crypto does not bind it
+- Key distribution runs through the server, so fingerprints must be verified out of band to rule out substitution (PROTOCOL.md B.7)
+- No forward secrecy: the ephemeral public key is stored in the header, so a compromised static key exposes past messages
 
 ### Data Flow
 
-**Registration:**
-1. Client generates X25519 keypair in browser
-2. POST public key to `/api/v1/identities`
-3. Server stores pubkey, returns API token (SHA-256 hashed in DB)
-4. Client stores privkey + token in localStorage
+**Registration**
+1. Client generates an X25519 keypair
+2. `POST /api/v2/identities { identity_public_key }` — sending `external_id` is a 400
+3. Server assigns the id, stores the pubkey, returns id + token (token hashed in DB)
+4. Client persists id + privkey + token. Re-registering yields a *different* identity
 
-**Sending Message:**
-1. Client fetches recipient's public key (GET `/api/v1/identities/:id`)
-2. Establishes/loads ratchet session (cached in localStorage)
-3. Derives message key, encrypts with AES-GCM
-4. POST encrypted message with JSON header to `/api/v1/messages`
-5. Server validates sender via token, stores ciphertext
+**Meeting a peer**
+1. Both agents `POST /api/v2/rendezvous { token, role, wait }` with the same high-entropy token and opposite roles
+2. Once both have claimed, each response carries the other's id, public key and fingerprint
+3. A second identity claiming a held role gets 409 — the signal that the token leaked
 
-**Receiving Messages:**
-1. Client polls GET `/api/v1/messages` (Bearer token auth)
-2. Server returns all messages for that identity
-3. Client decrypts using ratchet state
-4. Server deletes messages after successful response
-5. Client updates ratchet state, displays plaintext
+**Sending**
+1. Fetch the recipient's public key (cached indefinitely; it changes only on rotation)
+2. Fresh ephemeral keypair → ECDH → HKDF → AES-GCM
+3. `POST /api/v2/messages` with an `Idempotency-Key` so a timeout retry cannot duplicate
+4. Server validates the envelope and sender token, stores ciphertext
+
+**Receiving**
+1. `GET /api/v2/messages?limit=&since_id=&wait=25` (long poll; sub-second delivery)
+2. Server returns a bounded page: `{messages, count, has_more, next_since_id}`
+3. Agent decrypts with its static private key — nothing to update
+4. Agent processes, then ACKs via `POST /api/v2/messages/ack`
+5. Only the ACK deletes. At-least-once: a crash before ACK means redelivery
+
+**Fan-out**
+One ciphertext cannot serve several recipients, so a broadcast encrypts per member. `GET /api/v2/topics/{name}` returns the roster with every member's key, and `POST /api/v2/messages/batch` delivers them in one request — two calls at any group size.
 
 ### Code Organization
 
-**app/Controllers/Api/V1/**
-- `IdentityController.php` - User registration, public key management
-- `MessageController.php` - Encrypted message send/retrieve
+**app/Controllers/Api/V2/**
+- `IndexController.php` - Self-describing `GET /api/v2` so a probing agent is not met with a 404
+- `IdentityController.php` - Registration with **server-assigned** ids, `PUT` for key rotation, public lookup
+- `RendezvousController.php` - Pairs two agents under a shared token; the only way to learn an unguessable peer id
+- `MessageController.php` - ECIES send with idempotency, paginated inbox, single + batch ACK
+- `TokenController.php` - Token introspection (`tokens/current`) and rotation (`tokens/rotate`)
+- `TopicController.php` - Membership directories for fan-out. Addressing only; never re-encrypts. **Membership is readable only by members, and a non-member gets 404 rather than 403** — a 403 would confirm the topic exists and make the name namespace enumerable by probing
 
 **app/Models/**
 - `IdentityModel.php` - User identities with X25519 public keys
 - `ApiTokenModel.php` - Per-identity authentication tokens (SHA-256 hashed)
 - `MessageModel.php` - Ephemeral encrypted messages
 - `PrekeyBundleModel.php` & `PrekeyModel.php` - Partially implemented Signal-style prekeys
+- `IdempotencyKeyModel.php` - v2 send replay records; 24h retention, pruned opportunistically
+- `TopicModel.php` & `TopicMemberModel.php` - Topic membership; `membersWithKeys()` joins identities so a broadcast needs one roster read, not one lookup per member
+- `RendezvousModel.php` - Pairing claims; tokens stored hashed, unique on `(token_hash, role)` so a role can be claimed once
+
+**app/Libraries/**
+- `LongPollGuard.php` - Caps concurrent long-poll holds. Slots are expiry timestamps in a flock'd JSON file, so a worker killed mid-hold cannot leak the pool into permanent unavailability
+- `app/Helpers/base32_helper.php` - PHP ships no base32 encoder; assigned ids use it so they stay case-insensitive and URL-safe
+- `KeyFingerprint.php` - Public key fingerprints: `fingerprint` (SSH-style `sha256:` + base64url) and `fingerprint_short` (first 64 bits as hex groups, for reading aloud). Both are exposed on every response carrying a key. A client must **recompute them locally** — a relay that substituted a key would also report a matching fingerprint, so the server's field proves nothing on its own
 
 **app/Config/**
-- `Routes.php` - API routing: `/api/v1/identities`, `/api/v1/messages`
+- `Routes.php` - API routing for both versions. Note `messages/ack` and `messages/batch` are declared before `messages/(:num)` so neither is matched as an ID
 - `Database.php` - MySQL/MariaDB connection (AWS RDS in production)
 - `App.php` - Environment, base URL, timezone settings
 
 **public/**
-- `demo.html` - Full E2EE messaging client (569 lines)
-- `js/e2ee.js` - Core crypto library (589 lines): identity, sessions, ratcheting, encryption
-- `js/noble/` - Third-party cryptography libraries (@noble/curves, @noble/hashes)
+- `llms.txt`, `docs.md`, `docs.html`, `PROTOCOL.md`, `openapi.yaml` - the published docs
+- No browser client. `demo.html`, `js/e2ee.js` and `js/noble/` were removed with v1; recover from git history if ever needed.
 
 ### Database Schema
 
 **Tables:** (defined by models and migrations)
 
-- `identities` - User identity public keys, external_id (user-chosen ID like "alice"), display_name
+- `identities` - Public keys plus the **server-assigned** external_id (`sc-` + 24 base32 chars), display_name, key_updated_at
 - `api_tokens` - Token authentication, SHA-256 hashed, tracks last_used_at
 - `messages` - Ephemeral encrypted messages with JSON headers, deleted after retrieval
 - `prekey_bundles` & `prekeys` - Signal-style one-time keys (partial implementation)
+- `idempotency_keys` - v2 send replay guard; unique on `(identity_id, idem_key)`, indexed on `created_at` for pruning
+- `topics` & `topic_members` - Fan-out addressing; `topics.name` is globally unique, `topic_members` unique on `(topic_id, identity_id)` so re-adding is a no-op
+- `rendezvous` - Pairing claims. Tokens hashed; unique on `(token_hash, role)`, which is what makes a stolen role detectable (409) rather than silent
+
+`identities.key_updated_at` moves only when `identity_pubkey` actually changes (`updated_at` moves for any edit), which is what lets a peer distinguish key rotation from a profile tweak.
+
+### Schema drift
+
+The live schema had been altered by hand and diverged from the migrations — a fresh `migrate` produced a *narrower* schema than production (`ciphertext` as `BLOB`/64 KB instead of `LONGBLOB`). `2026-09-10-000003_ReconcileProductionSchema` converges any database onto the production definitions and is a no-op where they already match.
+
+**Run `php spark schema:check` after touching schema.** It compares live column types and indexes against the definitions the reconcile migration enforces and exits non-zero on drift. `ReconcileProductionSchema::COLUMNS` is the single source of truth; `SchemaCheck::ALSO_EXPECTED` covers a few extras.
+
+The `messages` table carries `idx_messages_inbox (recipient_id, api_version, id)` to serve the v2 paginated inbox. The older `(recipient_id, created_at)` index cannot satisfy the `id`-range cursor, so dropping the new one silently degrades every poll to a filesort over the recipient's whole backlog.
 
 **Key Patterns:**
 - Models use manual timestamp management (created_at, updated_at)
@@ -172,18 +242,46 @@ Authorization: Bearer <token>
 
 Tokens are issued once on identity registration and hashed with SHA-256 before database storage. The server validates that the sender identity matches the token owner.
 
-**AuthFilter** (`app/Filters/AuthFilter.php`) is applied globally to `api/v1/messages*` routes. It validates the Bearer token, checks a 30-day inactivity expiration (refreshed on each use), and injects the resolved identity into `$request->identity`. Note that both API controllers also contain a local `getIdentityForToken()` method which duplicates this logic — these are not redundant for the routes where the filter runs, but they serve routes where the filter isn't applied (e.g., `IdentityController::register` updating an existing identity).
+**AuthFilter** (`app/Filters/AuthFilter.php`) is applied to `api/v2/messages*`, `api/v2/topics*` and `api/v2/rendezvous*`.
 
-**RateLimitFilter** (`app/Filters/RateLimitFilter.php`) is applied to all `api/v1/*` routes. Limits: registration (5/hr), identity lookup (100/hr), message send (100/hr), inbox (300/hr). Uses file-based cache in `writable/cache/ratelimit/`.
+**`api/v2/identities` is deliberately NOT in the auth list.** Filters match by path, not method, so listing it would demand a token on `POST` — which is registration, the one call that cannot have one yet. `IdentityController::update` resolves the bearer token itself. It validates the Bearer token, checks a 30-day inactivity expiration (refreshed on each use), and injects the resolved identity into `$request->identity`. Note that both API controllers also contain a local `getIdentityForToken()` method which duplicates this logic — these are not redundant for the routes where the filter runs, but they serve routes where the filter isn't applied (e.g., `IdentityController::register` updating an existing identity).
 
-### Client-Side State Management
+**RateLimitFilter** (`app/Filters/RateLimitFilter.php`) applies to all `api/v2/*` routes, in both the `before` and `after` positions — `before` enforces the limit, `after` attaches `X-RateLimit-Limit/Remaining/Reset`. CodeIgniter reuses one filter instance across both passes (`Filters::createFilter` caches by class), which is what makes the instance-held budget state safe.
 
-The browser stores all private cryptographic state in localStorage:
+Limits: registration (5/hr), identity update (30/hr), identity lookup (100/hr), send (100/hr), inbox (300/hr), ACK single + batch (300/hr each), token introspection (60/hr), rotation (10/hr), rendezvous (120/hr), topics (200/hr read, 60/hr write). File-based cache in `writable/cache/ratelimit/`.
 
-- **Identity keys:** `stringcup_e2ee_identity_v3` (X25519 private key, external ID, token)
-- **Ratchet sessions:** `stringcup_e2ee_sessions_v1` (root keys, chain keys, sequence numbers)
+Two things to preserve when editing this filter:
 
-**Critical:** Clearing browser data results in permanent key loss. No backup/recovery mechanism exists.
+- **Path normalization.** nginx routes through the front controller, so the request path arrives as `index.php/api/v2/messages`. `normalizePath()` strips that prefix. Without it every endpoint pattern misses and all traffic silently lands in the permissive 60/min `default` bucket — the failure is invisible because requests still succeed.
+- **Identifier selection.** This filter runs *before* AuthFilter, so `$request->identity` is not yet set. `getIdentifier()` derives the bucket from the bearer token hash instead, giving each agent its own budget; falling back to IP would make every agent behind a shared egress IP compete for one bucket.
+
+Token TTL lives in `ApiTokenModel::INACTIVITY_TTL_DAYS` and is consumed by both `AuthFilter` and `TokenController` — change it in one place.
+
+### Long polling and FPM capacity
+
+`GET /api/v2/messages?wait=N` (0–25s) parks the request until a message arrives, cutting mean delivery from ~7.7s to under a second.
+
+**Each parked request occupies a PHP-FPM worker for the whole hold, and that pool is shared with every other vhost on this host** (`pm.max_children = 50`, five sites). Unbounded waiters would be a denial-of-service against unrelated sites. `LongPollGuard` therefore caps concurrent holds (default 8, override with `STRINGCUP_LONGPOLL_SLOTS`); over the cap the controller answers immediately with `X-Long-Poll: unavailable` so the client falls back to interval polling.
+
+Constraints to preserve when touching this:
+
+- `MAX_WAIT` (25) must stay below `php.ini max_execution_time` (30) and nginx's default `fastcgi_read_timeout` (60), or a hold ends in a truncated response instead of a real one. `set_time_limit(wait + 10)` is called for the same reason.
+- Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
+- Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
+
+### Client-Side State
+
+An agent persists exactly three things, and losing them is unrecoverable:
+
+```
+external_id   assigned by the server at registration
+private_key   X25519, 32 bytes — never leaves the client
+api_token     returned once, stored server-side only as a hash
+```
+
+There is no per-peer session state. `clients/python/stringcup.py` writes these to a 0600 file atomically; `TrustStore` optionally adds pinned peer fingerprints alongside.
+
+**Re-registering does not recover an identity** — it mints a new one with a different assigned id, and any peer holding the old id can no longer reach you.
 
 ## Development Patterns
 
@@ -221,11 +319,14 @@ Models use `updateTimestamps()` method to manually set created_at/updated_at.
 Defined in `app/Config/Routes.php`:
 
 ```php
-$routes->get('health', 'HealthController::index');        // No auth required
-$routes->post('api/v1/identities', 'Api\V1\IdentityController::register');
-$routes->get('api/v1/identities/(:segment)', 'Api\V1\IdentityController::show/$1');
-$routes->post('api/v1/messages', 'Api\V1\MessageController::send');
-$routes->get('api/v1/messages', 'Api\V1\MessageController::inbox');
+$routes->get('health', 'HealthController::index');   // no auth
+$routes->group('api/v2', ['namespace' => 'App\Controllers\Api\V2'], static function ($routes) {
+    $routes->get('/', 'IndexController::index');     // self-describing index
+    $routes->post('identities', 'IdentityController::register');
+    $routes->put('identities', 'IdentityController::update');
+    $routes->post('rendezvous', 'RendezvousController::pair');
+    // messages/ack and messages/batch precede messages/(:num)
+});
 ```
 
 ### Error Handling
@@ -255,54 +356,50 @@ database.default.password = <pass>
 
 ## Cryptography Implementation Notes
 
-### Client-Side Crypto (`public/js/e2ee.js`)
+### Reference implementations
 
-**Key Derivation:**
-```javascript
-HKDF(secret, salt, info) // Using noble-hashes
-generateIdentity() // Returns X25519 keypair
-establishSession(myPrivKey, theirPubKey) // ECDH + root key derivation
-```
+There is no server-side crypto. Two client implementations exist and are held in agreement by `clients/python/test_interop.py`, which drives one from the other and asserts both derive identical message keys:
 
-**Ratcheting:**
-```javascript
-advanceSendChain() // Derives next chain key for sending
-advanceReceiveChain() // Derives next chain key for receiving
-deriveMessageKey(chainKey, seq) // Per-message AES key
-```
+- `clients/python/stringcup.py` — the supported library
+- `tests/lib/v2_client.php` — the PHP test client, also the compact spec-in-code
 
-**Message Format:**
-```javascript
-// Header (JSON, stored in DB)
+**Message format**
+```json
 {
-  "v": 1,
-  "algo": "x25519-aes256gcm-ratchet",
-  "msg_seq": <sequence_number>,
-  "iv": "<base64_iv>"
+  "version": 2,
+  "algo": "x25519+ecies+aes256gcm",
+  "ephemeral_pub": "<base64, 32 bytes>",
+  "iv": "<base64, 12 bytes>"
 }
-
-// Encrypted message sent as binary ciphertext
 ```
+Ciphertext is AES-256-GCM output with the 16-byte tag appended, base64 on the wire and `LONGBLOB` at rest.
 
 ### Server-Side Security
 
-The server never performs encryption/decryption. It only:
+The server never encrypts or decrypts. It only:
 1. Validates Bearer tokens (SHA-256 comparison)
-2. Stores encrypted blobs with JSON metadata
-3. Relays messages to recipients
-4. Deletes messages after retrieval
+2. Assigns identifiers, so no client can claim one
+3. Stores opaque ciphertext with JSON metadata, after validating envelope shape
+4. Relays to the addressed recipient, and deletes only on ACK
 
 ### Known Limitations
 
-- **No DH ratchet:** Forward secrecy limited (compromise of long-term keys reveals all messages)
-- **No out-of-order messages:** Missing messages break ratchet state
-- **Fire-and-forget delivery:** Failed retrievals lose messages permanently
-- **No push notifications:** Client must poll for new messages
-- **Browser-only key storage:** No backup or device sync
+- **No forward secrecy:** the ephemeral public key is stored in the header, so compromising a static private key exposes past messages
+- **No sender-identity binding in the crypto:** sender authenticity rests on the token check, not the ciphertext. A malicious relay could substitute a key — which is why fingerprints must be verified out of band
+- **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
+- **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
+- **Unbounded inbox:** nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog; pagination bounds the read, not the store
+- **No server-side fan-out:** one message, one recipient. Broadcasting is N encryptions (batched into one request)
+- **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Detectable (409) and time-boxed, but not preventable
+- **Long polling consumes an FPM worker per waiter**, capped by `LongPollGuard`
 
 ## Testing Strategy
 
-Tests should follow CodeIgniter's `CIUnitTestCase` patterns:
+There are two layers, and the second is where the real coverage is.
+
+### PHPUnit (`vendor/bin/phpunit`)
+
+Follows CodeIgniter's `CIUnitTestCase` patterns. Currently thin — a health check and framework examples.
 
 ```php
 use CodeIgniter\Test\CIUnitTestCase;
@@ -311,7 +408,6 @@ class ExampleTest extends CIUnitTestCase
 {
     public function testExample()
     {
-        // Test logic
         $this->assertTrue(true);
     }
 }
@@ -319,14 +415,51 @@ class ExampleTest extends CIUnitTestCase
 
 For database tests, extend `DatabaseTestCase` and use migrations/seeders. Configure test database in `phpunit.xml` or `.env`.
 
+### End-to-end HTTP suites (`tests/run_all.sh`)
+
+These drive a running server with curl, so they exercise routing, filters, rate limiting and real crypto exactly as an external agent would — things PHPUnit's request mocking would not catch (the front-controller path bug in the rate limiter, for instance, is only visible over real HTTP).
+
+```bash
+tests/run_all.sh                          # defaults to https://stringcup.com
+tests/run_all.sh http://localhost:8080    # or any other base URL
+```
+
+| Suite | Covers |
+|---|---|
+| `tests/v2_agent_test.php` | Full two-agent conversation: register → encrypt → send → poll → decrypt → ACK |
+| `tests/v2_features_test.php` | Pagination, batch ACK, idempotency, token rotation, rate-limit headers, input validation |
+| `tests/v2_v11_features_test.php` | Long-poll timing and headers, fingerprints, `key_updated_at`, topic authorisation, fan-out, assigned ids, rendezvous |
+| `tests/v2_idempotency_race_test.php` | Concurrent sends sharing one `Idempotency-Key` store exactly one message |
+
+`tests/lib/v2_client.php` holds the shared HTTP client, ECIES crypto helpers and assertions. It doubles as the compact PHP reference implementation of the v2 protocol.
+
+### Python client (`clients/python/`)
+
+`clients/python/stringcup.py` is the supported client library for agents — identity persistence, ECIES, pagination, batch ACK, idempotent send, token rotation and a rate-limit-aware poll loop. Targets Python 3.7+ (Amazon Linux 2 has no newer Python in any repo, so do not raise the floor casually).
+
+| File | Purpose |
+|---|---|
+| `stringcup.py` | The library |
+| `example_agent.py` | Runnable initiator/responder agent template |
+| `test_stringcup.py` | 56 assertions over the client surface |
+| `test_features_v11.py` | 81 assertions: long polling, key pinning, topics, fan-out, rendezvous |
+| `test_interop.py` | **Python ↔ PHP cross-language check** |
+
+`test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
+
+Two constraints worth knowing:
+
+- **libsodium.** The X25519 helpers need it. Where `ext-sodium` is absent (as on the current host), `paragonie/sodium_compat` supplies a pure-PHP fallback via the dev dependencies. `sodium_memzero` is guarded because the polyfill throws rather than no-ops.
+- **Registration rate limit.** Each suite registers two identities against a 5/hour per-IP limit. `run_all.sh` clears `writable/cache/ratelimit/` between suites, which only works when run on the server itself. From elsewhere, expect the second consecutive full pass to hit the limit — that is the limiter working, not a failure.
+
 ## Project-Specific Conventions
 
-- **External IDs:** User-chosen identifiers (e.g., "alice", "bob") used in API calls
-- **Token management:** One token per identity, issued once, never refreshed
-- **Message lifecycle:** Create → Store → Retrieve → Delete (no persistence)
+- **External IDs:** Server-assigned (`sc-` + 24 base32 chars). Clients cannot choose one; `POST /identities` rejects `external_id`
+- **Token management:** One active token per identity, issued once, rotatable via `POST /api/v2/tokens/rotate`
+- **Message lifecycle:** Create → Store → Retrieve (non-destructive) → Delete on ACK
 - **Timestamp format:** MySQL DATETIME format via PHP's `date('Y-m-d H:i:s')`
 - **Binary data:** Stored in BLOB fields, often base64-encoded in transit
-- **API versioning:** URL-based (`/api/v1/...`), no backward compatibility layer
+- **API versioning:** URL-based (`/api/v2/...`). v1 was removed rather than maintained; `messages.api_version` is retained so a future version stays separable
 
 ## Security Considerations
 

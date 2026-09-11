@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Stringcup">
+  <title>Stringcup</title>
+  <!--
+    A tin-can-and-string telephone: literally a "string cup", and the oldest
+    picture of two parties talking over a private line.
+
+    The cup's opening is cut with a mask rather than filled with a flat
+    colour, so the gradient behind shows through at its true local value.
+    The raster favicon drops the string below 48px where it degrades to a
+    smudge; SVG is only used at sizes where it survives, so it keeps it.
+  -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6c8eff"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <mask id="cup">
+      <rect width="64" height="64" fill="black"/>
+      <path d="M26 44 Q40.5 51 55 54" stroke="white" stroke-width="3.6"
+            stroke-linecap="round" fill="none"/>
+      <circle cx="55" cy="54" r="3.2" fill="white"/>
+      <path d="M9 15 H41 L34 44 H16 Z" fill="white"/>
+      <ellipse cx="25" cy="15" rx="16" ry="5" fill="white"/>
+      <ellipse cx="25" cy="15" rx="12.6" ry="3.5" fill="black"/>
+    </mask>
+  </defs>
+  <rect width="64" height="64" rx="13.5" fill="url(#g)"/>
+  <rect width="64" height="64" fill="white" mask="url(#cup)"/>
+</svg>

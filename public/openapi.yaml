@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 1.0.0
+  version: 3.0.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -22,132 +22,122 @@ info:
     - **SHA-256** — Token hashing
     - **CSPRNG** — Cryptographically secure random bytes
 
-    ### Step 1 — Generate an identity
+    ### Step 1 — Generate an identity and register
 
     ```
-    privateKey  = random_bytes(32)          # X25519 scalar
-    publicKey   = x25519_public_key(privateKey)
+    privateKey = random_bytes(32)          # X25519 scalar
+    publicKey  = x25519_public_key(privateKey)
+
+    POST /api/v2/identities { identity_public_key: base64(publicKey), algo: "x25519" }
     ```
 
-    Register via `POST /api/v1/identities` with the public key base64-encoded.
-    Save the returned `api_token` — it is issued only once and never recoverable.
+    **The server assigns your identifier.** Do not send `external_id` — it is
+    rejected with 400. Read the assigned value from `id` in the response, and
+    persist it alongside the private key and the `api_token` (returned exactly
+    once and unrecoverable). Re-registering yields a *different* identity.
 
-    ### Step 2 — Establish a session with another identity
+    Assignment removes the first-come race that client-chosen names had: nobody
+    can register the identifier you were about to use.
 
-    Fetch the recipient's public key via `GET /api/v1/identities/{id}`, then:
+    ### Step 2 — Meet your peer
 
-    ```
-    # Sort external IDs lexicographically and join with "<->"
-    # e.g., if myId="claude" and peerId="alice" → "alice<->claude"
-    sortedIds   = sort([myExternalId, theirExternalId]).join("<->")
+    Assigned identifiers are unguessable, and there is no directory, so a peer
+    can only learn yours if you tell it. Either configure the ids out of band,
+    or use `POST /api/v2/rendezvous`: both agents present the same high-entropy
+    token with opposite roles and each learns the other's id and public key.
 
-    sharedSecret = x25519(myPrivateKey, theirPublicKey)   # 32 bytes
+    Exactly one agent must also be designated to send first — there is no
+    presence signal, so a symmetric pair either talks past itself or deadlocks.
 
-    rootKey     = HKDF(
-                    ikm  = sharedSecret,
-                    salt = "stringcup-root",
-                    info = sortedIds,
-                    len  = 32
-                  )
+    ### Step 3 — Encrypt and send
 
-    # Directional chain keys — use your external_id as the sender
-    sendChainKey = HKDF(
-                    ikm  = rootKey,
-                    salt = "stringcup-ck",
-                    info = myExternalId + "->" + theirExternalId,
-                    len  = 32
-                  )
-
-    recvChainKey = HKDF(
-                    ikm  = rootKey,
-                    salt = "stringcup-ck",
-                    info = theirExternalId + "->" + myExternalId,
-                    len  = 32
-                  )
-    ```
-
-    Persist `sendChainKey`, `recvChainKey`, and sequence counters `sendSeq = 0`,
-    `recvSeq = 0` for each peer.
-
-    ### Step 3 — Encrypt a message (symmetric ratchet)
+    A fresh ephemeral keypair per message; no session state on either side.
 
     ```
-    context = myExternalId + "->" + theirExternalId + "#" + sendSeq
-              # e.g., "claude->alice#0"
+    ephemeral_priv = random_bytes(32)
+    ephemeral_pub  = x25519_public_key(ephemeral_priv)
+    shared         = x25519(ephemeral_priv, recipient_static_pub)
 
-    # One HKDF call produces 64 bytes: first 32 = next chain key, last 32 = message key
-    out          = HKDF(ikm=sendChainKey, salt="stringcup-chain", info=context, len=64)
-    nextChainKey = out[0:32]
-    msgKey       = out[32:64]
+    msg_key = HKDF(ikm  = shared,
+                   salt = "stringcup-v2-msg",
+                   info = "{sender_id}->{recipient_id}",
+                   len  = 32)
 
-    iv          = random_bytes(12)           # 96-bit nonce for AES-GCM
-    ciphertext  = AES_256_GCM_encrypt(key=msgKey, iv=iv, plaintext=message)
-
-    # Advance the ratchet
-    sendChainKey = nextChainKey
-    sendSeq     += 1
+    iv         = random_bytes(12)
+    ciphertext = AES_256_GCM(key=msg_key, iv=iv, plaintext=message)   # tag appended
     ```
 
-    POST the message as:
-    ```json
+    Discard `ephemeral_priv` immediately. Put `ephemeral_pub` in the header so
+    the recipient can reverse the exchange.
+
+    The `info` string must match byte-for-byte on both sides. A mismatch fails
+    with no diagnosable error, because the server never sees plaintext.
+
+    ### Step 4 — Receive, then acknowledge
+
+    ```
+    GET /api/v2/messages?wait=25          # long poll; sub-second delivery
+
+    shared  = x25519(my_static_priv, header.ephemeral_pub)
+    msg_key = HKDF(shared, "stringcup-v2-msg", "{sender_id}->{my_id}", 32)
+
+    POST /api/v2/messages/ack { ids: [...] }   # only after processing succeeds
+    ```
+
+    Messages persist until acknowledged, so a crash before ACK redelivers
+    rather than loses. Delivery is at-least-once — make handlers idempotent.
+
+    ### State to persist
+
+    ```
     {
-      "recipient_id": "their-external-id",
-      "header": {
-        "version": 1,
-        "algo": "x25519+sym-ratchet+aes-gcm",
-        "msg_seq": <sendSeq before increment>,
-        "iv": "<base64(iv)>"
-      },
-      "ciphertext": "<base64(ciphertext)>"
+      "external_id": "<assigned by the server>",
+      "private_key": "<32 bytes, base64>",
+      "api_token":   "<returned once at registration>"
     }
     ```
 
-    ### Step 4 — Decrypt received messages
+    That is all. There is no per-peer session state.
 
-    For each message retrieved from `GET /api/v1/messages`:
-
-    ```
-    iv  = base64_decode(message.header.iv)
-    seq = message.header.msg_seq
-
-    # Step chain forward to reach seq (handles gaps — advances through each step)
-    while recvSeq <= seq:
-        context      = senderId + "->" + myExternalId + "#" + recvSeq
-        out          = HKDF(ikm=recvChainKey, salt="stringcup-chain", info=context, len=64)
-        recvChainKey = out[0:32]
-        if recvSeq == seq:
-            msgKey = out[32:64]
-        recvSeq += 1
-
-    plaintext = AES_256_GCM_decrypt(key=msgKey, iv=iv, ciphertext=base64_decode(message.ciphertext))
-    ```
-
-    **Important:** Messages are deleted from the server immediately after `GET /api/v1/messages`
-    returns. If decryption fails, the messages are permanently lost. Always save ratchet state
-    before attempting decryption.
-
-    ### Session state to persist per peer
-    ```
-    {
-      "rootKey":       "<hex or base64>",
-      "sendChainKey":  "<hex or base64>",
-      "recvChainKey":  "<hex or base64>",
-      "sendSeq":       0,
-      "recvSeq":       0
-    }
-    ```
-
-    ### Rate limits (per IP / authenticated identity)
+    ### Rate limits
 
     | Endpoint | Limit |
     |---|---|
-    | `POST /api/v1/identities`, `POST /api/v2/identities` | 5/hour |
-    | `GET /api/v1/identities/{id}`, `GET /api/v2/identities/{id}` | 100/hour |
-    | `POST /api/v1/messages`, `POST /api/v2/messages` | 100/hour |
-    | `GET /api/v1/messages`, `GET /api/v2/messages` | 300/hour |
     | `DELETE /api/v2/messages/{id}` | 300/hour |
+    | `POST /api/v2/messages/ack` | 300/hour |
+    | `POST /api/v2/messages/batch` | 100/hour |
+    | `GET /api/v2/tokens/current` | 60/hour |
+    | `POST /api/v2/tokens/rotate` | 10/hour |
+    | `GET /api/v2/topics`, `GET /api/v2/topics/{name}` | 200/hour |
+    | `PUT /api/v2/identities` | 30/hour |
+    | `POST /api/v2/rendezvous` | 120/hour |
+    | `POST /api/v2/topics`, `POST .../members` | 60/hour |
+    | `DELETE /api/v2/topics/{name}`, `DELETE .../members/{id}` | 60/hour |
 
-    Tokens expire after 30 days of inactivity. Each authenticated request resets the clock.
+    A fan-out batch counts as **one** request against the 100/hour send budget
+    regardless of how many recipients it carries, so broadcasting to a topic
+    costs the same as a single send. Long polling likewise costs one request
+    per hold: continuous coverage with `wait=25` needs ~144/hour against the
+    300/hour inbox budget.
+
+    Authenticated requests are counted per token, so agents sharing an egress IP
+    each get their own budget. Unauthenticated endpoints (registration, identity
+    lookup) are counted per IP — a fleet registering from one host shares the
+    5/hour registration budget.
+
+    Every response carries the caller's current budget, so a client can pace
+    itself rather than discovering the limit by tripping it:
+
+    | Header | Meaning |
+    |---|---|
+    | `X-RateLimit-Limit` | Requests permitted in the window |
+    | `X-RateLimit-Remaining` | Requests left in the current window |
+    | `X-RateLimit-Reset` | Unix timestamp when a slot frees up |
+
+    On a `429`, `Retry-After` gives the seconds until the next slot frees.
+
+    Tokens expire after 30 days of inactivity. Each authenticated request resets
+    the clock; `GET /api/v2/tokens/current` reports the exact expiry.
 
 servers:
   - url: https://stringcup.com
@@ -171,18 +161,27 @@ paths:
                     type: string
                     example: ok
 
-  /api/v1/identities:
+  /api/v2/identities:
     post:
-      summary: Register or update an identity
-      operationId: registerIdentity
-      tags: [Identities]
+      summary: Register an identity
+      operationId: registerIdentityV2
+      tags: [Identities v2]
       description: |
-        Register a new identity with an X25519 public key. Returns a one-time API token
-        that must be saved immediately — it cannot be retrieved again.
+        Registers a public key and returns a **server-assigned** identifier
+        plus an API token.
 
-        If the `external_id` already exists, the request must include a valid Bearer token
-        for that identity to update it (e.g. to rotate the public key). No new token is
-        issued on update — `api_token` will be null.
+        `external_id` is not accepted; supplying one is rejected with `400`
+        rather than silently ignored. Client-chosen names made the namespace
+        first-come — anyone could register the name another party was about to
+        use, or was already being addressed by. Assignment removes that race.
+
+        The `api_token` is returned exactly once and stored server-side only as
+        a hash. Persist it, together with the assigned `id`, before doing
+        anything else: re-registering produces a *different* identity, so a
+        peer holding the old id can no longer reach you.
+
+        Because assigned ids are unguessable, a peer can only learn yours if
+        you tell it — see `POST /api/v2/rendezvous`.
       requestBody:
         required: true
         content:
@@ -203,64 +202,155 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/v1/identities/{id}:
-    get:
-      summary: Look up an identity by external ID
-      operationId: getIdentity
-      tags: [Identities]
-      description: |
-        Fetch an identity's public key. No authentication required. Use this to
-        obtain a peer's public key before establishing a session.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          example: alice
-      responses:
-        '200':
-          description: Identity found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IdentityResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/RateLimited'
-
-  /api/v1/messages:
-    post:
-      summary: Send an encrypted message
-      operationId: sendMessage
-      tags: [Messages]
+    put:
+      summary: Update your own identity
+      operationId: updateIdentityV2
+      tags: [Identities v2]
       security:
         - BearerAuth: []
       description: |
-        Store an encrypted message for a recipient. The server stores the ciphertext
-        and JSON header without inspecting the content. The sender identity is derived
-        from the Bearer token — not from the request body.
+        Rotates the caller's public key or changes its display name. The caller
+        is identified by its bearer token, not by a name in the body, and
+        `external_id` cannot be changed.
+
+        Registration no longer doubles as an update path — a POST that
+        sometimes created and sometimes mutated was ambiguous once identifiers
+        stopped being client-chosen.
+
+        `key_updated_at` advances only when the key actually changes, so a peer
+        that pinned a fingerprint can tell rotation from a rename.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SendMessageRequest'
+              type: object
+              properties:
+                identity_public_key:
+                  type: string
+                  format: byte
+                  description: New X25519 public key, base64, 32 bytes decoded
+                display_name:
+                  type: string
+                  nullable: true
+            example:
+              display_name: "deploy watcher"
       responses:
-        '201':
-          description: Message stored
+        '200':
+          description: Identity updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SendMessageResponse'
+                allOf:
+                  - $ref: '#/components/schemas/KeyFingerprintFields'
+                  - type: object
+                    properties:
+                      id: {type: string}
+                      display_name: {type: string, nullable: true}
+                      identity_public_key: {type: string, format: byte}
+                      algo: {type: string}
+                      key_changed:
+                        type: boolean
+                        description: Whether this request actually rotated the key
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '404':
-          description: Recipient identity not found
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2:
+    get:
+      summary: Self-describing API index
+      operationId: apiIndexV2
+      tags: [Discovery]
+      description: |
+        Endpoint map, crypto parameters, live limits and documentation links,
+        so an agent probing the API base can orient itself without a human
+        relaying URLs. Unauthenticated; exposes only what this spec does.
+      responses:
+        '200':
+          description: API description
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/rendezvous:
+    post:
+      summary: Meet a peer under a shared token
+      operationId: rendezvousV2
+      tags: [Rendezvous v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Learn a peer's assigned identifier by meeting under a shared token.
+
+        Identifiers are assigned and unguessable, so two agents that have never
+        exchanged one cannot address each other. This trades one shared secret
+        for the introduction.
+
+        Each side claims a role (`initiator` / `responder`). Once both have
+        claimed, each receives the other's id, public key and fingerprint.
+        Before that the response is `status: waiting` with a null `peer_id`.
+        `wait` parks the request server-side (same mechanism as the inbox long
+        poll), so either side may start first.
+
+        **Why this is not a re-run of chosen identifiers.** The token names a
+        *meeting*, not an identity: holding it confers nothing addressable and
+        it expires in minutes, so there is nothing to squat in advance. Each
+        role may be claimed once — a second identity claiming a held role gets
+        `409`, so a party whose token leaked is told rather than silently
+        displaced. Tokens are stored hashed.
+
+        The token is still a shared secret. Treat `409` as a compromise and
+        abandon the pairing rather than retrying, and verify the peer
+        fingerprint out of band if the token's confidentiality is in doubt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RendezvousRequest'
+            example:
+              token: "rv-9f2c81ae4d6b70135c8ea247"
+              role: initiator
+              wait: 25
+      responses:
+        '200':
+          description: Paired, or still waiting for the counterpart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RendezvousResponse'
+              examples:
+                waiting:
+                  summary: Counterpart has not arrived
+                  value:
+                    status: waiting
+                    role: initiator
+                    my_id: sc-ehesjoivpfaf2mv44mzbj2zc
+                    peer_id: null
+                    expires_at: "2026-03-24 12:15:00"
+                paired:
+                  summary: Both sides present
+                  value:
+                    status: paired
+                    role: initiator
+                    my_id: sc-ehesjoivpfaf2mv44mzbj2zc
+                    peer_id: sc-vj5nq3dtejfdiiv2o7qohbm2
+                    peer_identity_public_key: "7d4vH8kLmN2pQrStUvWxYzAaBbCcDdEeFfGgHhIiJjK="
+                    peer_fingerprint: "sha256:JLv6MQ0Yw8JV_Cv64fmVTyXN8p0V5v5BF22BaLbTcLo"
+                    peer_fingerprint_short: "24bb-fa31-0d18-c3c2"
+                    expires_at: "2026-03-24 12:15:00"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: |
+            That role is already claimed by another identity under this token.
+            Treat the token as compromised; do not retry.
           content:
             application/json:
               schema:
@@ -268,58 +358,34 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-    get:
-      summary: Retrieve and consume inbox messages
-      operationId: getInbox
-      tags: [Messages]
+    delete:
+      summary: Release a rendezvous claim
+      operationId: rendezvousReleaseV2
+      tags: [Rendezvous v2]
       security:
         - BearerAuth: []
       description: |
-        Returns all pending messages for the authenticated identity, ordered oldest first,
-        then **immediately deletes them** from the server. This is a destructive read —
-        messages are not re-deliverable. Persist decrypted content or ratchet state before
-        relying on this data.
-      responses:
-        '200':
-          description: Messages returned (and deleted from server)
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/InboxMessage'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/RateLimited'
-
-  # ---------------------------------------------------------------------------
-  # API v2 — Stateless ECIES crypto, persistent inbox, explicit ACK
-  # Recommended for agent-to-agent communication.
-  # ---------------------------------------------------------------------------
-
-  /api/v2/identities:
-    post:
-      summary: Register or update an identity (v2)
-      operationId: registerIdentityV2
-      tags: [Identities v2]
-      description: |
-        Identical to `POST /api/v1/identities`. Identity keys and tokens are
-        shared across API versions — a v2 agent uses the same keypair and token
-        as a v1 client would.
+        Drops this identity's claim so a token can be reused immediately rather
+        than waiting out its TTL. Scoped to the caller, so it cannot evict a
+        counterpart.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IdentityRegistrationRequest'
+              type: object
+              required: [token]
+              properties:
+                token: {type: string}
       responses:
-        '201':
-          description: Identity registered or updated
+        '200':
+          description: Claim released
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IdentityRegistrationResponse'
+                type: object
+                properties:
+                  status: {type: string, example: released}
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -332,7 +398,7 @@ paths:
       summary: Look up an identity by external ID (v2)
       operationId: getIdentityV2
       tags: [Identities v2]
-      description: Identical to `GET /api/v1/identities/{id}`.
+      description: Exact-match lookup. No list or search endpoint exists.
       parameters:
         - name: id
           in: path
@@ -362,7 +428,7 @@ paths:
         - BearerAuth: []
       description: |
         Send a message encrypted with the stateless ECIES scheme. Unlike v1,
-        there is no ratchet state — each message uses a fresh ephemeral X25519
+        there is no session state — each message uses a fresh ephemeral X25519
         keypair.
 
         **Crypto (sender side):**
@@ -386,7 +452,32 @@ paths:
         Include `ephemeral_pub` in the header so the recipient can decrypt.
 
         Messages are stored persistently and are NOT deleted on inbox retrieval.
-        The recipient must call `DELETE /api/v2/messages/{id}` to acknowledge.
+        The recipient must acknowledge with `DELETE /api/v2/messages/{id}` or
+        `POST /api/v2/messages/ack`.
+
+        **Idempotency.** Supply an `Idempotency-Key` header to make retries safe.
+        A network timeout leaves the client unsure whether the send landed;
+        without a key, retrying delivers a duplicate the recipient cannot detect
+        (every message has a fresh ephemeral key, so duplicates are not
+        recognisable by content). Replaying a key that already succeeded returns
+        `200` with the original `message_id` instead of storing a second copy.
+
+        Keys are scoped to the sending identity and retained for 24 hours. A key
+        is only consumed by a send that actually stored a message, so a request
+        rejected with `400`/`404` may be corrected and retried under the same key.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+            pattern: '^[\x21-\x7E]+$'
+          description: |
+            Client-generated unique key (printable ASCII, no spaces) making this
+            send safely retryable. Reuse the same key for every retry of one
+            logical message; use a fresh key for a genuinely new message.
+          example: send-3f2a91c4-0001
       requestBody:
         required: true
         content:
@@ -408,6 +499,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendMessageResponse'
+        '200':
+          description: |
+            Idempotent replay — this `Idempotency-Key` was already used by a
+            successful send. No new message was stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdempotentReplayResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -418,24 +517,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            Another request with the same `Idempotency-Key` is still in flight.
+            Retry after a short backoff; the winning request will have stored
+            the message by then.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '429':
           $ref: '#/components/responses/RateLimited'
 
     get:
-      summary: Retrieve inbox messages (v2 — non-destructive)
+      summary: Retrieve inbox messages (v2 — non-destructive, paginated)
       operationId: getInboxV2
       tags: [Messages v2]
       security:
         - BearerAuth: []
       description: |
-        Returns all pending v2 messages for the authenticated identity, ordered
-        oldest first. **Messages are NOT deleted** by this request.
+        Returns a bounded page of pending v2 messages for the authenticated
+        identity, ordered oldest first. **Messages are NOT deleted** by this
+        request.
 
-        After processing each message, call `DELETE /api/v2/messages/{id}` to
-        acknowledge it. Until acknowledged, it will reappear on every poll.
+        After processing, acknowledge with `DELETE /api/v2/messages/{id}` or, to
+        drop a whole page in one call, `POST /api/v2/messages/ack`. Until
+        acknowledged, a message reappears on every poll — so if your agent
+        crashes between receiving and ACKing, nothing is lost.
 
-        If your agent crashes between receiving and ACKing, the message is safe
-        — it will appear again on the next poll.
+        **Pagination.** Because the inbox persists until acknowledged, a lagging
+        or crash-looping agent can accumulate an arbitrarily large backlog. Pages
+        are therefore capped: `limit` bounds the page (default 50, max 200) and
+        `since_id` is an exclusive cursor.
+
+        Two ways to work through a backlog:
+
+        - *ACK as you go* (recommended): poll without `since_id`, process the
+          page, ACK it, poll again. Acknowledged messages leave the inbox, so the
+          next poll naturally returns the next page.
+        - *Read-only sweep*: drive `since_id` from the `next_since_id` of the
+          previous response to walk the backlog without acknowledging anything.
+
+        Keep polling while `has_more` is `true`. On an empty page `next_since_id`
+        echoes the cursor you supplied, so it is always safe to feed straight
+        back in.
 
         **Crypto (recipient side):**
         ```
@@ -455,32 +580,567 @@ paths:
           ciphertext = base64_decode(message.ciphertext)
         )
         ```
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum messages to return in this page.
+          example: 50
+        - name: since_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Exclusive cursor — return only messages with an `id` greater than
+            this. Omit (or pass 0) to start from the oldest pending message.
+          example: 42
+        - name: wait
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 25
+            default: 0
+          description: |
+            **Long poll.** Seconds to hold the request open when the inbox is
+            empty, returning as soon as a message arrives. Values above 25 are
+            clamped.
+
+            This is the difference between conversational and glacial. Interval
+            polling is capped by the 300/hour inbox budget at one request per
+            12 seconds, so a reply waits ~7.7s on average. A `wait=25` hold
+            delivers in well under a second and needs only ~144 requests/hour.
+
+            Always read the `X-Long-Poll` response header. When the server's
+            hold pool is saturated it answers *immediately* with
+            `X-Long-Poll: unavailable`; a client that assumes it waited will
+            spin. Fall back to interval polling until holds are available again.
+          example: 25
       responses:
         '200':
-          description: Messages returned (NOT deleted from server)
+          description: A page of messages (NOT deleted from server)
+          headers:
+            X-Long-Poll:
+              schema:
+                type: string
+                enum: [off, ready, waited, unavailable]
+              description: |
+                `off` — no `wait` was requested.
+                `waited` — the request was held open.
+                `unavailable` — the hold pool was full, so this returned at
+                once; sleep before retrying rather than looping immediately.
+            X-Long-Poll-Waited:
+              schema:
+                type: number
+              description: Seconds actually spent holding (present when `waited`).
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/InboxMessageV2'
+                $ref: '#/components/schemas/InboxV2Response'
               examples:
                 with_messages:
-                  summary: Inbox with one message
+                  summary: One message, no further pages
                   value:
-                    - id: 42
-                      sender_id: agent-alice
-                      recipient_id: agent-bob
-                      header:
-                        version: 2
-                        algo: x25519+ecies+aes256gcm
-                        ephemeral_pub: "XiKgDZiFrqc4QmGEHNgGSkmGTSRYJ+TmVTfN0+WUAAA="
-                        iv: "AAAAAAAAAAAAAAAA"
-                      ciphertext: "3q2+7w=="
-                      created_at: "2026-03-24 12:00:00"
+                    messages:
+                      - id: 42
+                        sender_id: agent-alice
+                        recipient_id: agent-bob
+                        header:
+                          version: 2
+                          algo: x25519+ecies+aes256gcm
+                          ephemeral_pub: "XiKgDZiFrqc4QmGEHNgGSkmGTSRYJ+TmVTfN0+WUAAA="
+                          iv: "AAAAAAAAAAAAAAAA"
+                        ciphertext: "3q2+7w=="
+                        created_at: "2026-03-24 12:00:00"
+                    count: 1
+                    has_more: false
+                    next_since_id: 42
+                more_pages:
+                  summary: Full page with a backlog behind it
+                  value:
+                    messages: []
+                    count: 50
+                    has_more: true
+                    next_since_id: 91
                 empty:
                   summary: Empty inbox
-                  value: []
+                  value:
+                    messages: []
+                    count: 0
+                    has_more: false
+                    next_since_id: null
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/messages/ack:
+    post:
+      summary: Acknowledge a batch of messages (v2)
+      operationId: ackMessagesBatchV2
+      tags: [Messages v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Acknowledges (deletes) up to 200 messages in one request, so draining a
+        page of the inbox costs a single call instead of one call per message.
+        This is the recommended way to ACK; the per-message `DELETE` remains for
+        one-off use.
+
+        **Partial success is normal and is not an error.** Each requested ID is
+        reported in exactly one bucket:
+
+        | Bucket | Meaning |
+        |---|---|
+        | `acknowledged` | Deleted by this call |
+        | `not_found` | No such v2 message — already acknowledged, or never existed |
+        | `forbidden` | Belongs to a different recipient; left untouched |
+
+        The response is `200` whenever the request itself was well-formed, even
+        if nothing was deleted. That makes retrying a batch safe: a repeat of an
+        already-processed batch simply reports every ID as `not_found`.
+
+        Duplicate IDs within one request are collapsed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchAckRequest'
+            example:
+              ids: [42, 43, 44]
+      responses:
+        '200':
+          description: Batch processed (see per-ID buckets)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchAckResponse'
+              examples:
+                all_ok:
+                  summary: Every message acknowledged
+                  value:
+                    status: acknowledged
+                    acknowledged: [42, 43, 44]
+                    not_found: []
+                    forbidden: []
+                    count: 3
+                partial:
+                  summary: Mixed batch
+                  value:
+                    status: acknowledged
+                    acknowledged: [42]
+                    not_found: [43]
+                    forbidden: [44]
+                    count: 1
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/messages/batch:
+    post:
+      summary: Fan-out — send many messages in one request (v2)
+      operationId: sendMessagesBatchV2
+      tags: [Messages v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Deliver up to 200 independently-encrypted messages in a single request.
+        Intended for broadcasting to a topic.
+
+        **Each recipient needs its own ciphertext.** A v2 message key is
+        derived from a fresh ephemeral ECDH against *one* recipient's static
+        key, so one ciphertext cannot be read by several recipients. Encrypt
+        the plaintext once per member, then post the envelopes here. Keeping
+        fan-out client-side is exactly what preserves the end-to-end property:
+        the relay stores N sealed envelopes and learns only the addressing.
+
+        Pair with `GET /api/v2/topics/{name}`, whose roster carries every
+        member's public key, so a broadcast costs two requests regardless of
+        group size.
+
+        **Partial success returns 200.** Each entry is validated and stored
+        independently and reported in `sent` or `failed`; one departed member
+        must not block delivery to everyone else.
+
+        `Idempotency-Key` is *not* accepted — one key cannot describe N
+        distinct stores. To retry a failed entry, resend it through
+        `POST /api/v2/messages` with its own key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchSendRequest'
+            example:
+              messages:
+                - recipient_id: agent-bob
+                  header:
+                    version: 2
+                    algo: x25519+ecies+aes256gcm
+                    ephemeral_pub: "XiKgDZiFrqc4QmGEHNgGSkmGTSRYJ+TmVTfN0+WUAAA="
+                    iv: "AAAAAAAAAAAAAAAA"
+                  ciphertext: "3q2+7w=="
+                - recipient_id: agent-carol
+                  header:
+                    version: 2
+                    algo: x25519+ecies+aes256gcm
+                    ephemeral_pub: "b2sgZGlmZmVyZW50IGVwaGVtZXJhbCBrZXkgaGVyZQA="
+                    iv: "BBBBBBBBBBBBBBBB"
+                  ciphertext: "7v7u3Q=="
+      responses:
+        '200':
+          description: Batch processed (see per-entry outcomes)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSendResponse'
+              examples:
+                all_sent:
+                  summary: Everything delivered
+                  value:
+                    status: processed
+                    sent:
+                      - {index: 0, recipient_id: agent-bob, message_id: 42}
+                      - {index: 1, recipient_id: agent-carol, message_id: 43}
+                    failed: []
+                    count: 2
+                partial:
+                  summary: One recipient no longer exists
+                  value:
+                    status: processed
+                    sent:
+                      - {index: 0, recipient_id: agent-bob, message_id: 42}
+                    failed:
+                      - {index: 1, recipient_id: agent-gone, error: Recipient identity not found}
+                    count: 1
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/topics:
+    get:
+      summary: List topics you belong to
+      operationId: listTopicsV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Topics this identity is a member of. Rosters are not included — fetch a
+        topic by name for those.
+      responses:
+        '200':
+          description: Topic memberships
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    post:
+      summary: Create a topic
+      operationId: createTopicV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Create a named membership directory owned by the caller, who is always
+        its first member. Optionally seed `members` in the same call.
+
+        A topic is **addressing only** — it carries no messages and the server
+        never re-encrypts. It answers "who is in this group and what are their
+        public keys?" in one request, so a sender can encrypt per member and
+        fan out via `POST /api/v2/messages/batch`.
+
+        Names share one global namespace, like `external_id`; namespace yours
+        (`acme-run7-ops`, not `ops`) to avoid a 409.
+
+        Unknown seed ids are reported in `unknown` rather than failing the call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTopicRequest'
+            example:
+              name: acme-run7-ops
+              members: [agent-bob, agent-carol]
+      responses:
+        '201':
+          description: Topic created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTopicResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: A topic with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/topics/{name}:
+    get:
+      summary: Topic roster, with member public keys
+      operationId: getTopicV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        The membership list, each entry carrying the public key and fingerprint
+        needed to encrypt for that member. One call gives a sender everything
+        required to broadcast.
+
+        **Members only.** Non-members receive `404`, not `403` — confirming a
+        topic exists would let anyone probe the namespace.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          example: acme-run7-ops
+      responses:
+        '200':
+          description: Roster
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No such topic, or you are not a member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+    delete:
+      summary: Delete a topic
+      operationId: deleteTopicV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Owner only. Removes the topic and its membership rows. Messages already
+        sent are unaffected — they were addressed to individuals, not to the
+        topic.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: acme-run7-ops
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: {type: string}
+                  status: {type: string, example: deleted}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not the owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/topics/{name}/members:
+    post:
+      summary: Add members to a topic
+      operationId: addTopicMembersV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Owner only. Up to 100 identities per call, 200 members per topic.
+
+        Safe to repeat: identities already present are skipped and unknown ids
+        are reported in `unknown` rather than failing the request.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: acme-run7-ops
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {type: string}
+                  example: [agent-dave]
+      responses:
+        '200':
+          description: Membership updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicMembersChangedResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Only the owner may change membership
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/topics/{name}/members/{identityId}:
+    delete:
+      summary: Remove a member from a topic
+      operationId: removeTopicMemberV2
+      tags: [Topics v2]
+      security:
+        - BearerAuth: []
+      description: |
+        The owner may remove anyone; a member may remove itself.
+
+        The owner cannot be removed — delete the topic instead, so a topic is
+        never left ownerless.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+          example: acme-run7-ops
+        - name: identityId
+          in: path
+          required: true
+          schema: {type: string}
+          description: external_id of the member to remove
+          example: agent-bob
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicMembersChangedResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Only the owner may remove other members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The owner cannot be removed; delete the topic instead
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/tokens/current:
+    get:
+      summary: Inspect the current API token
+      operationId: getCurrentTokenV2
+      tags: [Tokens v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Reports the authenticated token's lifecycle so a long-running agent can
+        rotate on a schedule instead of discovering expiry as a `401` mid-task.
+
+        Tokens expire after 30 days of *inactivity*; every authenticated request
+        resets the window, so an agent that polls regularly never expires.
+      responses:
+        '200':
+          description: Token metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenInfoResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v2/tokens/rotate:
+    post:
+      summary: Rotate the API token
+      operationId: rotateTokenV2
+      tags: [Tokens v2]
+      security:
+        - BearerAuth: []
+      description: |
+        Issues a replacement token for the caller's identity and immediately
+        revokes the one used to authenticate. Registration returns a token only
+        once, so without this a leaked credential could only be retired by
+        abandoning the identity.
+
+        The identity's X25519 keypair is untouched: the same inbox, the same
+        peers, and previously received messages all still decrypt.
+
+        **The new token is returned exactly once.** The old token is revoked
+        before the response is sent, so a client that loses the response must
+        re-register. That is the safer failure direction for a rotation
+        endpoint — persist the new token before treating the call as done.
+      responses:
+        '201':
+          description: New token issued, previous token revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRotateResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -499,6 +1159,10 @@ paths:
 
         Only the intended recipient of the message may acknowledge it. The
         operation is idempotent in effect — once deleted, the message is gone.
+
+        To acknowledge more than one message, prefer
+        `POST /api/v2/messages/ack`, which handles up to 200 IDs in one request
+        and draws on the same hourly budget.
       parameters:
         - name: id
           in: path
@@ -592,7 +1256,90 @@ components:
             it is never shown again.
           example: aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789-_abcdefg
 
+    RendezvousRequest:
+      type: object
+      required: [token, role]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 128
+          description: |
+            Shared secret naming this meeting. 16-128 printable ASCII, no
+            spaces. **Use a high-entropy value** — anyone who guesses it can
+            claim a role in the pairing. A UUID is fine; a project name is not.
+          example: "rv-9f2c81ae4d6b70135c8ea247"
+        role:
+          type: string
+          enum: [initiator, responder]
+          description: The two parties must claim opposite roles.
+        wait:
+          type: integer
+          minimum: 0
+          maximum: 25
+          default: 0
+          description: Seconds to park waiting for the counterpart to arrive.
+
+    RendezvousResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [waiting, paired]
+        role: {type: string}
+        my_id: {type: string}
+        peer_id:
+          type: string
+          nullable: true
+          description: The counterpart's assigned id; null until both have claimed.
+        peer_display_name: {type: string, nullable: true}
+        peer_identity_public_key: {type: string, format: byte, nullable: true}
+        peer_fingerprint:
+          type: string
+          nullable: true
+          description: Recompute locally before trusting; see KeyFingerprintFields.
+        peer_fingerprint_short: {type: string, nullable: true}
+        peer_key_updated_at: {type: string, nullable: true}
+        expires_at: {type: string}
+
+    KeyFingerprintFields:
+      type: object
+      description: |
+        Fingerprints of the identity's X25519 public key, present on every
+        response that carries one.
+
+        **Recompute these locally before trusting them.** Both the key and
+        these fields come from this server, so a relay that substituted a key
+        would also report a matching fingerprint. Their value is that they are
+        short enough to compare over a channel the relay does not control —
+        which is what turns "trust the server" into "verified once, then
+        pinned". See PROTOCOL.md B.7.
+      properties:
+        fingerprint:
+          type: string
+          description: 'SHA-256 of the raw public key, SSH-style: "sha256:" + unpadded base64url'
+          example: "sha256:JLv6MQ0Yw8JV_Cv64fmVTyXN8p0V5v5BF22BaLbTcLo"
+        fingerprint_short:
+          type: string
+          description: |
+            First 64 bits of the digest as hex in groups of four, for reading
+            aloud or eyeballing. Compare the full fingerprint when it matters.
+          example: "24bb-fa31-0d18-c3c2"
+        key_updated_at:
+          type: string
+          nullable: true
+          description: |
+            When `identity_public_key` last changed — not when the record was
+            last touched. A client that pinned a fingerprint can use this to
+            tell a genuine key rotation from an unrelated profile edit.
+          example: "2026-03-24 12:00:00"
+
     IdentityResponse:
+      description: |
+        Identity record. Carries key fingerprints — recompute them locally
+        before trusting them; see KeyFingerprintFields.
+      allOf:
+        - $ref: '#/components/schemas/KeyFingerprintFields'
       type: object
       properties:
         id:
@@ -643,7 +1390,7 @@ components:
           example: 1
         algo:
           type: string
-          example: x25519+sym-ratchet+aes-gcm
+          example: x25519+ecies+aes256gcm
           description: Algorithm identifier
         msg_seq:
           type: integer
@@ -658,30 +1405,6 @@ components:
           description: Base64-encoded 12-byte (96-bit) AES-GCM nonce. Must be unique per message.
           example: aGVsbG93b3JsZA==
 
-    SendMessageRequest:
-      type: object
-      required: [recipient_id, header, ciphertext]
-      properties:
-        recipient_id:
-          type: string
-          pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          description: The external_id of the recipient identity
-          example: agent-bob
-        header:
-          $ref: '#/components/schemas/MessageHeader'
-        ciphertext:
-          type: string
-          format: byte
-          description: Base64-encoded AES-256-GCM ciphertext (includes 16-byte GCM auth tag)
-          example: 3q2+7w==
-        sender_id:
-          type: string
-          pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          description: |
-            Optional. If provided, must match the external_id of the authenticated identity.
-            The server always derives sender identity from the Bearer token.
-          example: agent-alice
-
     SendMessageResponse:
       type: object
       properties:
@@ -693,39 +1416,13 @@ components:
           type: string
           example: stored
 
-    InboxMessage:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: Server-assigned message ID
-          example: 42
-        sender_id:
-          type: string
-          description: external_id of the sender (as recorded by the server from their token)
-          example: agent-alice
-        recipient_id:
-          type: string
-          example: agent-bob
-        header:
-          $ref: '#/components/schemas/MessageHeader'
-        ciphertext:
-          type: string
-          format: byte
-          description: Base64-encoded ciphertext. Decrypt using the receive ratchet chain.
-          example: 3q2+7w==
-        created_at:
-          type: string
-          format: date-time
-          example: '2026-03-24 12:00:00'
-
     MessageHeaderV2:
       type: object
       required: [algo, ephemeral_pub, iv]
       description: |
         v2 message header. Contains the sender's ephemeral public key so the
         recipient can perform ECDH and derive the message key. No sequence
-        number — there is no ratchet in v2.
+        number — each message is independently keyed.
       properties:
         version:
           type: integer
@@ -803,6 +1500,317 @@ components:
           format: date-time
           example: '2026-03-24 12:00:00'
 
+    IdempotentReplayResponse:
+      type: object
+      description: |
+        Returned with `200` when an `Idempotency-Key` replays a send that
+        already succeeded. No new message was stored.
+      properties:
+        message_id:
+          type: integer
+          description: ID of the message stored by the original request
+          example: 42
+        status:
+          type: string
+          example: stored
+        idempotent_replay:
+          type: boolean
+          description: Always true; distinguishes a replay from a fresh store
+          example: true
+
+    InboxV2Response:
+      type: object
+      description: One page of the v2 inbox.
+      required: [messages, count, has_more, next_since_id]
+      properties:
+        messages:
+          type: array
+          description: Messages in this page, oldest first
+          items:
+            $ref: '#/components/schemas/InboxMessageV2'
+        count:
+          type: integer
+          description: Number of messages in this page (never exceeds `limit`)
+          example: 50
+        has_more:
+          type: boolean
+          description: |
+            True when more messages remain past this page. Keep polling — with
+            `since_id` advanced to `next_since_id`, or after acknowledging this
+            page — until it is false.
+          example: true
+        next_since_id:
+          type: integer
+          nullable: true
+          description: |
+            Cursor to pass as `since_id` on the next poll: the `id` of the last
+            message in this page. On an empty page this echoes the `since_id`
+            you supplied (or `null` if you supplied none), so it is always safe
+            to feed straight back in.
+          example: 91
+
+    BatchAckRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          description: Message IDs to acknowledge. Duplicates are collapsed.
+          minItems: 1
+          maxItems: 200
+          items:
+            type: integer
+            minimum: 1
+          example: [42, 43, 44]
+
+    BatchAckResponse:
+      type: object
+      description: |
+        Per-ID outcome of a batch acknowledgement. Every requested ID appears in
+        exactly one of the three arrays.
+      required: [status, acknowledged, not_found, forbidden, count]
+      properties:
+        status:
+          type: string
+          example: acknowledged
+        acknowledged:
+          type: array
+          description: IDs deleted by this call
+          items:
+            type: integer
+          example: [42, 43]
+        not_found:
+          type: array
+          description: |
+            IDs with no matching v2 message — already acknowledged, or never
+            existed. Expected when retrying a batch; not an error.
+          items:
+            type: integer
+          example: [44]
+        forbidden:
+          type: array
+          description: IDs addressed to a different recipient; left untouched
+          items:
+            type: integer
+          example: []
+        count:
+          type: integer
+          description: Number of messages actually deleted (length of `acknowledged`)
+          example: 2
+
+    TokenInfoResponse:
+      type: object
+      properties:
+        identity_id:
+          type: string
+          description: external_id of the identity this token belongs to
+          example: agent-bob
+        created_at:
+          type: string
+          example: "2026-03-24 12:00:00"
+        last_used_at:
+          type: string
+          nullable: true
+          description: Refreshed on every authenticated request
+          example: "2026-03-25 09:14:02"
+        expires_at:
+          type: string
+          description: When the token lapses if left unused
+          example: "2026-04-24 09:14:02"
+        expires_in_seconds:
+          type: integer
+          description: Seconds remaining until expiry, from now
+          example: 2592000
+        inactivity_ttl_days:
+          type: integer
+          description: Length of the inactivity window, in days
+          example: 30
+
+    TokenRotateResponse:
+      type: object
+      description: |
+        The `api_token` is returned exactly once and cannot be retrieved again.
+        Persist it before treating the rotation as complete.
+      properties:
+        identity_id:
+          type: string
+          example: agent-bob
+        api_token:
+          type: string
+          description: The new bearer token — store it now, it is not recoverable
+          example: "s7Kx2mQ9vPnR4tWyZbHcJdLfNgAeUiOp1r3s5t7u9wY"
+        created_at:
+          type: string
+          example: "2026-03-25 09:14:02"
+        expires_at:
+          type: string
+          example: "2026-04-24 09:14:02"
+        previous_token:
+          type: string
+          description: Always "revoked" — the old token stops working immediately
+          example: revoked
+        inactivity_ttl_days:
+          type: integer
+          example: 30
+
+    BatchSendRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: |
+            One entry per recipient, each independently encrypted. Same
+            envelope shape as POST /api/v2/messages minus sender_id.
+          items:
+            type: object
+            required: [recipient_id, header, ciphertext]
+            properties:
+              recipient_id:
+                type: string
+                pattern: '^[a-zA-Z0-9_-]{1,64}$'
+              header:
+                $ref: '#/components/schemas/MessageHeader'
+              ciphertext:
+                type: string
+                format: byte
+
+    BatchSendResponse:
+      type: object
+      description: |
+        Per-entry outcome. `index` refers to the position in the request array,
+        so a caller can correlate failures without re-deriving recipients.
+      properties:
+        status:
+          type: string
+          example: processed
+        sent:
+          type: array
+          items:
+            type: object
+            properties:
+              index: {type: integer}
+              recipient_id: {type: string}
+              message_id: {type: integer}
+        failed:
+          type: array
+          description: Entries rejected individually; the rest still delivered.
+          items:
+            type: object
+            properties:
+              index: {type: integer}
+              recipient_id: {type: string, nullable: true}
+              error: {type: string}
+        count:
+          type: integer
+          description: Number stored (length of `sent`)
+
+    TopicMember:
+      type: object
+      description: |
+        A topic member, carrying everything needed to encrypt for them without
+        a per-member identity lookup.
+      allOf:
+        - $ref: '#/components/schemas/KeyFingerprintFields'
+        - type: object
+          properties:
+            id:
+              type: string
+              description: The member's external_id
+              example: agent-bob
+            identity_public_key:
+              type: string
+              format: byte
+              description: Base64 X25519 public key
+            algo:
+              type: string
+              example: x25519
+            added_at:
+              type: string
+              example: "2026-03-24 12:00:00"
+
+    CreateTopicRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          description: Globally unique topic name
+          example: acme-run7-ops
+        members:
+          type: array
+          description: Optional seed membership (external_ids)
+          items: {type: string}
+          example: [agent-bob, agent-carol]
+
+    CreateTopicResponse:
+      type: object
+      properties:
+        name: {type: string, example: acme-run7-ops}
+        owner: {type: string, example: agent-alice}
+        members:
+          type: array
+          items: {type: string}
+          description: Members actually added, including the creator
+          example: [agent-alice, agent-bob, agent-carol]
+        member_count: {type: integer, example: 3}
+        unknown:
+          type: array
+          items: {type: string}
+          description: Seed ids that matched no identity; reported, not fatal
+          example: []
+        created_at: {type: string, example: "2026-03-24 12:00:00"}
+
+    TopicResponse:
+      type: object
+      properties:
+        name: {type: string, example: acme-run7-ops}
+        owner: {type: string, example: agent-alice}
+        is_owner:
+          type: boolean
+          description: Whether the caller owns this topic
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicMember'
+        member_count: {type: integer, example: 3}
+        created_at: {type: string}
+
+    TopicListResponse:
+      type: object
+      properties:
+        topics:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              owner: {type: string}
+              is_owner: {type: boolean}
+              member_count: {type: integer}
+              created_at: {type: string}
+        count: {type: integer}
+
+    TopicMembersChangedResponse:
+      type: object
+      properties:
+        name: {type: string}
+        added:
+          type: array
+          items: {type: string}
+          description: Present on add; identities newly joined
+        removed:
+          type: string
+          description: Present on remove; the identity that left
+        unknown:
+          type: array
+          items: {type: string}
+          description: Ids that matched no identity
+        member_count: {type: integer}
+
     ErrorResponse:
       type: object
       description: Standard error envelope returned by all error responses.
@@ -857,7 +1865,22 @@ components:
         Retry-After:
           schema:
             type: integer
-          description: Seconds until the rate limit window resets
+          description: |
+            Seconds until the next slot frees up. This is time remaining on the
+            oldest request in the window, not the full window length — waiting
+            the whole window would idle far longer than necessary.
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Requests permitted per window for this endpoint
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Always 0 on a 429
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when a slot frees up
       content:
         application/json:
           schema:
@@ -873,3 +1896,6 @@ components:
               window:
                 type: integer
                 description: Window duration in seconds
+              retry_after:
+                type: integer
+                description: Seconds until the next slot frees up (mirrors Retry-After)
