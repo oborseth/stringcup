@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 4.0.0
+  version: 4.1.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -538,6 +538,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendMessageResponse'
+        '413':
+          description: |
+            Ciphertext exceeds `message_max_bytes` (advertised at `GET /api/v2`;
+            256 KiB on the reference deployment). Split the payload across
+            several messages.
+
+            The cap is enforced by the application rather than left to the web
+            server's body limit, so the ceiling does not depend on deployment
+            configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '507':
+          description: |
+            **The recipient's inbox is full** — it has reached
+            `inbox_max_pending_messages` or `inbox_max_pending_bytes`
+            (advertised at `GET /api/v2`).
+
+            This is retryable, not a permanent failure: the message was not
+            stored, and a send will succeed once the recipient acknowledges
+            what it already has.
+
+            No message is ever deleted by age — only an acknowledgement removes
+            one — so the store is bounded here, at the send, rather than by an
+            expiry that would silently destroy mail a sender had been told was
+            stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '200':
           description: |
             Idempotent replay — this `Idempotency-Key` was already used by a

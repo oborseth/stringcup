@@ -9,6 +9,7 @@ use App\Models\IdentityModel;
 use App\Models\ApiTokenModel;
 use App\Models\IdempotencyKeyModel;
 use App\Libraries\LongPollGuard;
+use App\Libraries\RetentionSweeper;
 
 /**
  * V2 MessageController
@@ -32,6 +33,31 @@ class MessageController extends BaseController
 
     /** Messages deliverable in one fan-out request. */
     public const MAX_BATCH = 200;
+
+    /**
+     * Largest single ciphertext, in bytes.
+     *
+     * `ciphertext` is a LONGBLOB, so without this the only ceiling is nginx's
+     * `client_max_body_size` — a default, not a decision, and one a
+     * self-hoster may raise for unrelated reasons. An explicit cap here means
+     * the worst case does not depend on the web server's configuration.
+     */
+    public const MAX_MESSAGE_BYTES = 262144;          // 256 KiB
+
+    /**
+     * Pending inbox ceiling per recipient: message count and total bytes.
+     *
+     * Nothing ages a message out — only an ACK deletes one, which is what
+     * makes delivery at-least-once and crash-safe. Bounding the store by
+     * expiry would mean silently deleting mail the sender was told had been
+     * stored, so the limit lives at the other end instead: over the ceiling
+     * the *send* is refused with 507 and the sender learns about it
+     * immediately. "Persists until acknowledged" therefore stays literally
+     * true, and a consumer that stops acknowledging applies visible
+     * backpressure rather than quietly consuming the disk.
+     */
+    public const MAX_PENDING_MESSAGES = 2000;
+    public const MAX_PENDING_BYTES    = 67108864;     // 64 MiB
 
     /**
      * Longest a client may park on an empty inbox, in seconds.
@@ -135,6 +161,61 @@ class MessageController extends BaseController
     }
 
     /**
+     * Pending count and byte total for one recipient.
+     *
+     * Served entirely by idx_messages_quota (recipient_id, api_version,
+     * byte_len) — `byte_len` is read from the index, so deciding whether to
+     * accept a send never touches a blob page. Do not rewrite this as
+     * `SUM(LENGTH(ciphertext))`: that reads the recipient's whole backlog off
+     * disk on every single send.
+     *
+     * @return array{0: int, 1: int} count, bytes
+     */
+    private function pendingUsage(string $recipientExternalId): array
+    {
+        $row = (new MessageModel())
+            ->selectCount('id', 'n')
+            ->selectSum('byte_len', 'bytes')
+            ->where('recipient_id', $recipientExternalId)
+            ->where('api_version', 2)
+            ->get()
+            ->getRowArray();
+
+        return [(int) ($row['n'] ?? 0), (int) ($row['bytes'] ?? 0)];
+    }
+
+    /**
+     * Why this send cannot be accepted into the recipient's inbox, or null.
+     *
+     * The message being offered is counted too, so a send is refused *before*
+     * it takes the inbox over the line rather than after.
+     */
+    private function quotaRefusal(string $recipientExternalId, int $incomingBytes): ?string
+    {
+        [$count, $bytes] = $this->pendingUsage($recipientExternalId);
+
+        if ($count + 1 > self::MAX_PENDING_MESSAGES) {
+            return sprintf(
+                'Recipient inbox is full: %d of %d pending messages. The recipient must '
+                    . 'acknowledge messages before it can receive more.',
+                $count,
+                self::MAX_PENDING_MESSAGES
+            );
+        }
+
+        if ($bytes + $incomingBytes > self::MAX_PENDING_BYTES) {
+            return sprintf(
+                'Recipient inbox is full: %d of %d pending bytes. The recipient must '
+                    . 'acknowledge messages before it can receive more.',
+                $bytes,
+                self::MAX_PENDING_BYTES
+            );
+        }
+
+        return null;
+    }
+
+    /**
      * Shape a stored row for the wire.
      */
     private function presentMessage(array $m): array
@@ -224,6 +305,21 @@ class MessageController extends BaseController
                 return $this->failValidationErrors('ciphertext must be valid base64-encoded data');
             }
 
+            if (strlen($ciphertextDecoded) > self::MAX_MESSAGE_BYTES) {
+                $this->logWithContext('warning', 'V2 message send failed: ciphertext too large', [
+                    'bytes' => strlen($ciphertextDecoded),
+                ]);
+                return $this->fail(
+                    sprintf(
+                        'Ciphertext is %d bytes; the maximum is %d. Split the payload across '
+                            . 'several messages.',
+                        strlen($ciphertextDecoded),
+                        self::MAX_MESSAGE_BYTES
+                    ),
+                    413
+                );
+            }
+
             $senderExternalId = $currentIdentity['external_id'];
 
             if (!empty($req['sender_id'])) {
@@ -281,6 +377,22 @@ class MessageController extends BaseController
                 return $this->failNotFound('Recipient identity not found');
             }
 
+            // Checked before any sequence is claimed, so a refused send does
+            // not burn a number and leave a gap in either party's numbering.
+            $refusal = $this->quotaRefusal($recipientId, strlen($ciphertextDecoded));
+            if ($refusal !== null) {
+                if ($idemRowId !== null) {
+                    // Release the reservation: the send did not happen, and a
+                    // retry after the recipient drains should be allowed to
+                    // reuse the key rather than replay a non-existent message.
+                    $idemModel->delete($idemRowId);
+                }
+                $this->logWithContext('warning', 'V2 message send refused: inbox full', [
+                    'recipient_id' => $recipientId,
+                ]);
+                return $this->fail($refusal, 507);
+            }
+
             $messageModel = new MessageModel();
             $now          = date('Y-m-d H:i:s');
 
@@ -300,6 +412,7 @@ class MessageController extends BaseController
                 'sender_seq'    => $senderSeq,
                 'header_json'   => json_encode($header),
                 'ciphertext'    => $ciphertextDecoded,
+                'byte_len'      => strlen($ciphertextDecoded),
                 'created_at'    => $now,
                 'api_version'   => 2,
             ], true);
@@ -313,6 +426,13 @@ class MessageController extends BaseController
                 ]);
                 $idemModel->pruneExpired();
             }
+
+            // Reclaim unreachable storage, at most once an hour. Hung off the
+            // send path because that is where growth happens: a busy relay
+            // sweeps regularly, an idle one never needs to, and a self-hoster
+            // needs no cron. Throttled and exception-swallowing, so it cannot
+            // turn a successful send into a failure.
+            (new RetentionSweeper())->maybeRun();
 
             $this->logWithContext('info', 'V2 message sent successfully', [
                 'message_id'   => $messageId,
@@ -469,6 +589,28 @@ class MessageController extends BaseController
                     continue;
                 }
 
+                $entryCiphertext = base64_decode($entry['ciphertext'], true);
+                $entryBytes      = strlen((string) $entryCiphertext);
+
+                if ($entryBytes > self::MAX_MESSAGE_BYTES) {
+                    $reject(sprintf(
+                        'Ciphertext is %d bytes; the maximum is %d',
+                        $entryBytes,
+                        self::MAX_MESSAGE_BYTES
+                    ));
+                    continue;
+                }
+
+                // Refused per entry, so one member with a full inbox does not
+                // fail the whole fan-out: the rest still go and `failed` names
+                // who did not. Same partial-success contract this endpoint
+                // already has for an unknown recipient.
+                $refusal = $this->quotaRefusal($recipientId, $entryBytes);
+                if ($refusal !== null) {
+                    $reject($refusal);
+                    continue;
+                }
+
                 $recipientSeq = $identityModel->claimSequence($recipientId, IdentityModel::SEQ_RECEIVED);
                 $senderSeq    = $identityModel->claimSequence($senderExternalId, IdentityModel::SEQ_SENT);
 
@@ -478,7 +620,8 @@ class MessageController extends BaseController
                     'recipient_seq' => $recipientSeq,
                     'sender_seq'    => $senderSeq,
                     'header_json'   => json_encode($entry['header']),
-                    'ciphertext'    => base64_decode($entry['ciphertext'], true),
+                    'ciphertext'    => $entryCiphertext,
+                    'byte_len'      => $entryBytes,
                     'created_at'    => $now,
                     'api_version'   => 2,
                 ], true);

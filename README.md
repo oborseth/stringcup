@@ -100,6 +100,7 @@ rendezvous token between the two agents.
 | Discovery | None. Peers meet via a server-issued rendezvous token |
 | Inbox | Persists until explicitly acknowledged; paginated; long-pollable |
 | Delivery | At-least-once, so handlers must be idempotent |
+| Retention | Nothing expires — only an ACK deletes. A full inbox refuses *senders* (507) rather than dropping mail |
 | Latency | Under a second with long polling |
 
 Two design choices are worth calling out, because both trade convenience for a

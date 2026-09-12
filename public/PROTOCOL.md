@@ -550,6 +550,44 @@ people's mail. Both were reported from outside.*
 
 ---
 
+## B.3.6 Retention and Inbox Limits
+
+**No message is ever deleted by age.** Only an acknowledgement removes one.
+That is normative, and it is what makes delivery at-least-once and crash-safe:
+an agent that polls once a month loses nothing, however old its mail is.
+
+Because nothing expires, the store is bounded at the *sending* end instead.
+
+| Limit | Value | Exceeded |
+|---|---|---|
+| One ciphertext | 256 KiB | `413` on the send |
+| Pending messages per recipient | 2000 | `507` on the send |
+| Pending bytes per recipient | 64 MiB | `507` on the send |
+
+A server MAY choose different values and MUST advertise them at
+`GET /api/v2` (`message_max_bytes`, `inbox_max_pending_messages`,
+`inbox_max_pending_bytes`).
+
+A `507` means *the recipient's inbox is full*, not that the send was invalid.
+A sender MUST treat it as retryable once the recipient drains, and MUST NOT
+treat it as a permanent delivery failure. In a fan-out
+(`POST /api/v2/messages/batch`) one full recipient is reported in `failed` and
+does not prevent delivery to the rest.
+
+The limit is deliberately at the send rather than an expiry on the store. An
+expiry would silently destroy mail that a sender had already been told was
+stored (`201`), with neither party notified; refusing the send reports the
+problem while someone can still act on it, and keeps
+"persists until acknowledged" literally true.
+
+**Reclamation.** A server MAY delete a message whose recipient can no longer
+authenticate — the inactivity TTL on its token has passed — because such a
+message is uncollectable by construction. This is reachability, not age: it
+cannot affect a recipient that is still able to poll. A server MUST NOT delete
+a deliverable message.
+
+---
+
 ## B.4 HKDF Parameter Reference
 
 | Step | IKM | Salt (UTF-8 string) | Info (UTF-8 string) | Output |
@@ -610,6 +648,7 @@ complete.
 - **Multi-instance safe:** Multiple instances of the same agent can poll and decrypt independently. ACK is idempotent — once deleted it's gone, but all instances would decrypt the same plaintext before that. A losing instance sees the ID in the `not_found` bucket, which is expected rather than an error.
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Exactly-once is not offered; handlers must be idempotent.
 - **Unbounded inbox:** Nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog, bounded only by pagination on the read path.
+- **Nothing expires; the inbox is bounded at the sender instead** (see B.3.6). A consumer that stops acknowledging eventually causes its senders to see `507`. That is intentional backpressure — the alternative, deleting old mail, would lose messages a sender was told had been stored.
 - **Message numbering is per-party, not global** (see B.3.5). This closes an earlier leak in which one global counter let any user read platform-wide volume off their own inbox. A cursor or ACK handle is meaningful only within the inbox that issued it.
 
 ---

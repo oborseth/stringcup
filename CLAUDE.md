@@ -274,6 +274,68 @@ The sender is deliberately never told the recipient's number: returning it
 would disclose the recipient's lifetime received count to anyone able to write
 to them. Do not "helpfully" add it to the send response.
 
+### Retention and inbox limits
+
+**Do not add an age-based expiry.** Only an ACK deletes a message, and that is
+load-bearing: it is what makes delivery at-least-once and crash-safe, and it
+means an agent polling once a month loses nothing. An expiry would silently
+destroy mail a sender had already been told was stored (`201`), notifying
+neither party. Adding one is a protocol change, not housekeeping — it would
+require rewriting PROTOCOL.md B.3.3 and B.3.6 and every promise that messages
+persist until acknowledged.
+
+The store is bounded at the sending end instead:
+
+| Constant (`MessageController`) | Value | Exceeded |
+|---|---|---|
+| `MAX_MESSAGE_BYTES` | 256 KiB | `413` |
+| `MAX_PENDING_MESSAGES` | 2000 | `507` |
+| `MAX_PENDING_BYTES` | 64 MiB | `507` |
+
+`MAX_MESSAGE_BYTES` exists because `ciphertext` is a `LONGBLOB`: without it the
+only ceiling is nginx's `client_max_body_size`, which is a default rather than
+a decision and which a self-hoster may raise for unrelated reasons.
+
+All three are advertised at `GET /api/v2`, because a sender must be able to
+tell a full inbox from a permanent failure. A `507` is retryable.
+
+**`quotaRefusal()` must stay index-only.** It reads `byte_len`, a plain integer
+column, through `idx_messages_quota (recipient_id, api_version, byte_len)`;
+`EXPLAIN` should say `Using index`. Rewriting it as `SUM(LENGTH(ciphertext))`
+would read every blob page in the recipient's backlog on every single send —
+InnoDB stores LONGBLOB values over ~768 bytes off-page. `byte_len` is derived
+from the row rather than kept as a counter on `identities` because a counter
+drifts the moment anything deletes a message outside the ACK path.
+
+The quota is checked *before* any sequence is claimed, so a refused send does
+not burn a number and leave a gap in either party's numbering. In a batch it is
+checked per entry, so one full recipient does not fail the whole fan-out.
+
+### Reclaiming unreachable data
+
+`RetentionSweeper` removes only what nobody can reach: messages whose recipient
+can no longer authenticate (its token is past `INACTIVITY_TTL_DAYS` plus a
+7-day grace), dead tokens, expired rendezvous claims, idempotency keys past
+24h, and topics orphaned by a departed owner. Reachability, never age — so it
+cannot affect a recipient that could still poll.
+
+It runs two ways: `php spark db:retain` on demand, and `maybeRun()` from the
+send path, throttled by a marker file to at most once an hour. The throttle
+uses `LOCK_EX|LOCK_NB` plus a re-check inside the lock so a burst of concurrent
+sends cannot all sweep at once, and it swallows exceptions — reclaiming storage
+must never turn a working send into an error. Hanging it off the send path
+means a busy relay sweeps regularly, an idle one never needs to, and a
+self-hoster needs no cron. Same pattern as `idempotency_keys` and `rendezvous`,
+which already prune themselves opportunistically.
+
+**`db:retain` is safe to schedule; `db:prune` is not.** `db:prune` is a one-off
+development cleanup whose `--all` mode deletes every identity. Do not cron it.
+
+Identities are deliberately never deleted: each is a single public key, so they
+are not what grows, and a peer holding a pinned fingerprint deserves an honest
+answer rather than a 404 that looks like key substitution. Assigned ids carry
+120 bits of randomness, so nothing is ever reused.
+
 ### Schema drift
 
 The live schema had been altered by hand and diverged from the migrations — a fresh `migrate` produced a *narrower* schema than production (`ciphertext` as `BLOB`/64 KB instead of `LONGBLOB`). `2026-09-10-000003_ReconcileProductionSchema` converges any database onto the production definitions and is a no-op where they already match.
@@ -487,7 +549,7 @@ The server never encrypts or decrypts. It only:
 - **No sender-identity binding in the crypto:** sender authenticity rests on the token check, not the ciphertext. A malicious relay could substitute a key — which is why fingerprints must be verified out of band
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
-- **Unbounded inbox:** nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog; pagination bounds the read, not the store
+- **Nothing expires, by design.** Only an ACK deletes a message. The store is bounded at the *sending* end instead — see [Retention](#retention-and-inbox-limits). A consumer that stops acknowledging causes its senders to see 507, which is intentional backpressure rather than data loss
 - **Message numbering is per-party** (see [Message identifiers](#message-identifiers)). Fixed; formerly one global counter that leaked platform-wide volume
 - **No server-side fan-out:** one message, one recipient. Broadcasting is N encryptions (batched into one request)
 - **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Server-issued so they always carry full entropy, detectable (409) and time-boxed, but interception in transit is not preventable

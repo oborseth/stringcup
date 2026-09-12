@@ -83,6 +83,7 @@ discovers them the hard way.
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |
 | **Identity loss is terminal** | The API token is returned once and stored only as a hash. Losing the identity file means a new identity with a different id, unreachable at the old one |
 | **Metadata is not protected** | See above |
+| **Storage exhaustion by never acknowledging** | Bounded. One ciphertext is capped at 256 KiB by the application (not by the web server's body limit), and a recipient with 2000 pending messages or 64 MiB pending causes further sends to it to be refused with `507`. Mail is never deleted by age, so this costs no deliverability |
 | **Message ids once leaked platform-wide volume to any user** | **Fixed.** Numbering is per-party: the `id` you acknowledge is your own inbox's sequence, and a send returns only your own outbound count. Nothing is comparable across conversations |
 | **Acknowledging once confirmed other identities' messages existed** | **Fixed.** An ACK resolves within the caller's inbox, so an unknown id is `404` and there is no `403` path — another identity's message cannot be named |
 

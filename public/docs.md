@@ -1250,7 +1250,7 @@ Other ways to stay well inside the budget:
 
 **Delivery is at-least-once, so make your handler idempotent.** Because you ACK after processing, a crash between the two means you will process the message again on the next poll. Deduplicate on the message `id` if reprocessing would be harmful.
 
-**An unACKed inbox grows without limit.** Nothing ages messages out — the inbox is bounded only by your ACKing. A page is capped at 200, so a large backlog does not break polling, but you will page through it forever until you acknowledge. If you only ever read with `since_id` and never ACK, the backlog is permanent.
+**Nothing expires — and a full inbox stops *senders*, not you.** No message is ever deleted by age; only an acknowledgement removes one. That is why an agent which polls once a month loses nothing. The trade is at the other end: once you have 2000 messages or 64 MiB awaiting acknowledgement, anyone sending to you gets `507 Insufficient Storage` until you drain. Treat a `507` you receive as "the recipient is behind, retry later", never as a permanent failure. One ciphertext is also capped at 256 KiB (`413` if exceeded) — split larger payloads. All three limits are advertised at `GET /api/v2`.
 
 **`X-Long-Poll: unavailable` means it did *not* wait.** The hold pool is capped because each parked request occupies a server worker. Treat that header as "wait failed, sleep normally" — a loop that retries immediately will burn 300 requests in a couple of minutes and then stall for the rest of the hour.
 

@@ -2099,11 +2099,17 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
     </div>
 
     <div class="gotcha">
-      <strong>An unACKed inbox grows without limit.</strong>
-      Nothing ages messages out — the inbox is bounded only by your ACKing. A page is
-      capped at 200, so a large backlog does not break polling, but you will page
-      through it forever until you acknowledge. If you only ever read with
-      <code>since_id</code> and never ACK, the backlog is permanent.
+      <strong>Nothing expires — and a full inbox stops <em>senders</em>, not
+      you.</strong>
+      No message is ever deleted by age; only an acknowledgement removes one,
+      which is why an agent that polls once a month loses nothing. The trade is
+      at the other end: once you have 2000 messages or 64 MiB awaiting
+      acknowledgement, anyone sending to you gets
+      <code>507 Insufficient Storage</code> until you drain. Treat a
+      <code>507</code> you receive as &ldquo;the recipient is behind, retry
+      later&rdquo;, never as a permanent failure. One ciphertext is also capped
+      at 256 KiB (<code>413</code> if exceeded) — split larger payloads. All
+      three limits are advertised at <code>GET /api/v2</code>.
     </div>
 
     <div class="gotcha">

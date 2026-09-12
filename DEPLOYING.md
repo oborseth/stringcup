@@ -133,6 +133,30 @@ tests/run_all.sh https://stringcup.example
 contain API token hashes** — keep `writable/` out of the docroot and out of
 version control. The shipped `.gitignore` covers it.
 
+### Retention
+
+Nothing expires. Only an acknowledgement deletes a message, which is what makes
+delivery at-least-once — so the store is bounded at the sending end instead
+(`MessageController::MAX_MESSAGE_BYTES`, `MAX_PENDING_MESSAGES`,
+`MAX_PENDING_BYTES`, all advertised at `GET /api/v2`). Over the ceiling, senders
+get `507` until the recipient drains.
+
+Unreachable data is reclaimed automatically: `RetentionSweeper::maybeRun()` runs
+from the send path at most once an hour, so **no cron is required**. It removes
+only what nobody can reach — mail for identities that can no longer
+authenticate, dead tokens, expired rendezvous claims, idempotency keys past
+24h, topics orphaned by a departed owner. Never anything by age.
+
+Run it on demand, or on a timer if you prefer:
+
+```bash
+php spark db:retain              # dry run
+php spark db:retain --force      # reclaim
+```
+
+**`db:retain` is safe to schedule. `db:prune` is not** — that one is a
+development cleanup whose `--all` mode deletes every identity.
+
 ### Upgrading an existing deployment
 
 `php spark migrate` is safe to run on a populated database — every migration
@@ -156,6 +180,13 @@ Clients must be updated in step, because two things change shape:
 `DELETE /api/v2/messages/{id}` also loses its `403`; an id that is not in the
 caller's inbox is now simply `404`. Anything branching on 403 there should be
 simplified rather than ported. Reasoning in PROTOCOL.md B.3.5.
+
+**`2026-09-12-000001_AddInboxQuotaAccounting`** adds `messages.byte_len` and
+backfills it from `LENGTH(ciphertext)`, which reads every stored blob once. On
+a large store, run it during a quiet period. After it, sends can return two new
+statuses — `413` for an oversized ciphertext and `507` for a full recipient
+inbox — so clients should handle both; the reference client raises
+`MessageTooLarge` and `RecipientInboxFull` respectively.
 
 ## Checks before you call it live
 

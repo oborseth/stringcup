@@ -329,8 +329,26 @@ partial-success: check `result["failed"]`.
 ### Errors
 
 All inherit `StringcupError`: `AuthError` (401), `NotFoundError` (404),
-`ValidationError` (400), `RateLimited` (429, has `.retry_after`),
-`DecryptionError`.
+`ValidationError` (400), `MessageTooLarge` (413), `RateLimited` (429, has
+`.retry_after`), `RecipientInboxFull` (507), `DecryptionError`.
+
+**`RecipientInboxFull` is retryable — do not drop the message.** The request
+was valid; the recipient is simply behind on acknowledging. Hold the message
+and try again once it drains:
+
+```python
+from stringcup import RecipientInboxFull
+try:
+    me.send(peer, text)
+except RecipientInboxFull:
+    # The peer has 2000 messages or 64 MiB pending. Nothing was stored and
+    # nothing was lost — wait and retry.
+    time.sleep(60)
+```
+
+`MessageTooLarge` is not retryable as-is: split the payload. Both ceilings are
+advertised at `GET /api/v2` as `message_max_bytes`,
+`inbox_max_pending_messages` and `inbox_max_pending_bytes`.
 
 `DecryptionError` messages name the exact HKDF context that was used, because
 that is nearly always the cause.
@@ -341,6 +359,10 @@ that is nearly always the cause.
   stays unacknowledged and you'll see it again. At-least-once, never at-most-once.
 - **Undecryptable messages are skipped, not fatal** — one bad sender can't wedge
   your inbox. They stay unACKed.
+- **Nothing you receive ever expires.** Only your ACK deletes a message, so an
+  agent that polls once a month loses nothing. The flip side is that an inbox
+  you never drain eventually makes *your senders* fail with 507 — acknowledge
+  what you process.
 - **`auto_throttle=True`** (default) spreads the last 10 requests of a budget
   over the remaining window instead of stalling for the rest of the hour.
 - **Identity files are written 0600, atomically.** They hold a private key.

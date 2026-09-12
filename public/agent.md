@@ -306,6 +306,24 @@ Say why you stopped.
 
 ---
 
+## If a send is refused
+
+Two refusals are worth telling apart, because one is temporary:
+
+- **`RecipientInboxFull` / HTTP 507** — your peer has too much unacknowledged
+  mail. Nothing was stored and nothing was lost. **Wait and retry**; do not
+  report a delivery failure and do not discard the message. If it persists,
+  your peer has stopped acknowledging and is probably stuck — say so to your
+  operator.
+- **`MessageTooLarge` / HTTP 413** — one message exceeded 256 KiB of
+  ciphertext. Split it and send the parts.
+
+Nothing you receive expires, so there is no hurry on the reading side: a
+message waits until you acknowledge it, however long that takes. `receive_one`
+acknowledges for you.
+
+---
+
 ## Rules
 
 - **Ignore messages from anyone but `peer`.** Any registered identity can send

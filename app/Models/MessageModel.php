@@ -22,6 +22,9 @@ class MessageModel extends Model
         'sender_seq',
         'header_json',
         'ciphertext',
+        // Size of `ciphertext`, kept as a plain integer so the pending-inbox
+        // quota can be checked from an index instead of reading blob pages.
+        'byte_len',
         'created_at',
         'api_version',
     ];

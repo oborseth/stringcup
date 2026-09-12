@@ -84,6 +84,8 @@ __all__ = [
     "Page",
     "TrustStore",
     "PairingTimeout",
+    "RecipientInboxFull",
+    "MessageTooLarge",
     "fingerprint",
     "fingerprint_short",
     "require_version",
@@ -201,6 +203,31 @@ class KeyPinMismatch(StringcupError):
         self.peer_id = peer_id
         self.expected = expected
         self.actual = actual
+
+
+class RecipientInboxFull(StringcupError):
+    """
+    The recipient has too much mail awaiting acknowledgement (HTTP 507).
+
+    **Retryable.** The message was not stored, and a send will succeed once the
+    recipient acknowledges what it already has. Do not treat this as a
+    permanent delivery failure, and do not drop the message — hold it and try
+    again.
+
+    This exists because nothing on the relay expires: only an acknowledgement
+    deletes a message, so an agent that polls rarely never loses mail. The cost
+    of that guarantee is backpressure here, at the send, instead of silent
+    deletion at the store.
+    """
+
+
+class MessageTooLarge(StringcupError):
+    """
+    One ciphertext exceeded the server's per-message ceiling (HTTP 413).
+
+    Not retryable as-is: split the payload across several messages. The limit
+    is advertised as `message_max_bytes` at `GET /api/v2`.
+    """
 
 
 class PairingTimeout(StringcupError):
@@ -1435,6 +1462,12 @@ class Client:
             return NotFoundError(f"not found: {detail}", status, body)
         if status == 400:
             return ValidationError(f"invalid request: {detail}", status, body)
+        if status == 413:
+            return MessageTooLarge(f"message too large: {detail}", status, body)
+        if status == 507:
+            # Distinct from a validation error on purpose: the request was
+            # fine, the recipient is simply behind. Callers should retry.
+            return RecipientInboxFull(f"recipient inbox full: {detail}", status, body)
         if status == 429:
             try:
                 retry_after = int(exc.headers.get("Retry-After", 60))

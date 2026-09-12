@@ -35,6 +35,10 @@ class SchemaCheck extends BaseCommand
             // the volume leak and the ACK enumeration oracle.
             'recipient_seq' => 'bigint(20) unsigned',
             'sender_seq'    => 'bigint(20) unsigned',
+            // Feeds the pending-inbox quota. Without it the check falls back
+            // to SUM(LENGTH(ciphertext)), which reads every blob page in the
+            // recipient's backlog on every send.
+            'byte_len'      => 'int(10) unsigned',
         ],
         'identities' => [
             'external_id'  => 'varchar(64)',
@@ -65,6 +69,9 @@ class SchemaCheck extends BaseCommand
             // One number per inbox. This is what makes an ACK addressable by
             // sequence alone and keeps a claim from colliding.
             'uniq_messages_recipient_seq' => 'recipient_id,recipient_seq',
+            // Makes the quota probe covering — byte_len is read from the
+            // index, so a send never touches a blob page.
+            'idx_messages_quota' => 'recipient_id,api_version,byte_len',
         ],
         'idempotency_keys' => [
             'identity_id_idem_key' => 'identity_id,idem_key',

@@ -331,7 +331,48 @@ $res = api('POST', "$API_BASE/tokens/rotate", null, $bobToken);
 assert_code(401, $res, 'Revoked token cannot rotate again');
 
 // ============================================================
-step('10. Cleanup');
+step('10. Message size cap and advertised inbox limits');
+// ============================================================
+
+// `ciphertext` is a LONGBLOB, so without an explicit cap the only ceiling is
+// nginx's client_max_body_size — a default, not a decision.
+$big = str_repeat('A', 300 * 1024);
+$res = api('POST', "$API_BASE/messages", [
+    'recipient_id' => $bobId,
+    'sender_id'    => $aliceId,
+    'header'       => [
+        'version'       => 2,
+        'algo'          => 'x25519+ecies+aes256gcm',
+        'ephemeral_pub' => base64_encode(random_bytes(32)),
+        'iv'            => base64_encode(random_bytes(12)),
+    ],
+    'ciphertext'   => base64_encode($big),
+], $aliceToken);
+assert_code(413, $res, 'Oversized ciphertext is refused with 413');
+assert_true(
+    str_contains(strtolower(json_encode($res['body'])), 'maximum'),
+    'The refusal states the maximum so a client can split the payload'
+);
+
+// Nothing expires, so the inbox is bounded by a quota instead. The ceiling
+// itself needs 2000 messages to reach, which the 100/hour send limit puts out
+// of reach here — but the limits must be discoverable, because a sender has to
+// be able to tell a full inbox from a permanent failure.
+$idx = api('GET', str_replace('/api/v2', '/api/v2', $API_BASE), null, null);
+assert_code(200, $idx, 'API index reachable');
+foreach (['message_max_bytes', 'inbox_max_pending_messages', 'inbox_max_pending_bytes'] as $key) {
+    assert_true(
+        isset($idx['body']['limits'][$key]) && $idx['body']['limits'][$key] > 0,
+        "API index advertises {$key}"
+    );
+}
+assert_true(
+    str_contains(strtolower($idx['body']['limits']['inbox_full_note'] ?? ''), '507'),
+    'The index explains that a full inbox answers 507'
+);
+
+// ============================================================
+step('11. Cleanup');
 // ============================================================
 $removed = drain_inbox($API_BASE, $newBobToken) + drain_inbox($API_BASE, $aliceToken);
 ok("Drained $removed remaining message(s)");

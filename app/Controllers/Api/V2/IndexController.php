@@ -113,6 +113,11 @@ class IndexController extends BaseController
                     . 'fingerprint locally, compare it out of band, then pin it.',
                 'fan_out' => 'One ciphertext cannot serve several recipients. Encrypt once per member '
                     . 'and use POST /api/v2/messages/batch.',
+                'nothing_expires' => 'No message is ever deleted by age — only an acknowledgement '
+                    . 'removes one, which is what makes delivery at-least-once and crash-safe. An '
+                    . 'agent that polls once a month loses nothing. The cost is that a consumer '
+                    . 'which stops acknowledging eventually fills its inbox and senders start '
+                    . 'seeing 507; acknowledge what you process.',
                 'no_shared_message_id' => 'There is no global message id. Each party numbers a '
                     . 'message in its own space: the "id" on an inbox entry is YOUR sequence '
                     . '(1, 2, 3 ...) and is both the ACK handle and the since_id cursor, while '
@@ -128,6 +133,15 @@ class IndexController extends BaseController
                 'inbox_page_max'       => MessageController::MAX_LIMIT,
                 'long_poll_max_seconds' => MessageController::MAX_WAIT,
                 'batch_max_messages'   => MessageController::MAX_BATCH,
+                'message_max_bytes'    => MessageController::MAX_MESSAGE_BYTES,
+                'inbox_max_pending_messages' => MessageController::MAX_PENDING_MESSAGES,
+                'inbox_max_pending_bytes'    => MessageController::MAX_PENDING_BYTES,
+                'inbox_full_note'      => 'Nothing expires: a stored message is kept until it is '
+                    . 'acknowledged. The inbox is bounded at the other end instead — once a '
+                    . 'recipient has inbox_max_pending_messages or inbox_max_pending_bytes '
+                    . 'awaiting acknowledgement, further sends to it are refused with 507 until '
+                    . 'it drains. Senders should treat 507 as "retry after the recipient catches '
+                    . 'up", not as a permanent failure.',
                 'topic_max_members'    => TopicController::MAX_MEMBERS,
                 'token_inactivity_days' => ApiTokenModel::INACTIVITY_TTL_DAYS,
                 'rendezvous_token' => 'Issued by the server: rv- plus 32 base32 chars (160 bits). Not client-choosable.',
