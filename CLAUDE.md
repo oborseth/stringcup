@@ -73,7 +73,7 @@ php spark migrate:status
 php spark make:migration CreateTableName
 ```
 
-Migrations cover all eight tables (identities, api_tokens, messages, idempotency_keys, topics, topic_members, rendezvous, plus the unused prekey pair). **Run `php spark schema:check` after any schema change** — see [Schema drift](#schema-drift).
+Migrations cover all eight tables (identities, api_tokens, messages, idempotency_keys, topics, topic_members, rendezvous, plus the unused prekey pair), and `2026-09-11-000001_PerRecipientMessageSequence` adds the per-party message numbering described in [Message identifiers](#message-identifiers). **Run `php spark schema:check` after any schema change** — see [Schema drift](#schema-drift).
 
 ### CodeIgniter CLI
 
@@ -237,6 +237,43 @@ One ciphertext cannot serve several recipients, so a broadcast encrypts per memb
 
 `identities.key_updated_at` moves only when `identity_pubkey` actually changes (`updated_at` moves for any edit), which is what lets a peer distinguish key rotation from a profile tweak.
 
+### Message identifiers
+
+**There is no global public message id.** Each message is numbered twice, in
+each party's own space:
+
+| Column | Exposed as | Held by | Purpose |
+|---|---|---|---|
+| `messages.recipient_seq` | `id` on inbox entries; `since_id`; the ACK handle | recipient | Naming a message within one inbox |
+| `messages.sender_seq` | `sent_seq` on send / batch-send | sender | The sender's own log; replay correlation |
+
+Both are drawn from counters on `identities` (`next_recv_seq`, `next_sent_seq`)
+via `IdentityModel::claimSequence()`, which uses MySQL's
+`LAST_INSERT_ID(col)` side effect to claim-and-read in one statement — no
+transaction, no `SELECT ... FOR UPDATE`. The unique key on
+`(recipient_id, recipient_seq)` is the backstop.
+
+`messages.id` remains the primary key and insertion order. **Do not publish
+it.** Two things went wrong when it was published, both found from outside:
+
+- **Volume leak.** Ids were contiguous across unrelated conversations, so any
+  user could read total platform throughput off their own inbox and estimate
+  everyone else's by differencing across gaps.
+- **Enumeration oracle.** `DELETE /messages/{id}` resolved the global id and
+  answered `403` when the row existed but belonged to someone else, `404`
+  otherwise — confirming the existence of other people's mail. `ackBatch` had
+  the same leak via its `forbidden` bucket.
+
+Both are now structural rather than guarded: a sequence names a message inside
+one inbox, so another identity's message cannot be expressed. `forbidden` is
+retained in the batch-ACK response but is always empty, and the single ACK has
+no 403 path at all. Removing the scoping from either query reopens both holes,
+which is why both ACK paths filter on `recipient_id` *before* the sequence.
+
+The sender is deliberately never told the recipient's number: returning it
+would disclose the recipient's lifetime received count to anyone able to write
+to them. Do not "helpfully" add it to the send response.
+
 ### Schema drift
 
 The live schema had been altered by hand and diverged from the migrations — a fresh `migrate` produced a *narrower* schema than production (`ciphertext` as `BLOB`/64 KB instead of `LONGBLOB`). `2026-09-10-000003_ReconcileProductionSchema` converges any database onto the production definitions and is a no-op where they already match.
@@ -289,7 +326,7 @@ Constraints to preserve when touching this:
 
 ### Never version-check with a string comparison
 
-`stringcup.require_version("2.2.0")` exists because the obvious form is wrong: `__version__ >= "2.2.0"` is a *string* compare, so it evaluates `"2.10.0" >= "2.2.0"` as false and rejects a **newer** library. `agent.md` shipped that exact guard — inside the section about refusing stale copies — and two independent agents caught it. `version_info` is the tuple to compare against if you need to compare directly. Do not reintroduce a string comparison anywhere in the docs.
+`stringcup.require_version("2.3.0")` exists because the obvious form is wrong: `__version__ >= "2.3.0"` is a *string* compare, so it evaluates `"2.10.0" >= "2.3.0"` as false and rejects a **newer** library. `agent.md` shipped that exact guard — inside the section about refusing stale copies — and two independent agents caught it. `version_info` is the tuple to compare against if you need to compare directly. Do not reintroduce a string comparison anywhere in the docs.
 
 ### Primitives for LLM agents
 
@@ -320,6 +357,16 @@ Three constraints to preserve:
 - **The tool descriptions are the documentation an agent actually reads.** They carry the role derivation and the retry contract. Treat them as a published surface, not as comments.
 
 A relay refusal returns `isError: true` with the HTTP status, not a JSON-RPC error — the model can react to the former and never sees the latter.
+
+### Short timeouts in the client
+
+`receive_one(timeout=)` and `await_peer(timeout=)` must park for no longer than
+the caller asked. They used to pass a fixed `wait=MAX_WAIT` (25s) and check the
+deadline only *after* the poll returned, so `timeout=3` blocked 25 seconds —
+the value was accepted and silently ignored downward. That defeats the MCP
+server's `hold`, which exists to stay under a host's tool-call timeout; an
+agent measured `hold: 3` taking 25.3s. Both loops now derive the wait from the
+time remaining. `test_mcp_live.py` asserts a short hold returns early.
 
 ### Client-Side State
 
@@ -441,7 +488,7 @@ The server never encrypts or decrypts. It only:
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
 - **Unbounded inbox:** nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog; pagination bounds the read, not the store
-- **`message_id` is a global counter, not per-conversation:** ids are contiguous across unrelated conversations, so any user can read platform-wide message volume off their own inbox. Documented in SECURITY.md; fixing it means opaque or per-recipient ids and a breaking change to ACK and pagination
+- **Message numbering is per-party** (see [Message identifiers](#message-identifiers)). Fixed; formerly one global counter that leaked platform-wide volume
 - **No server-side fan-out:** one message, one recipient. Broadcasting is N encryptions (batched into one request)
 - **Rendezvous tokens are bearer secrets:** whoever holds one can claim a role. Server-issued so they always carry full entropy, detectable (409) and time-boxed, but interception in transit is not preventable
 - **Long polling consumes an FPM worker per waiter**, capped by `LongPollGuard`
@@ -498,8 +545,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 75 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 37 assertions: two MCP processes pair and converse over a live relay |
+| `test_mcp.py` | 78 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 39 assertions: two MCP processes pair and converse over a live relay |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
 

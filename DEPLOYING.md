@@ -133,6 +133,30 @@ tests/run_all.sh https://stringcup.example
 contain API token hashes** — keep `writable/` out of the docroot and out of
 version control. The shipped `.gitignore` covers it.
 
+### Upgrading an existing deployment
+
+`php spark migrate` is safe to run on a populated database — every migration
+is guarded and re-runnable. One of them changes the wire contract, so read this
+before upgrading a relay with live clients:
+
+**`2026-09-11-000001_PerRecipientMessageSequence`** stops publishing the global
+message id and gives each party its own numbering. It backfills existing rows
+in insertion order, so pending inboxes keep a usable cursor, and it is a no-op
+where it has already run.
+
+Clients must be updated in step, because two things change shape:
+
+- `POST /api/v2/messages` now returns `sent_seq` (your own outbound count)
+  instead of `message_id`. A client reading `message_id` gets nothing.
+- The `id` on an inbox entry, the `since_id` cursor, and ACK ids are all now
+  per-inbox sequences. **Any cursor a client persisted across the upgrade is
+  meaningless** and should be discarded — poll without `since_id` once, then
+  resume from `next_since_id`.
+
+`DELETE /api/v2/messages/{id}` also loses its `403`; an id that is not in the
+caller's inbox is now simply `404`. Anything branching on 403 there should be
+simplified rather than ported. Reasoning in PROTOCOL.md B.3.5.
+
 ## Checks before you call it live
 
 ```bash

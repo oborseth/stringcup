@@ -13,6 +13,9 @@ class IdempotencyKeyModel extends Model
         'identity_id',
         'idem_key',
         'message_id',
+        // The sender's own sequence, echoed by a replay. Recorded here because
+        // it must outlive the message row, which an ACK deletes.
+        'sent_seq',
         'created_at',
     ];
 

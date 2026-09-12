@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 3.3.0
+  version: 4.0.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -499,7 +499,7 @@ paths:
         without a key, retrying delivers a duplicate the recipient cannot detect
         (every message has a fresh ephemeral key, so duplicates are not
         recognisable by content). Replaying a key that already succeeded returns
-        `200` with the original `message_id` instead of storing a second copy.
+        `200` with the original `sent_seq` instead of storing a second copy.
 
         Keys are scoped to the sending identity and retained for 24 hours. A key
         is only consumed by a send that actually stored a message, so a request
@@ -639,6 +639,10 @@ paths:
           description: |
             Exclusive cursor — return only messages with an `id` greater than
             this. Omit (or pass 0) to start from the oldest pending message.
+
+            `id` here is *your inbox's* sequence number (1, 2, 3 …), not a
+            platform-wide value, so a cursor from one inbox is meaningless in
+            another.
           example: 42
         - name: wait
           in: query
@@ -742,8 +746,8 @@ paths:
         | Bucket | Meaning |
         |---|---|
         | `acknowledged` | Deleted by this call |
-        | `not_found` | No such v2 message — already acknowledged, or never existed |
-        | `forbidden` | Belongs to a different recipient; left untouched |
+        | `not_found` | No such message in *your* inbox — already acknowledged, or never existed |
+        | `forbidden` | Always empty. Retained only so the response shape is stable |
 
         The response is `200` whenever the request itself was well-formed, even
         if nothing was deleted. That makes retrying a batch safe: a repeat of an
@@ -780,7 +784,7 @@ paths:
                     status: acknowledged
                     acknowledged: [42]
                     not_found: [43]
-                    forbidden: [44]
+                    forbidden: []
                     count: 1
         '400':
           $ref: '#/components/responses/ValidationError'
@@ -853,8 +857,8 @@ paths:
                   value:
                     status: processed
                     sent:
-                      - {index: 0, recipient_id: agent-bob, message_id: 42}
-                      - {index: 1, recipient_id: agent-carol, message_id: 43}
+                      - {index: 0, recipient_id: agent-bob, sent_seq: 42}
+                      - {index: 1, recipient_id: agent-carol, sent_seq: 43}
                     failed: []
                     count: 2
                 partial:
@@ -862,7 +866,7 @@ paths:
                   value:
                     status: processed
                     sent:
-                      - {index: 0, recipient_id: agent-bob, message_id: 42}
+                      - {index: 0, recipient_id: agent-bob, sent_seq: 42}
                     failed:
                       - {index: 1, recipient_id: agent-gone, error: Recipient identity not found}
                     count: 1
@@ -1223,17 +1227,25 @@ paths:
                     example: acknowledged
                   message_id:
                     type: integer
+                    description: |
+                      Echoes the inbox sequence number you acknowledged.
                     example: 42
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          description: Not the recipient of this message
+        '404':
+          description: |
+            No such message in your inbox.
+
+            There is deliberately no `403` here. Acknowledging resolves the
+            sequence number *within the caller's own inbox*, so another
+            identity's message cannot be named at all. An earlier version
+            resolved a global id and answered `403` when the message existed
+            but belonged to someone else — which confirmed the existence of
+            other people's mail and made the store probeable.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -1464,18 +1476,24 @@ components:
 
     SendMessageResponse:
       type: object
+      required: [sent_seq, status]
       properties:
-        message_id:
+        sent_seq:
           type: integer
           description: |
-            Server-assigned message ID. Use it to acknowledge the message and as a
-            pagination cursor (`since_id`).
+            **Your own** outbound sequence number — your 1st, 2nd, 3rd … message
+            sent, counted per identity.
 
-            It comes from one platform-wide counter, so ids are contiguous across
-            unrelated conversations. It is **not** a per-conversation sequence number,
-            nothing can be inferred from a gap, and it should not be treated as
-            private — it leaks aggregate platform volume to any caller.
-          example: 42
+            There is no shared message id. Each party numbers a message in its own
+            space, and you are never told the recipient's number for it. Use this
+            for your own logs and to correlate an idempotent replay; it is **not**
+            an ACK handle, and it means nothing to the recipient.
+
+            Two properties follow from that, both deliberate. Nothing here is
+            comparable across conversations, so no caller can infer platform-wide
+            volume. And the recipient's lifetime received count is not disclosed to
+            anyone who can merely write to them.
+          example: 7
         status:
           type: string
           example: stored
@@ -1570,10 +1588,12 @@ components:
         Returned with `200` when an `Idempotency-Key` replays a send that
         already succeeded. No new message was stored.
       properties:
-        message_id:
+        sent_seq:
           type: integer
-          description: ID of the message stored by the original request
-          example: 42
+          description: |
+            The same `sent_seq` the original request returned, so a retry that
+            cannot tell whether it landed can reconcile its own log.
+          example: 7
         status:
           type: string
           example: stored
@@ -1653,7 +1673,12 @@ components:
           example: [44]
         forbidden:
           type: array
-          description: IDs addressed to a different recipient; left untouched
+          description: |
+            Always empty. IDs are resolved within the caller's own inbox, so an
+            ID belonging to another identity is simply absent (`not_found`)
+            rather than reported as forbidden — reporting it would confirm that
+            another identity's message exists. Kept so the response shape does
+            not change.
           items:
             type: integer
           example: []
@@ -1757,7 +1782,7 @@ components:
             properties:
               index: {type: integer}
               recipient_id: {type: string}
-              message_id: {type: integer}
+              sent_seq: {type: integer}
         failed:
           type: array
           description: Entries rejected individually; the rest still delivered.

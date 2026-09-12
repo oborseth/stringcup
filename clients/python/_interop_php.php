@@ -38,7 +38,7 @@ switch ($cmd) {
             ['recipient_id' => $to, 'sender_id' => $s['external_id']],
             ecies_encrypt($s['external_id'], $to, base64_decode($toPub), $text)
         ), $s['token']);
-        echo json_encode(['code' => $res['code'], 'message_id' => $res['body']['message_id'] ?? null]), "\n";
+        echo json_encode(['code' => $res['code'], 'sent_seq' => $res['body']['sent_seq'] ?? null]), "\n";
         break;
 
     case 'recv':

@@ -111,7 +111,7 @@ try:
     step("4. Round trip: Alice -> Bob")
     text = "Hello Bob — sent from the Python client."
     mid = alice.send(bob_id, text)
-    check(isinstance(mid, int) and mid > 0, f"Sent, message_id={mid}")
+    check(isinstance(mid, int) and mid > 0, f"Sent, sent_seq={mid}")
 
     received = bob.receive()
     same(1, len(received), "Bob received exactly one message")
@@ -137,7 +137,7 @@ try:
     key_id = f"test-idem-{suffix}"
     first = alice.send(bob_id, "only once", idempotency_key=key_id)
     replay = alice.send(bob_id, "only once", idempotency_key=key_id)
-    same(first, replay, "Replay returns the original message_id")
+    same(first, replay, "Replay returns the original sent_seq")
 
     page = bob.fetch()
     same(1, page.count, "Only one message actually stored")
@@ -187,7 +187,14 @@ try:
 
     # ----------------------------------------------------------------
     step("9. Batch ACK semantics")
-    ids = [alice.send(bob_id, f"batch {i}") for i in range(3)]
+    # ACK handles come from the inbox, never from send(). send() returns the
+    # *sender's* own sequence, which names nothing in the recipient's inbox.
+    # This test used to ACK the values send() returned and passed only because
+    # the two counters happened to line up at 1,2,3.
+    for i in range(3):
+        alice.send(bob_id, f"batch {i}")
+    ids = [m.id for m in bob.fetch(limit=10).messages]
+    same(3, len(ids), "Three messages waiting in Bob's inbox")
     res = bob.ack(ids)
     same(3, res["count"], "Batch ACK cleared all three")
 
@@ -195,9 +202,17 @@ try:
     same(0, res["count"], "Re-ACK acknowledges nothing")
     same(sorted(ids), sorted(res["not_found"]), "Already-gone ids reported not_found")
 
-    mid = bob.send(alice_id, "for alice only")
-    res = bob.ack([mid])
-    same([mid], res["forbidden"], "Cannot ACK a message addressed to someone else")
+    # A sequence number names a message inside one inbox only, so Bob cannot
+    # express Alice's message at all. There is no 'forbidden' outcome any more:
+    # reporting one would confirm that another identity's message exists.
+    bob.send(alice_id, "for alice only")
+    alice_seqs = [m.id for m in alice.fetch(limit=10).messages]
+    check(alice_seqs != [], "Alice's inbox has the message")
+
+    res = bob.ack([alice_seqs[0]])
+    same([], res["forbidden"], "forbidden is always empty — no cross-inbox addressing")
+    still_there = [m.id for m in alice.fetch(limit=10).messages]
+    check(alice_seqs[0] in still_there, "Alice's message survived Bob's ACK attempt")
     alice.drain(lambda m: None)
 
     same(0, bob.ack([])["count"], "Empty ACK is a no-op, not an error")

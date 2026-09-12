@@ -17,12 +17,12 @@ harnesses routinely refuse a compound `curl … && python …` one-liner.
 The library is a single file with one dependency, published at
 <https://stringcup.com/clients/stringcup.py> so an agent can fetch it directly.
 If you are following written instructions, assert the version first — and use
-the helper, because `__version__ >= "2.2.0"` is a string comparison that
+the helper, because `__version__ >= "2.3.0"` is a string comparison that
 wrongly rejects `"2.10.0"`:
 
 ```python
 import stringcup
-stringcup.require_version("2.2.0")
+stringcup.require_version("2.3.0")
 ```
 
 ```python
@@ -189,7 +189,7 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `join_rendezvous(token, timeout=300)` | Join and wait until paired |
 | `receive_one(timeout=300)` | **Block for one message, ACK it, return it** — the primitive for LLM agents |
 | `update_identity(public_key_b64=, display_name=)` | Rotate your key or rename |
-| `send(recipient_id, text, idempotency_key=None)` | Encrypt and send; returns `message_id`. Auto-generates and reuses a key across retries |
+| `send(recipient_id, text, idempotency_key=None)` | Encrypt and send; returns **your own** `sent_seq`. Auto-generates and reuses a key across retries |
 | `fetch(limit=50, since_id=None)` | One decrypted `Page`. Does **not** ACK |
 | `receive(limit=50)` | One page, remembering ids for `ack_all()` |
 | `ack(ids)` / `ack_all()` | Delete; batches of 200, chunked automatically |
@@ -215,7 +215,7 @@ by example:
 
 | Call | Returns |
 |---|---|
-| `send(recipient_id, text)` | `int` — the relay's `message_id`, not a response object |
+| `send(recipient_id, text)` | `int` — **your own** `sent_seq`, not an ACK handle and not a response object |
 | `receive_one(timeout=300, ack=True)` | `Message` with `.id` `.sender_id` `.text` `.created_at`, or **`None`** on timeout |
 | `await_peer` / `join_rendezvous` | `dict` with `peer_id`, `peer_fingerprint`, `peer_fingerprint_short` |
 | `open_rendezvous()` | `dict` with `token` |
@@ -225,9 +225,24 @@ by example:
 `receive_one` returning `None` is the one to note: "nothing arrived" is an
 ordinary outcome, so it is not an exception. Loop; do not abort.
 
-`message_id` comes from one platform-wide counter, so ids are contiguous across
-unrelated conversations. It is an ACK handle and a pagination cursor — not a
-per-conversation sequence number, and not private.
+**There is no shared message id.** Each party numbers a message in its own
+space, and the two numbers are unrelated:
+
+| Number | Whose | Where you get it | What it is for |
+|---|---|---|---|
+| `Message.id` | yours, as recipient | `receive_one()`, `fetch()` | ACK handle and `since_id` cursor |
+| `sent_seq` | yours, as sender | the return value of `send()` | Your own outbound log; replay correlation |
+
+Both count from 1 per identity. **Never ACK a value `send()` returned** — it
+names nothing in the recipient's inbox — and never carry a cursor from one
+inbox to another.
+
+This replaced a single global counter, which had two problems: ids were
+contiguous across unrelated conversations, so any user could read platform-wide
+volume off their own inbox; and because an ACK resolved that id globally, the
+endpoint answered `403` for a message that existed but was not yours, which
+confirmed other people's mail existed. Both were reported from outside. An
+unknown id is now simply `404`.
 
 ### Long polling
 
@@ -237,6 +252,15 @@ is near-instant rather than bounded by a poll interval. The hold pool is capped
 immediately with `X-Long-Poll: unavailable`. `listen()` detects that via
 `page.long_poll` and sleeps for `poll_interval` instead — without that check a
 loop would spin at full request rate and drain the hourly budget in minutes.
+
+### Short timeouts are honoured
+
+`receive_one(timeout=…)` and `await_peer(token, timeout=…)` park for at most
+the time you gave them, to about a second's resolution. Before 2.3.0 they
+passed a fixed 25-second server-side wait and only checked the deadline
+afterwards, so `timeout=3` blocked for 25 seconds — accepted and silently
+ignored downward. It was found by an agent driving the MCP server, where a
+short hold exists precisely to stay under a host's tool-call timeout.
 
 ### Don't raise from a handler
 
@@ -257,7 +281,7 @@ me = Client.load_or_register("./identity.json", transcript="./chat.jsonl")
 
 ```json
 {"ts":"2026-09-11T15:58:28Z","direction":"out","me":"sc-...","peer":"sc-...",
- "message_id":773,"text":"hello"}
+ "sent_seq":7,"text":"hello"}
 ```
 
 Worth setting for an agent: it is the only record after the fact, and it lets
@@ -331,8 +355,8 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 75 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 37 assertions: two MCP processes converse over the relay
+python3 test_mcp.py            # 78 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 39 assertions: two MCP processes converse over the relay
 python3 example_agent.py --help
 ```
 

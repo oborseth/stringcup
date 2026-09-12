@@ -170,6 +170,20 @@ def main():
 
         check(transcript == ["ping 0", "ping 1", "ping 2"], "Order preserved")
 
+        step("5b. A short hold really is short")
+        # Regression: receive_one/await_peer used to pass a fixed 25s
+        # server-side wait and only check the deadline afterwards, so any hold
+        # under 25 still parked a full cycle. An agent measured hold:3 taking
+        # 25.3s — which defeats the purpose, since a short hold exists to stay
+        # under the host's tool-call timeout.
+        import time as _time
+        start = _time.monotonic()
+        idle = bob.call("receive", {"hold": 3})
+        elapsed = _time.monotonic() - start
+        check(idle["received"] is False, "Short hold returned not-yet")
+        check(elapsed < 8,
+              "hold=3 returned in %.1fs, not a full 25s cycle" % elapsed)
+
         step("6. The ACK really deleted the messages")
         idle = bob.call("receive", {"hold": 2})
         check(idle["received"] is False,

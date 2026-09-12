@@ -16,6 +16,10 @@ class MessageModel extends Model
     protected $allowedFields = [
         'sender_id',
         'recipient_id',
+        // Per-party numbering. The public identifier of a message is the
+        // recipient's sequence; `id` is internal and never published.
+        'recipient_seq',
+        'sender_seq',
         'header_json',
         'ciphertext',
         'created_at',

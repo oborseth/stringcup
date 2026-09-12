@@ -90,11 +90,11 @@ drain_inbox($API_BASE, $bobToken);
 $idemKey = 'idem-' . bin2hex(random_bytes(8));
 $first = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Idempotency probe', $idemKey);
 assert_code(201, $first, 'First send stored');
-$firstMessageId = $first['body']['message_id'];
+$firstMessageId = $first['body']['sent_seq'];
 
 $replay = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'Idempotency probe', $idemKey);
 assert_code(200, $replay, 'Replay returns 200 rather than 201');
-assert_same($firstMessageId, $replay['body']['message_id'], 'Replay returns the original message_id');
+assert_same($firstMessageId, $replay['body']['sent_seq'], 'Replay returns the original sent_seq');
 assert_same(true, $replay['body']['idempotent_replay'], 'Replay is flagged as such');
 
 $res = api('GET', "$API_BASE/messages", null, $bobToken);
@@ -239,21 +239,33 @@ assert_code(200, $reAck, 'Re-ACK of already-deleted ids is not an error');
 assert_same(0, $reAck['body']['count'], 'Nothing acknowledged the second time');
 assert_same($batch, $reAck['body']['not_found'], 'Already-gone ids reported as not_found');
 
-// Cross-recipient protection, mixed with valid ids in one batch.
+// Sequence numbers are scoped to one inbox, so Bob cannot name a message of
+// Alice's at all. This used to be enforced with a 'forbidden' bucket, which
+// doubled as an oracle confirming that another identity's message existed.
+// Now the number simply means something different in each inbox.
 $aliceMsg = send_message($API_BASE, $bobId, $aliceId, $alice['pub'], $bobToken, 'For Alice only');
-$aliceMsgId = $aliceMsg['body']['message_id'];
+assert_code(201, $aliceMsg, 'Message to Alice stored');
+
+$aliceInbox = api('GET', "$API_BASE/messages", null, $aliceToken);
+$aliceSeqs  = array_column($aliceInbox['body']['messages'], 'id');
+assert_true($aliceSeqs !== [], "Alice's inbox has the message");
+$aliceSeq = $aliceSeqs[0];
 
 $res = api('GET', "$API_BASE/messages?limit=2", null, $bobToken);
 $bobIds = array_column($res['body']['messages'], 'id');
 
-$mixed = api('POST', "$API_BASE/messages/ack", ['ids' => array_merge($bobIds, [$aliceMsgId])], $bobToken);
+// Bob acknowledges Alice's sequence number alongside his own.
+$mixed = api('POST', "$API_BASE/messages/ack", ['ids' => array_merge($bobIds, [$aliceSeq])], $bobToken);
 assert_code(200, $mixed, 'Mixed batch processed');
-assert_same($bobIds, $mixed['body']['acknowledged'], 'Own messages acknowledged');
-assert_same([$aliceMsgId], $mixed['body']['forbidden'], "Another recipient's message reported forbidden, not deleted");
+assert_true(
+    array_diff($bobIds, $mixed['body']['acknowledged']) === [],
+    'Own messages acknowledged'
+);
+assert_same([], $mixed['body']['forbidden'], 'forbidden is always empty — no cross-inbox addressing exists');
 
 $check = api('GET', "$API_BASE/messages", null, $aliceToken);
 assert_true(
-    in_array($aliceMsgId, array_column($check['body']['messages'], 'id'), true),
+    in_array($aliceSeq, array_column($check['body']['messages'], 'id'), true),
     "Alice's message survived Bob's attempt to ACK it"
 );
 

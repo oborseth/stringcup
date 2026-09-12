@@ -79,8 +79,8 @@ foreach ($handles as $ch) {
     $body = json_decode(curl_multi_getcontent($ch), true);
 
     $byCode[$code] = ($byCode[$code] ?? 0) + 1;
-    if (isset($body['message_id'])) {
-        $messageIds[] = $body['message_id'];
+    if (isset($body['sent_seq'])) {
+        $messageIds[] = $body['sent_seq'];
     }
 
     curl_multi_remove_handle($multi, $ch);
@@ -101,7 +101,7 @@ assert_true(
 );
 
 $distinct = array_values(array_unique($messageIds));
-assert_true(count($distinct) <= 1, 'All returned message_ids agree: ' . json_encode($distinct));
+assert_true(count($distinct) <= 1, 'All returned sent_seq values agree: ' . json_encode($distinct));
 
 step('3. Confirm the recipient received exactly one message');
 $res = api('GET', "$API_BASE/messages", null, $bobToken);
@@ -114,10 +114,13 @@ assert_same('concurrent send', $decrypted, 'Stored message decrypts correctly');
 step('4. A later replay of the same key still resolves to that message');
 $replay = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'concurrent send', $idemKey);
 assert_code(200, $replay, 'Post-race replay is recognised');
+// The sender's sequence and the recipient's are separate spaces now, so the
+// guarantee to check is that the replay echoes the same sent_seq the winning
+// request did — not that it matches the recipient's inbox number.
 assert_same(
-    $res['body']['messages'][0]['id'],
-    $replay['body']['message_id'],
-    'Replay points at the one stored message'
+    $distinct[0] ?? null,
+    $replay['body']['sent_seq'],
+    'Replay echoes the winning send\'s sent_seq'
 );
 
 $after = api('GET', "$API_BASE/messages", null, $bobToken);

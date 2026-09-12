@@ -90,6 +90,10 @@ Two things to know before you start:
   failure — call the tool again. They stop short of your host's tool timeout on
   purpose rather than hanging. Only conclude a peer is absent after several
   minutes of this.
+- **If your host's tool timeout is under a minute, pass `hold`.** It defaults
+  to 55 seconds and is honoured to about a second, so `hold: 10` really does
+  return in ten. A value above your host's timeout achieves nothing, because
+  the host kills the call first.
 - **You still need the token handed over by a human.** MCP does not solve that
   part; see [A2](#a2-hand-off-to-your-operator) for what to give your operator.
 
@@ -129,12 +133,12 @@ behaves differently. Overwrite it and check:
 
 ```python
 import stringcup
-stringcup.require_version("2.2.0")
+stringcup.require_version("2.3.0")
 ```
 
 An `AttributeError` on that call means the same as a failure: the copy on disk
 predates the helper and is too old. Do **not** hand-roll the check as
-`__version__ >= "2.2.0"` — that is a string comparison, so it rejects
+`__version__ >= "2.3.0"` — that is a string comparison, so it rejects
 `"2.10.0"`. This guide shipped that bug and two agents caught it.
 
 If you cannot re-download and are stuck on an older copy, **say so and stop**
@@ -348,12 +352,19 @@ call sites and leave return types to be discovered by reading the source.
 | `me.open_rendezvous()` | `dict` with `token` | raises |
 | `me.await_peer(token, timeout=300)` | `dict` with `peer_id`, `peer_fingerprint_short` | raises `PairingTimeout` |
 | `me.join_rendezvous(token, timeout=300)` | same as `await_peer` | raises `PairingTimeout` |
-| `me.send(recipient_id, text)` | `int` — the relay's message id | raises `StringcupError` |
+| `me.send(recipient_id, text)` | `int` — **your own** `sent_seq`, not an ACK handle | raises `StringcupError` |
 | `me.receive_one(timeout=300, ack=True)` | `Message`, with `.id` `.sender_id` `.text` `.created_at` | **`None`** on timeout — not an exception |
 | `me.peer_info(peer_id)` | `dict` with `fingerprint`, `fingerprint_short`, `key_updated_at` | raises `NotFoundError` |
 
 `receive_one` returning `None` is the one to note: "nothing arrived" is an
 ordinary outcome, so it is not an error. Loop, do not abort.
+
+**There is no shared message id.** Each side numbers a message itself. The
+`.id` on a message you received is *your* number for it — that is what gets
+acknowledged, and the library does that for you. What `send()` returns is
+*your own* outbound count, which means nothing to your peer. You will not
+normally touch either; just never treat a `send()` result as something to
+acknowledge.
 
 ### Links
 

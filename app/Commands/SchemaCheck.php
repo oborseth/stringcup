@@ -30,16 +30,26 @@ class SchemaCheck extends BaseCommand
         'messages' => [
             'header_json' => 'text',
             'api_version' => 'tinyint(1) unsigned',
+            // Per-party message numbering. Losing these drops the public
+            // identifier back onto the global primary key, which reopens both
+            // the volume leak and the ACK enumeration oracle.
+            'recipient_seq' => 'bigint(20) unsigned',
+            'sender_seq'    => 'bigint(20) unsigned',
         ],
         'identities' => [
             'external_id'  => 'varchar(64)',
             'display_name' => 'varchar(255)',
+            // The counters those sequences are drawn from.
+            'next_recv_seq' => 'bigint(20) unsigned',
+            'next_sent_seq' => 'bigint(20) unsigned',
         ],
         'api_tokens' => [
             'is_active' => 'tinyint(1)',
         ],
         'idempotency_keys' => [
             'idem_key' => 'varchar(255)',
+            // Echoed by an idempotent replay, so it must outlive the message.
+            'sent_seq' => 'bigint(20) unsigned',
         ],
     ];
 
@@ -47,6 +57,14 @@ class SchemaCheck extends BaseCommand
     private const EXPECTED_INDEXES = [
         'messages' => [
             'idx_messages_inbox' => 'recipient_id,api_version,id',
+            // Serves the inbox cursor, which ranges over recipient_seq. The
+            // older id-based index cannot satisfy it, so losing this one
+            // silently degrades every poll to a filesort over the whole
+            // backlog.
+            'idx_messages_inbox_seq' => 'recipient_id,api_version,recipient_seq',
+            // One number per inbox. This is what makes an ACK addressable by
+            // sequence alone and keeps a claim from colliding.
+            'uniq_messages_recipient_seq' => 'recipient_id,recipient_seq',
         ],
         'idempotency_keys' => [
             'identity_id_idem_key' => 'identity_id,idem_key',

@@ -176,7 +176,7 @@ Content-Type: application/json
 
 **Response (HTTP 201):**
 ```json
-{ "message_id": 42, "status": "stored" }
+{ "sent_seq": 7, "status": "stored" }
 ```
 
 Note: there is no sequence number. Each message is independently keyed, so
@@ -202,8 +202,8 @@ Content-Type: application/json
 
 | Outcome | Status | Body |
 |---|---|---|
-| First successful send | `201` | `{ "message_id": N, "status": "stored" }` |
-| Replay of a completed send | `200` | `{ "message_id": N, "status": "stored", "idempotent_replay": true }` |
+| First successful send | `201` | `{ "sent_seq": N, "status": "stored" }` |
+| Replay of a completed send | `200` | `{ "sent_seq": N, "status": "stored", "idempotent_replay": true }` |
 | Concurrent request holding the key | `409` | error — back off and retry |
 
 Requirements for a conforming client:
@@ -256,7 +256,7 @@ Content-Type: application/json
 ```json
 {
   "status": "processed",
-  "sent":   [ { "index": 0, "recipient_id": "bob", "message_id": 42 } ],
+  "sent":   [ { "index": 0, "recipient_id": "bob", "sent_seq": 42 } ],
   "failed": [ { "index": 1, "recipient_id": "carol", "error": "Recipient identity not found" } ],
   "count":  1
 }
@@ -324,7 +324,7 @@ Authorization: Bearer <api_token>
 | Parameter | Default | Max | Semantics |
 |---|---|---|---|
 | `limit` | 50 | 200 | Page size |
-| `since_id` | 0 | — | Exclusive: return only `id >` this |
+| `since_id` | 0 | — | Exclusive: return only `id >` this, within your own inbox |
 
 Because the inbox persists until acknowledged, a stalled consumer accumulates
 an unbounded backlog. A page is therefore capped; a client MUST be prepared to
@@ -436,7 +436,7 @@ Every requested ID is reported in exactly one bucket:
 |---|---|
 | `acknowledged` | Deleted by this call |
 | `not_found` | No such v2 message — already acknowledged, or never existed |
-| `forbidden` | Addressed to a different recipient; left untouched |
+| `forbidden` | Always empty. An id resolves inside your own inbox, so another identity's message cannot be addressed; kept only for response-shape stability |
 
 Partial success is **not** an error: the status is `200` whenever the request
 itself was well-formed, even if nothing was deleted. Retrying a batch is
@@ -456,7 +456,17 @@ Authorization: Bearer <api_token>
 { "status": "acknowledged", "message_id": 42 }
 ```
 
-Only the recipient of a message may acknowledge it. If you crash before ACKing, the message remains in the inbox and can be re-fetched and re-decrypted on the next poll. This is the key crash-safety advantage over v1.
+`{id}` is the sequence number the inbox returned — **your own** numbering, not
+a platform-wide value (B.3.5).
+
+An unknown number answers `404`. There is deliberately no `403`: the lookup is
+scoped to the caller's inbox, so another identity's message cannot be addressed
+at all, and there is therefore nothing to distinguish. A `403` would confirm
+that a message exists somewhere and make the store probeable — the same
+reasoning as topic membership answering `404` rather than `403` (B.3.4).
+
+If you crash before ACKing, the message remains in the inbox and can be
+re-fetched and re-decrypted on the next poll.
 
 Because ACK follows processing, delivery is **at-least-once**: a crash between
 processing and ACK causes redelivery. Handlers MUST tolerate reprocessing, or
@@ -500,6 +510,43 @@ one batch send.
 The server learns the social graph (who is grouped with whom, and who
 addresses whom) even though it never learns content. Treat topic membership as
 metadata visible to the relay.
+
+---
+
+## B.3.5 Message Identifiers
+
+**There is no global message identifier.** Each message is numbered twice,
+once in each party's own space, and the two numbers are unrelated.
+
+| Number | Held by | Where it appears | What it is for |
+|---|---|---|---|
+| `id` | recipient | inbox entries, `since_id` cursor, ACK | Naming a message in *your* inbox |
+| `sent_seq` | sender | send + batch-send responses | Your own outbound log, and replay correlation |
+
+Both start at 1 per identity and increase by one per message. A recipient's
+number is its ACK handle and pagination cursor; a sender is never told it.
+
+Three properties follow, and all three are the reason for the design:
+
+1. **No caller can infer platform-wide volume.** Numbers are not comparable
+   across conversations, so there is no contiguity to difference across.
+2. **A recipient's lifetime received count is not disclosed** to anyone who can
+   merely send to them, which returning the recipient's number on send would
+   do.
+3. **Another identity's message cannot be named.** An ACK resolves a sequence
+   within the caller's own inbox, so there is no request that could ask about
+   someone else's mail — see B.3.3.
+
+An implementation **MUST NOT** assume a message has one identity shared by both
+parties, **MUST NOT** treat `sent_seq` as an ACK handle, and **MUST NOT** carry
+a cursor from one inbox to another.
+
+*This replaces an earlier design in which both roles saw one globally
+auto-incrementing id. That id was contiguous across unrelated conversations, so
+any user could read total platform throughput off their own inbox; and because
+an ACK resolved it globally, the endpoint answered `403` for a message that
+existed but was not yours and `404` otherwise, which is an oracle over other
+people's mail. Both were reported from outside.*
 
 ---
 
@@ -563,7 +610,7 @@ complete.
 - **Multi-instance safe:** Multiple instances of the same agent can poll and decrypt independently. ACK is idempotent — once deleted it's gone, but all instances would decrypt the same plaintext before that. A losing instance sees the ID in the `not_found` bucket, which is expected rather than an error.
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Exactly-once is not offered; handlers must be idempotent.
 - **Unbounded inbox:** Nothing ages messages out. A consumer that never ACKs accumulates a permanent backlog, bounded only by pagination on the read path.
-- **`message_id` leaks platform-wide volume:** message ids are one global counter, contiguous across unrelated conversations, so any user can read total throughput off their own inbox and estimate others' traffic by differencing across gaps. Do not treat an id as private or as a per-conversation sequence number.
+- **Message numbering is per-party, not global** (see B.3.5). This closes an earlier leak in which one global counter let any user read platform-wide volume off their own inbox. A cursor or ACK handle is meaningful only within the inbox that issued it.
 
 ---
 

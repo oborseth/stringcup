@@ -104,7 +104,13 @@ class MessageController extends BaseController
      * One page of the caller's pending v2 messages.
      *
      * Over-fetches by one to detect a further page without a second COUNT
-     * query. Served by idx_messages_inbox (recipient_id, api_version, id).
+     * query. Served by idx_messages_inbox_seq
+     * (recipient_id, api_version, recipient_seq).
+     *
+     * The cursor ranges over `recipient_seq`, the caller's own numbering, not
+     * the global primary key. Ordering is unchanged — both are monotonic
+     * within one inbox — but nothing comparable across conversations is
+     * published. See the PerRecipientMessageSequence migration.
      *
      * @return array{0: list<array<string,mixed>>, 1: bool} rows, has_more
      */
@@ -115,10 +121,10 @@ class MessageController extends BaseController
             ->where('api_version', 2);
 
         if ($sinceId > 0) {
-            $query->where('id >', $sinceId);
+            $query->where('recipient_seq >', $sinceId);
         }
 
-        $rows    = $query->orderBy('id', 'ASC')->findAll($limit + 1);
+        $rows    = $query->orderBy('recipient_seq', 'ASC')->findAll($limit + 1);
         $hasMore = count($rows) > $limit;
 
         if ($hasMore) {
@@ -134,7 +140,8 @@ class MessageController extends BaseController
     private function presentMessage(array $m): array
     {
         return [
-            'id'           => (int) $m['id'],
+            // The recipient's own sequence, never the global primary key.
+            'id'           => (int) $m['recipient_seq'],
             'sender_id'    => $m['sender_id'],
             'recipient_id' => $m['recipient_id'],
             'header'       => json_decode($m['header_json'], true),
@@ -277,17 +284,33 @@ class MessageController extends BaseController
             $messageModel = new MessageModel();
             $now          = date('Y-m-d H:i:s');
 
+            // Each party numbers the message in its own space. The recipient's
+            // number is its ACK handle and cursor; the sender's is returned
+            // below. Neither is comparable across conversations, and the
+            // sender is never told the recipient's — that would leak the
+            // recipient's lifetime received count to anyone who can write to
+            // them.
+            $recipientSeq = $identityModel->claimSequence($recipientId, IdentityModel::SEQ_RECEIVED);
+            $senderSeq    = $identityModel->claimSequence($senderExternalId, IdentityModel::SEQ_SENT);
+
             $messageId = $messageModel->insert([
-                'sender_id'    => $senderExternalId,
-                'recipient_id' => $recipientId,
-                'header_json'  => json_encode($header),
-                'ciphertext'   => $ciphertextDecoded,
-                'created_at'   => $now,
-                'api_version'  => 2,
+                'sender_id'     => $senderExternalId,
+                'recipient_id'  => $recipientId,
+                'recipient_seq' => $recipientSeq,
+                'sender_seq'    => $senderSeq,
+                'header_json'   => json_encode($header),
+                'ciphertext'    => $ciphertextDecoded,
+                'created_at'    => $now,
+                'api_version'   => 2,
             ], true);
 
             if ($idemRowId !== null) {
-                $idemModel->update($idemRowId, ['message_id' => (int) $messageId]);
+                // sent_seq is what a replay must echo, and it has to survive
+                // the message row being deleted on ACK.
+                $idemModel->update($idemRowId, [
+                    'message_id' => (int) $messageId,
+                    'sent_seq'   => $senderSeq,
+                ]);
                 $idemModel->pruneExpired();
             }
 
@@ -298,8 +321,8 @@ class MessageController extends BaseController
             ]);
 
             return $this->respondCreated([
-                'message_id' => (int) $messageId,
-                'status'     => 'stored',
+                'sent_seq' => $senderSeq,
+                'status'   => 'stored',
             ]);
         } catch (\Exception $e) {
             $this->logWithContext('error', 'V2 message send failed: {message}', [
@@ -353,7 +376,7 @@ class MessageController extends BaseController
         ]);
 
         return $this->respond([
-            'message_id'        => (int) $record['message_id'],
+            'sent_seq'          => (int) ($record['sent_seq'] ?? 0),
             'status'            => 'stored',
             'idempotent_replay' => true,
         ]);
@@ -446,13 +469,18 @@ class MessageController extends BaseController
                     continue;
                 }
 
+                $recipientSeq = $identityModel->claimSequence($recipientId, IdentityModel::SEQ_RECEIVED);
+                $senderSeq    = $identityModel->claimSequence($senderExternalId, IdentityModel::SEQ_SENT);
+
                 $messageId = $messageModel->insert([
-                    'sender_id'    => $senderExternalId,
-                    'recipient_id' => $recipientId,
-                    'header_json'  => json_encode($entry['header']),
-                    'ciphertext'   => base64_decode($entry['ciphertext'], true),
-                    'created_at'   => $now,
-                    'api_version'  => 2,
+                    'sender_id'     => $senderExternalId,
+                    'recipient_id'  => $recipientId,
+                    'recipient_seq' => $recipientSeq,
+                    'sender_seq'    => $senderSeq,
+                    'header_json'   => json_encode($entry['header']),
+                    'ciphertext'    => base64_decode($entry['ciphertext'], true),
+                    'created_at'    => $now,
+                    'api_version'   => 2,
                 ], true);
 
                 if (!$messageId) {
@@ -463,7 +491,7 @@ class MessageController extends BaseController
                 $sent[] = [
                     'index'        => $index,
                     'recipient_id' => $recipientId,
-                    'message_id'   => (int) $messageId,
+                    'sent_seq'     => $senderSeq,
                 ];
             }
 
@@ -681,8 +709,18 @@ class MessageController extends BaseController
     /**
      * DELETE /api/v2/messages/{id}
      *
-     * Explicitly acknowledges and deletes a single message.
-     * Only the recipient of the message may delete it.
+     * Acknowledges and deletes one message, addressed by the caller's own
+     * sequence number — the `id` the inbox returned.
+     *
+     * There is no 403 here, and that is deliberate. This used to resolve the
+     * row by global primary key and answer 403 when it existed but belonged
+     * to someone else, 404 when it did not exist — which confirmed the
+     * existence of other identities' messages and made the whole store
+     * probeable. Scoping the lookup to the caller removes the oracle
+     * structurally: a sequence names a message *within one inbox*, so there
+     * is no way to express another identity's message and nothing to
+     * distinguish. Same reasoning as TopicController answering 404 rather
+     * than 403 to a non-member.
      */
     public function ack(int $id)
     {
@@ -694,24 +732,18 @@ class MessageController extends BaseController
             }
 
             $msgModel = new MessageModel();
-            $message  = $msgModel->find($id);
+            $message  = $msgModel
+                ->where('recipient_id', $currentIdentity['external_id'])
+                ->where('recipient_seq', $id)
+                ->where('api_version', 2)
+                ->first();
 
-            if (!$message || (int) $message['api_version'] !== 2) {
+            if (!$message) {
                 $this->logWithContext('info', 'V2 message ACK: not found', ['message_id' => $id]);
                 return $this->failNotFound('Message not found');
             }
 
-            // Only the intended recipient may acknowledge
-            if ($message['recipient_id'] !== $currentIdentity['external_id']) {
-                $this->logWithContext('warning', 'V2 message ACK: forbidden', [
-                    'message_id'       => $id,
-                    'actual_recipient' => $message['recipient_id'],
-                    'requester'        => $currentIdentity['external_id'],
-                ]);
-                return $this->failForbidden('You are not the recipient of this message');
-            }
-
-            $msgModel->delete($id);
+            $msgModel->delete((int) $message['id']);
 
             $this->logWithContext('info', 'V2 message acknowledged and deleted', [
                 'message_id'   => $id,
@@ -734,10 +766,13 @@ class MessageController extends BaseController
      * Acknowledges up to MAX_LIMIT messages in a single request, so draining a
      * page of the inbox costs one call instead of one call per message.
      *
+     * IDs are the caller's own sequence numbers, as returned by the inbox.
+     *
      * Partial success is normal and reported per ID rather than as an error:
-     * already-ACKed IDs land in not_found, IDs belonging to another recipient
-     * land in forbidden, and the response is 200 as long as the request itself
-     * was well-formed.
+     * an already-ACKed or unknown ID lands in not_found, and the response is
+     * 200 as long as the request itself was well-formed. `forbidden` is always
+     * empty now — a sequence cannot name another identity's message — and is
+     * kept only so the response shape does not change.
      */
     public function ackBatch()
     {
@@ -776,33 +811,33 @@ class MessageController extends BaseController
 
             $recipientExternalId = $currentIdentity['external_id'];
 
+            // Scoped to the caller, so an id belonging to another identity is
+            // simply absent rather than reported as forbidden. `forbidden` is
+            // retained in the response for shape compatibility but is now
+            // always empty: a sequence cannot name another inbox's message, so
+            // there is no longer an oracle distinguishing "not yours" from
+            // "does not exist". See ack() above.
             $msgModel = new MessageModel();
             $rows     = $msgModel
-                ->whereIn('id', $ids)
+                ->where('recipient_id', $recipientExternalId)
+                ->whereIn('recipient_seq', $ids)
                 ->where('api_version', 2)
                 ->findAll();
 
             $acknowledged = [];
             $forbidden    = [];
-            $seen         = [];
+            $primaryKeys  = [];
 
             foreach ($rows as $row) {
-                $id        = (int) $row['id'];
-                $seen[$id] = true;
-
-                if ($row['recipient_id'] !== $recipientExternalId) {
-                    $forbidden[] = $id;
-                    continue;
-                }
-
-                $acknowledged[] = $id;
+                $acknowledged[] = (int) $row['recipient_seq'];
+                $primaryKeys[]  = (int) $row['id'];
             }
 
-            $notFound = array_values(array_diff($ids, array_keys($seen)));
+            $notFound = array_values(array_diff($ids, $acknowledged));
 
-            if ($acknowledged !== []) {
+            if ($primaryKeys !== []) {
                 // One DELETE for the whole page.
-                $msgModel->whereIn('id', $acknowledged)->delete();
+                $msgModel->whereIn('id', $primaryKeys)->delete();
             }
 
             $this->logWithContext('info', 'V2 batch ACK processed', [

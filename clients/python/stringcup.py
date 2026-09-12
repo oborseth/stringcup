@@ -72,10 +72,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (2, 2, 0)
+version_info = (2, 3, 0)
 
 __all__ = [
     "Client",
@@ -137,7 +137,7 @@ def require_version(minimum: str) -> None:
     found that in the published instructions independently.
 
         import stringcup
-        stringcup.require_version("2.2.0")
+        stringcup.require_version("2.3.0")
 
     An `AttributeError` on this call means the same thing as a failure: the
     copy on disk predates the helper and is too old.
@@ -744,18 +744,25 @@ class Client:
         `peer_id` off one call is the mistake this method exists to prevent;
         the value would be `None` and the failure would surface much later as
         something unrelated.
+
+        `timeout` is honoured to about a second: a value under 25 parks only
+        that long rather than for a whole server-side cycle.
         """
         deadline = time.monotonic() + timeout
 
         while True:
-            info = self.rendezvous(token=token, wait=MAX_WAIT)
-            if info.get("peer_id"):
-                return info
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise PairingTimeout(
                     f"peer did not arrive within {timeout:.0f}s. The token may not have "
                     f"reached them, or they failed to start."
                 )
+
+            # Bounded by the time actually left, for the same reason as
+            # receive_one: a short timeout must not block for a full 25s hold.
+            info = self.rendezvous(token=token, wait=int(min(MAX_WAIT, max(0, remaining))))
+            if info.get("peer_id"):
+                return info
 
     def join_rendezvous(self, token: str, timeout: float = 300.0) -> dict:
         """
@@ -853,7 +860,19 @@ class Client:
         retries: int = 3,
     ) -> int:
         """
-        Encrypt and send. Returns the server-assigned message id.
+        Encrypt and send. Returns **your own** outbound sequence number.
+
+        There is no shared message id. Each party numbers a message in its own
+        space: this is your `sent_seq`, and the recipient acknowledges the
+        message under a different number you are never told. That asymmetry is
+        deliberate — a shared, globally-increasing id leaked platform-wide
+        message volume to anyone who could read their own inbox, and telling
+        the sender the recipient's number would leak the recipient's lifetime
+        received count to anyone able to write to them.
+
+        So the returned value is useful for your own logs and for correlating
+        an idempotent replay. It is *not* an ACK handle, and it means nothing
+        to the recipient.
 
         A fresh Idempotency-Key is generated per call and reused across
         retries, so a timeout that actually landed will not produce a duplicate
@@ -873,9 +892,9 @@ class Client:
                 body = self._request(
                     "POST", "/messages", payload, idempotency_key=key
                 )
-                message_id = int(body["message_id"])
-                self._log_transcript("out", recipient_id, message_id, text)
-                return message_id
+                sent_seq = int(body["sent_seq"])
+                self._log_transcript("out", recipient_id, sent_seq, text)
+                return sent_seq
             except StringcupError as exc:
                 # 409 means a concurrent attempt with this key is mid-flight;
                 # the winner will have stored it, so retrying resolves to a
@@ -1008,7 +1027,8 @@ class Client:
         mismatch.
 
         Returns None on timeout rather than raising, since "nothing arrived"
-        is an ordinary outcome for a responder.
+        is an ordinary outcome for a responder. `timeout` is honoured to about
+        a second, so a short one really does return early.
 
         Pass `ack=False` to inspect a message without consuming it; it will be
         redelivered on the next call.
@@ -1021,7 +1041,18 @@ class Client:
         deadline = time.monotonic() + timeout
 
         while True:
-            page = self.fetch(limit=1, wait=MAX_WAIT)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+
+            # Park for at most what the caller still has. This used to pass
+            # MAX_WAIT unconditionally and check the deadline only *after* the
+            # poll returned, so any timeout under 25s still blocked for a full
+            # cycle — `timeout=3` took 25s. Silent, because the value was
+            # accepted and then ignored downward. Found by an agent driving
+            # the MCP server, where a short hold exists precisely to stay
+            # under a host's tool-call timeout.
+            page = self.fetch(limit=1, wait=int(min(MAX_WAIT, max(0, remaining))))
 
             if page.messages:
                 msg = page.messages[0]
@@ -1029,13 +1060,14 @@ class Client:
                     self.ack([msg.id])
                 return msg
 
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return None
 
             # A full hold pool answers instantly; without this the loop would
             # spin at request rate instead of waiting.
             if page.long_poll != "waited":
-                time.sleep(min(MIN_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
+                time.sleep(min(MIN_POLL_INTERVAL, max(0.0, remaining)))
 
     def drain(
         self,
@@ -1202,7 +1234,7 @@ class Client:
         body = self._request("POST", "/messages/batch", {"messages": envelopes})
 
         for entry in body.get("sent", []):
-            self._log_transcript("out", entry.get("recipient_id"), entry.get("message_id"), text)
+            self._log_transcript("out", entry.get("recipient_id"), entry.get("sent_seq"), text)
 
         return {
             "sent": body.get("sent", []),

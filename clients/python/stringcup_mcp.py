@@ -53,7 +53,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stringcup  # noqa: E402
 from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa: E402
 
-__version__ = "1.0.0"
+# 2.3.0 is the first release in which `hold` is actually honoured below 25s.
+# An older copy accepts the value and silently parks for a full server cycle,
+# which defeats the entire point of a short hold.
+stringcup.require_version("2.3.0")
+
+__version__ = "1.1.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -65,8 +70,13 @@ PROTOCOL_VERSION = "2025-06-18"
 #: descriptions tell the model to call again — so pairing and receiving work on
 #: any host regardless of how it is configured, rather than appearing to hang
 #: and then failing. Raise `hold` per call if your host allows longer.
+#:
+#: The ceiling is 300 rather than something larger because nothing above it is
+#: reachable in practice: a host will kill the call first, and the agent sees a
+#: hang it cannot explain. An agent testing this passed `hold: 99999`, got the
+#: old 600s ceiling, and reasonably suspected the server had wedged.
 DEFAULT_HOLD = 55.0
-MAX_HOLD = 600.0
+MAX_HOLD = 300.0
 
 DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 
@@ -318,7 +328,7 @@ TOOLS: List[Dict[str, Any]] = [
                 "hold": {
                     "type": "number",
                     "description": (
-                        "Seconds to wait before returning not-yet. Default 55."
+                        "Seconds to wait before returning not-yet. Default 55, maximum 300, honoured to about a second. Lower it if your host's tool-call timeout is under a minute; a value above that timeout is pointless, because the host will kill the call before this returns."
                     ),
                 },
             },
@@ -345,7 +355,7 @@ TOOLS: List[Dict[str, Any]] = [
                 "hold": {
                     "type": "number",
                     "description": (
-                        "Seconds to wait before returning not-yet. Default 55."
+                        "Seconds to wait before returning not-yet. Default 55, maximum 300, honoured to about a second. Lower it if your host's tool-call timeout is under a minute; a value above that timeout is pointless, because the host will kill the call before this returns."
                     ),
                 },
             },
@@ -392,7 +402,12 @@ TOOLS: List[Dict[str, Any]] = [
                 "hold": {
                     "type": "number",
                     "description": (
-                        "Seconds to wait for a message before returning. Default 55."
+                        "Seconds to wait for a message before returning. "
+                        "Default 55, maximum 300, honoured to about a second. "
+                        "Lower it if your host's tool-call timeout is under a "
+                        "minute; a value above that timeout is pointless, "
+                        "because the host will kill the call before this "
+                        "returns."
                     ),
                 },
                 "ack": {

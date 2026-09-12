@@ -56,7 +56,7 @@ $plaintexts = [
 ];
 foreach ($plaintexts as $i => $pt) {
     $res = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, $pt);
-    assert_code(201, $res, 'Message ' . ($i + 1) . ' stored (id=' . ($res['body']['message_id'] ?? '?') . ')');
+    assert_code(201, $res, 'Message ' . ($i + 1) . ' stored (sent_seq=' . ($res['body']['sent_seq'] ?? '?') . ')');
 }
 
 // --- Step 6: Bob polls — should see both messages (non-destructive) ---
@@ -105,7 +105,7 @@ assert_same(base64_encode($alice['pub']), $res['body']['identity_public_key'], "
 
 $reply = 'Hi Alice! Got both your messages. Crypto works perfectly!';
 $res = send_message($API_BASE, $bobId, $aliceId, $alice['pub'], $bobToken, $reply);
-assert_code(201, $res, 'Reply stored (id=' . ($res['body']['message_id'] ?? '?') . ')');
+assert_code(201, $res, 'Reply stored (sent_seq=' . ($res['body']['sent_seq'] ?? '?') . ')');
 
 // --- Step 10: Alice decrypts Bob's reply ---
 step("10. Alice polls inbox and decrypts Bob's reply");
@@ -124,14 +124,29 @@ assert_same($reply, $decrypted, 'Decrypted reply matches: "' . $decrypted . '"')
 $res = api('DELETE', "$API_BASE/messages/" . $msg['id'], null, $aliceToken);
 assert_code(200, $res, 'ACKed reply');
 
-// --- Step 11: Security — non-recipient cannot ACK ---
-step('11. Security: Bob tries to ACK a message addressed to Alice (should be 403)');
+// --- Step 11: Security — a sequence names a message within one inbox only ---
+step('11. Security: Bob cannot ACK a message addressed to Alice');
 $res = send_message($API_BASE, $bobId, $aliceId, $alice['pub'], $bobToken, 'Another message to Alice');
 assert_code(201, $res, 'Setup message sent to Alice');
-$targetId = $res['body']['message_id'];
 
+// Learn the number Alice will use for it, then have Bob try that number.
+$aliceInbox = api('GET', "$API_BASE/messages", null, $aliceToken);
+$aliceSeqs  = array_column($aliceInbox['body']['messages'], 'id');
+assert_true($aliceSeqs !== [], "Alice's inbox has the message");
+$targetId = $aliceSeqs[0];
+
+// Bob's inbox is empty at this point, so the number resolves to nothing for
+// him. Crucially the answer is 404, not 403: a 403 would confirm that the
+// message exists somewhere, which is an oracle over other people's mail.
 $res = api('DELETE', "$API_BASE/messages/$targetId", null, $bobToken);
-assert_code(403, $res, 'Server rejects non-recipient ACK');
+assert_code(404, $res, "Bob gets 404 — Alice's message is not addressable by him");
+
+// And it is still there.
+$aliceInbox = api('GET', "$API_BASE/messages", null, $aliceToken);
+assert_true(
+    in_array($targetId, array_column($aliceInbox['body']['messages'], 'id'), true),
+    "Alice's message survived Bob's attempt"
+);
 
 // Cleanup
 drain_inbox($API_BASE, $aliceToken);

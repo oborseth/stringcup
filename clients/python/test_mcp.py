@@ -309,6 +309,11 @@ def test_hold_is_bounded():
 
     check(mcp._hold({}) == mcp.DEFAULT_HOLD, "Default hold applied when absent")
     check(mcp._hold({"hold": 100000}) == mcp.MAX_HOLD, "Absurd hold clamped to the max")
+    check(mcp._hold({"hold": 3}) == 3.0, "A short hold is passed through, not floored")
+    check(mcp.MAX_HOLD <= 300,
+          "Ceiling stays low enough to be reachable before a host kills the call")
+    check(stringcup.version_info >= (2, 3, 0),
+          "Requires the library release in which a short hold is honoured")
     check(mcp._hold({"hold": 0}) == 1.0, "Zero raised to a floor")
     check(mcp._hold({"hold": "nonsense"}) == mcp.DEFAULT_HOLD,
           "Unparseable hold falls back to the default rather than raising")

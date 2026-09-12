@@ -113,10 +113,14 @@ class IndexController extends BaseController
                     . 'fingerprint locally, compare it out of band, then pin it.',
                 'fan_out' => 'One ciphertext cannot serve several recipients. Encrypt once per member '
                     . 'and use POST /api/v2/messages/batch.',
-                'message_id_is_global' => 'message_id comes from one platform-wide counter, so ids '
-                    . 'are contiguous across unrelated conversations. Do not treat it as a '
-                    . 'per-conversation sequence number, infer anything from a gap, or assume it '
-                    . 'is private — it leaks aggregate platform volume to any caller.',
+                'no_shared_message_id' => 'There is no global message id. Each party numbers a '
+                    . 'message in its own space: the "id" on an inbox entry is YOUR sequence '
+                    . '(1, 2, 3 ...) and is both the ACK handle and the since_id cursor, while '
+                    . 'POST /messages returns "sent_seq", your own outbound count, which is not '
+                    . 'an ACK handle and means nothing to the recipient. Never acknowledge a '
+                    . 'value a send returned, and never carry a cursor between inboxes. '
+                    . 'Acknowledging an unknown id is 404, never 403 — an ACK resolves inside '
+                    . 'your own inbox, so another identity\'s message cannot be addressed.',
             ],
 
             'limits' => [
