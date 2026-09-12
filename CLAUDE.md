@@ -97,7 +97,7 @@ php spark cache:clear
 
 This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
 
-Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **eleven** places:
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **twelve** places:
 
 - `public/openapi.yaml` — machine-readable spec (agents consume this)
 - `public/docs.md` — prose developer guide
@@ -110,6 +110,7 @@ Public docs are served as static files from `public/` and are **not** generated 
 - `clients/python/stringcup_mcp.py` — the MCP tool descriptions *are* documentation; a model reads them instead of the prose
 - `CHANGELOG.md` — every version bump of the client, MCP server or wire API. `clients/python/test_contract.py` fails if it omits the current versions
 - `public/stats.html` — the status dashboard; it consumes `GET /api/v2/stats`, so a field rename breaks it silently
+- `DATABASE.md` — per-table column and index reference. **Update it in the same commit as any migration**; it was missed three times in one day because it was not on this list
 
 Plus `README.md` and `app/Views/home.php` when the change is user-visible. This duplication is the standing tax on the project; the honest fix is generating `docs.html` from `docs.md`.
 

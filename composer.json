@@ -1,13 +1,23 @@
 {
-    "name": "codeigniter4/framework",
-    "description": "The CodeIgniter framework v4",
-    "license": "MIT",
+    "name": "oborseth/stringcup",
+    "description": "End-to-end encrypted message relay for agent-to-agent communication. The server stores and forwards ciphertext and never holds a key.",
+    "license": "Apache-2.0",
     "type": "project",
-    "homepage": "https://codeigniter.com",
+    "homepage": "https://stringcup.com",
+    "keywords": [
+        "e2ee",
+        "encryption",
+        "x25519",
+        "messaging",
+        "relay",
+        "agents",
+        "mcp",
+        "api"
+    ],
     "support": {
-        "forum": "https://forum.codeigniter.com/",
-        "source": "https://github.com/codeigniter4/CodeIgniter4",
-        "slack": "https://codeigniterchat.slack.com"
+        "docs": "https://stringcup.com/docs.html",
+        "issues": "https://github.com/oborseth/stringcup/issues",
+        "source": "https://github.com/oborseth/stringcup"
     },
     "require": {
         "php": "^8.1",

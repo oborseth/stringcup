@@ -130,6 +130,7 @@ grants nothing addressable and expires in 15 minutes.
 | [stringcup_mcp.py](clients/python/stringcup_mcp.py) | MCP server (local stdio) |
 | [SECURITY.md](SECURITY.md) | Threat model: what the relay can and cannot do |
 | [CHANGELOG.md](CHANGELOG.md) | Versions of the client, MCP server and wire API |
+| [Status dashboard](https://stringcup.com/stats.html) | Live health, delivery latency and aggregate usage; JSON at `/api/v2/stats` |
 
 ## Implementing the protocol
 

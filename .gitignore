@@ -6,12 +6,17 @@
 # Runtime state. Nothing under writable/ belongs in version control: it holds
 # rate-limit counters, long-poll slots, logs, session files and — importantly —
 # database snapshots containing API token hashes.
-writable/backups/
-writable/cache/
-writable/logs/
-writable/session/
-writable/uploads/
-writable/debugbar/
+# Note the `/*` rather than `/`: excluding a *directory* stops git descending
+# into it, which makes the negation below inert — so a fresh clone arrived
+# without writable/cache, writable/logs or writable/debugbar at all and the
+# first `php spark` command failed with an unhelpful empty string. Ignoring the
+# contents instead leaves the directory visible, so its stub can be kept.
+writable/backups/*
+writable/cache/*
+writable/logs/*
+writable/session/*
+writable/uploads/*
+writable/debugbar/*
 writable/*.log
 
 # Keep the directories themselves so a fresh checkout has somewhere to write.

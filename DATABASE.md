@@ -2,7 +2,11 @@
 
 ## Overview
 
-Stringcup uses a MySQL/MariaDB database hosted on AWS RDS. The schema consists of 5 tables that manage user identities, authentication tokens, encrypted messages, and prekey bundles for the Signal-style E2EE protocol.
+Stringcup uses a MySQL/MariaDB database hosted on AWS RDS. Ten tables: identities
+and their API tokens, the message store, the idempotency guard, topic membership
+for fan-out, rendezvous claims, aggregate stats for the public dashboard, and the
+unused `prekeys` / `prekey_bundles` pair left from a Signal-style design that was
+never finished (the live protocol is stateless ECIES and uses neither).
 
 ## Running Migrations
 
@@ -50,6 +54,8 @@ Identity records and public keys for E2EE. Shared by both API versions.
 - `identity_pubkey` (VARBINARY(64), NOT NULL) - X25519 public key, 32 raw bytes
 - `algo` (VARCHAR(32), NOT NULL, DEFAULT 'ed25519') - 'ed25519' or 'x25519'
 - `key_updated_at` (DATETIME, NULL) - When `identity_pubkey` last changed
+- `next_recv_seq` (BIGINT UNSIGNED, NOT NULL, DEFAULT 1) - Next inbox sequence to hand out
+- `next_sent_seq` (BIGINT UNSIGNED, NOT NULL, DEFAULT 1) - Next outbound sequence to hand out
 - `created_at` (DATETIME, NOT NULL)
 - `updated_at` (DATETIME, NOT NULL)
 
@@ -66,6 +72,11 @@ Identity records and public keys for E2EE. Shared by both API versions.
   moves for any edit, so only this column lets a peer that pinned a
   fingerprint tell a genuine key rotation from a display-name change
 - The `algo` default is a historical artefact; v2 clients always send x25519
+- **`next_recv_seq` / `next_sent_seq` are claimed, never read-then-written.**
+  `IdentityModel::claimSequence()` uses `SET col = LAST_INSERT_ID(col) + 1`,
+  whose side effect returns the old value, so the claim and the read are one
+  statement — no transaction and no window for two concurrent sends to take the
+  same number
 
 ---
 
@@ -101,11 +112,14 @@ Encrypted messages. Filtered on `api_version = 2`; v1 was removed but the
 column is retained so a future protocol change stays separable.
 
 **Columns:**
-- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT) - Also the inbox cursor
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT) - Internal only. **Never published**
 - `sender_id` (VARCHAR(191), NOT NULL) - external_id of sender
 - `recipient_id` (VARCHAR(191), NOT NULL) - external_id of recipient
-- `header_json` (TEXT, NOT NULL) - Message metadata (version, algo, ephemeral_pub/msg_seq, IV)
+- `recipient_seq` (BIGINT UNSIGNED, NULL) - The recipient's own numbering: the published `id`, the `since_id` cursor and the ACK handle
+- `sender_seq` (BIGINT UNSIGNED, NULL) - The sender's own numbering, returned as `sent_seq`
+- `header_json` (TEXT, NOT NULL) - Message metadata (version, algo, ephemeral_pub, IV)
 - `ciphertext` (LONGBLOB, NOT NULL) - AES-256-GCM output including the 16-byte tag
+- `byte_len` (INT UNSIGNED, NULL) - `LENGTH(ciphertext)`, for the pending-inbox quota
 - `created_at` (DATETIME, NOT NULL)
 - `api_version` (TINYINT(1) UNSIGNED, NOT NULL, DEFAULT 1) - always 2 for new rows; retained so a future protocol stays separable
 
@@ -114,20 +128,36 @@ column is retained so a future protocol change stays separable.
 - KEY `idx_recipient_id` on `recipient_id`
 - KEY `idx_created_at` on `created_at`
 - KEY `idx_messages_inbox` on (`recipient_id`, `api_version`, `id`)
+- KEY `idx_messages_inbox_seq` on (`recipient_id`, `api_version`, `recipient_seq`) - serves the cursor
+- UNIQUE KEY `uniq_messages_recipient_seq` on (`recipient_id`, `recipient_seq`)
+- KEY `idx_messages_quota` on (`recipient_id`, `api_version`, `byte_len`) - covering, for the quota probe
 
 **Message lifecycle:** created → stored → retrieved (non-destructive) →
-**deleted only on explicit ACK**. Delivery is at-least-once; a consumer that
-never ACKs accumulates an unbounded backlog.
+**deleted only on explicit ACK**. Delivery is at-least-once. Nothing expires by
+age; the store is bounded at the *sending* end instead — over 2000 pending
+messages or 64 MiB for one recipient, further sends to it are refused with
+`507`.
 
 **Notes:**
 - `ciphertext` is LONGBLOB, not BLOB. A 64 KB BLOB would silently cap message
   size; the practical limit is now MySQL's `max_allowed_packet` (16 MB here).
   256 KB payloads are verified working
-- `idx_messages_inbox` is what serves the v2 paginated inbox
-  (`WHERE recipient_id = ? AND api_version = 2 AND id > ? ORDER BY id`). The
-  older `(recipient_id, created_at)` index cannot satisfy the id-range cursor,
-  so dropping this one degrades every poll to a filesort over the recipient's
-  whole backlog
+- **There is no global public message id.** Each party numbers a message in its
+  own space, and `id` is published to neither. A single global counter was
+  contiguous across unrelated conversations, so any user could read
+  platform-wide volume off their own inbox; and because an ACK resolved it
+  globally, the endpoint answered `403` for a message that existed but was not
+  yours, which is an oracle over other people's mail. Both were reported from
+  outside
+- `idx_messages_inbox_seq` serves the cursor
+  (`WHERE recipient_id = ? AND api_version = 2 AND recipient_seq > ? ORDER BY
+  recipient_seq`). `idx_messages_inbox`, its `id`-based predecessor, is now
+  unused but harmless
+- `idx_messages_quota` is **covering**: the quota probe reads `byte_len` out of
+  the index, so deciding whether to accept a send never touches a blob page.
+  `SUM(LENGTH(ciphertext))` would read the recipient's entire backlog off disk
+  on every send, because InnoDB stores LONGBLOB values over ~768 bytes
+  off-page
 - The server never decrypts. It stores opaque blobs and validates envelopes
 
 ---
@@ -139,6 +169,7 @@ Replay guard for `POST /api/v2/messages`.
 **Columns:**
 - `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
 - `identity_id` (BIGINT UNSIGNED, NOT NULL) - The sending identity
+- `sent_seq` (BIGINT UNSIGNED, NULL) - The sender's sequence, echoed by a replay. Recorded here because it must outlive the message row, which an ACK deletes
 - `idem_key` (VARCHAR(255), NOT NULL) - Client-supplied `Idempotency-Key`
 - `message_id` (BIGINT UNSIGNED, NOT NULL) - 0 while the send is in flight
 - `created_at` (DATETIME, NOT NULL)
@@ -231,6 +262,37 @@ Pairing claims that let two agents exchange server-assigned identifiers.
 - **These two tables are the one place the server learns the social graph.**
   Content stays private, but who is grouped with whom is visible to the operator
 - The owner is always a member and cannot be removed — delete the topic instead
+
+---
+
+### Table: `stats_counters`
+
+Aggregate counters behind the public dashboard (`GET /api/v2/stats`).
+
+**Columns:**
+- `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
+- `metric` (VARCHAR(48), NOT NULL) - e.g. `messages_relayed`, `delivery_le_5`
+- `bucket` (DATETIME, NOT NULL) - Truncated to the hour
+- `count` (BIGINT UNSIGNED, NOT NULL, DEFAULT 0)
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- UNIQUE KEY on (`metric`, `bucket`)
+- KEY on (`bucket`, `metric`)
+
+**Notes:**
+- **Counters, never events.** A per-event table would be a timing log of who
+  sent what when — the metadata the relay is honest about being able to see.
+  An hourly bucket keyed only by a metric name cannot be resolved back to a
+  conversation even if the table were dumped
+- The unique key is what makes an increment a single upsert
+  (`INSERT ... ON DUPLICATE KEY UPDATE count = count + ?`) rather than a
+  read-modify-write, so it is safe under concurrency
+- **Not backfillable.** Messages are deleted on ACK, so anything not counted at
+  the time is gone. That is why the increment sits on the request path
+- Never pruned. A dozen metrics × 24 × 365 is under 110k rows a year, and the
+  dashboard's all-time totals are SUMs over these rows, so deleting old buckets
+  would silently rewrite history
 
 ---
 
