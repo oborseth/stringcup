@@ -97,7 +97,7 @@ php spark cache:clear
 
 This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
 
-Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **nine** places:
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **ten** places:
 
 - `public/openapi.yaml` — machine-readable spec (agents consume this)
 - `public/docs.md` — prose developer guide
@@ -108,6 +108,7 @@ Public docs are served as static files from `public/` and are **not** generated 
 - `app/Controllers/Api/V2/IndexController.php` — the self-describing `GET /api/v2` response
 - `clients/python/README.md` — the client library reference, including the MCP setup
 - `clients/python/stringcup_mcp.py` — the MCP tool descriptions *are* documentation; a model reads them instead of the prose
+- `CHANGELOG.md` — every version bump of the client, MCP server or wire API. `clients/python/test_contract.py` fails if it omits the current versions
 
 Plus `README.md` and `app/Views/home.php` when the change is user-visible. This duplication is the standing tax on the project; the honest fix is generating `docs.html` from `docs.md`.
 
@@ -123,7 +124,12 @@ An agent given only `https://stringcup.com` must be able to reach a working inte
 /clients/stringcup.py  the client library, fetchable with curl
 /clients/stringcup_mcp.py  MCP server for hosts that speak MCP
 /clients/example_agent.py  runnable two-role agent
+/CHANGELOG.md          what changed per client / MCP / API version
 ```
+
+`CHANGELOG.md` lives at the repo root, outside the docroot, and is published by
+an exact-match nginx alias. An agent holding a cached client has to be able to
+ask what changed without cloning a repo that is not public.
 
 `agent.md` is the important one: it replaces the wall of prompt text that used to be pasted into each agent, and tells the initiator to stop and hand its operator a block containing the responder's role and token. One copy-paste is the whole handshake. It lives next to the API so it cannot drift the way a prompt in a config file does.
 
@@ -410,9 +416,41 @@ Constraints to preserve when touching this:
 - Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
 - Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
 
-### Never version-check with a string comparison
+### Versioning the published artifacts
 
-`stringcup.require_version("2.3.0")` exists because the obvious form is wrong: `__version__ >= "2.3.0"` is a *string* compare, so it evaluates `"2.10.0" >= "2.3.0"` as false and rejects a **newer** library. `agent.md` shipped that exact guard — inside the section about refusing stale copies — and two independent agents caught it. `version_info` is the tuple to compare against if you need to compare directly. Do not reintroduce a string comparison anywhere in the docs.
+Three things carry version numbers because other people hold copies of them:
+`clients/python/stringcup.py`, `clients/python/stringcup_mcp.py` and
+`public/openapi.yaml`. `CHANGELOG.md` is the record.
+
+**A changed surface must change its version, and `clients/python/test_contract.py`
+enforces it.** That check exists because the discipline failed: a build altered
+the MCP server's result keys, the transcript key names and the library's
+`__all__` while both files still reported 2.3.0. `require_version("2.3.0")`
+therefore passed on a copy that then failed the very import the README told you
+to write, and an agent had no way to tell the two 2.3.0s apart. Two independent
+guards now make that loud:
+
+- **No capability may name a version newer than `version_info`.** Adding a
+  `FEATURES` entry forces naming the version that introduced it, so adding a
+  capability without bumping fails with nothing to remember.
+- **`__all__` and `FEATURES` are snapshotted in the test.** Changing either
+  fails until the snapshot is updated, which is the moment to ask whether the
+  version moves.
+
+It also checks that every `from stringcup import X` in the client README
+resolves, since that exact import is what broke.
+
+**Prefer `require_features()` to `require_version()`** when you know what you
+need — `require_features("inbox_quota_errors")` asks whether this copy can do
+the thing, which stays true even if a release forgets to bump. Unknown
+capability names raise rather than passing silently.
+
+**Never version-check with a string comparison.** `__version__ >= "2.4.0"` is a
+*string* compare, so it evaluates `"2.10.0" >= "2.4.0"` as false and rejects a
+**newer** library. `agent.md` shipped that exact guard — inside the section
+about refusing stale copies — and two independent agents caught it.
+`version_info` is the tuple to compare if you must compare directly. Do not
+reintroduce a string comparison anywhere in the docs.
 
 ### Primitives for LLM agents
 
@@ -572,6 +610,7 @@ The server never encrypts or decrypts. It only:
 - **No forward secrecy:** the ephemeral public key is stored in the header, so compromising a static private key exposes past messages
 - **No sender-identity binding in the crypto:** sender authenticity rests on the token check, not the ciphertext. A malicious relay could substitute a key — which is why fingerprints must be verified out of band
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
+- **A first contact between two autonomous agents is unauthenticated.** Out-of-band comparison assumes a human is present, and for the audience this project targets one usually is not. **The rendezvous token is not a usable substitute — the relay issues it, so the relay knows it**, and it therefore proves nothing about a key the relay served. Do not write docs implying the token authenticates anything. Closing it needs a secret the relay never sees: a passphrase carried alongside the token, checked as `HMAC(passphrase, both public keys sorted)`. Not implemented; recorded in SECURITY.md so the gap is not mistaken for an oversight
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
 - **Nothing expires, by design.** Only an ACK deletes a message. The store is bounded at the *sending* end instead — see [Retention](#retention-and-inbox-limits). A consumer that stops acknowledging causes its senders to see 507, which is intentional backpressure rather than data loss
 - **Message numbering is per-party** (see [Message identifiers](#message-identifiers)). Fixed; formerly one global counter that leaked platform-wide volume
@@ -632,7 +671,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
 | `test_mcp.py` | 78 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 39 assertions: two MCP processes pair and converse over a live relay |
+| `test_mcp_live.py` | 45 assertions: two MCP processes pair and converse over a live relay |
+| `test_contract.py` | 19 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
 

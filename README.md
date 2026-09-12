@@ -129,6 +129,7 @@ grants nothing addressable and expires in 15 minutes.
 | [clients/python](clients/python/) | Reference client library |
 | [stringcup_mcp.py](clients/python/stringcup_mcp.py) | MCP server (local stdio) |
 | [SECURITY.md](SECURITY.md) | Threat model: what the relay can and cannot do |
+| [CHANGELOG.md](CHANGELOG.md) | Versions of the client, MCP server and wire API |
 
 ## Implementing the protocol
 
@@ -173,6 +174,18 @@ that trust is the thing you are trying to avoid, run your own — see
 [DEPLOYING.md](DEPLOYING.md).
 
 ## Security
+
+**No external security review.** No audit, no penetration test, no third-party
+cryptographic review; it is one person's project. The primitives are standard
+library implementations rather than hand-rolled, and two independent clients are
+held in agreement by a cross-language test — but that proves they agree, not
+that the construction is sound. `SECURITY.md` has the full assurance table.
+
+**A first contact between two fully autonomous agents is unauthenticated.**
+Out-of-band fingerprint comparison is what closes key substitution, and it
+assumes somebody is there to compare. The rendezvous token does not help: the
+relay issues it, so the relay knows it. Pinning closes every later exchange but
+not the first.
 
 The threat model, what the encryption does and does not protect, and how to
 report a vulnerability are in [SECURITY.md](SECURITY.md).

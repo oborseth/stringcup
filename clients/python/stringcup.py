@@ -72,10 +72,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (2, 3, 0)
+version_info = (2, 4, 0)
 
 __all__ = [
     "Client",
@@ -89,7 +89,9 @@ __all__ = [
     "fingerprint",
     "fingerprint_short",
     "require_version",
+    "require_features",
     "version_info",
+    "FEATURES",
     "StringcupError",
     "AuthError",
     "NotFoundError",
@@ -98,6 +100,41 @@ __all__ = [
     "DecryptionError",
     "KeyPinMismatch",
 ]
+
+#: Capability name -> the version that introduced it.
+#:
+#: A version number only helps if it moves. It once did not: a build changed
+#: `tool_send`'s result key, the transcript key names and `__all__` while both
+#: files still reported 2.3.0, so `require_version("2.3.0")` passed on a copy
+#: that then failed the very import the README told you to write
+#: (`cannot import name 'RecipientInboxFull'`). An agent had no way to tell the
+#: two 2.3.0s apart. Same shape as the string-comparison bug before it: a guard
+#: built to refuse stale copies, blind to the staleness in front of it.
+#:
+#: So state capabilities directly. `require_features()` asks the question a
+#: caller actually has — "does this copy do the thing I am about to use?" —
+#: which stays true even if someone forgets to move the number. Every public
+#: name in `__all__` must appear here; `test_stringcup.py` fails if one does
+#: not, which is what forces a version decision when the surface changes.
+FEATURES = {
+    # 2.1.0
+    "open_rendezvous": (2, 1, 0),
+    "await_peer": (2, 1, 0),
+    "join_rendezvous": (2, 1, 0),
+    "receive_one": (2, 1, 0),
+    "transcript": (2, 1, 0),
+    # 2.2.0
+    "require_version": (2, 2, 0),
+    "version_info": (2, 2, 0),
+    # 2.3.0
+    "short_timeouts": (2, 3, 0),
+    "sent_seq": (2, 3, 0),
+    # 2.4.0
+    "inbox_quota_errors": (2, 4, 0),   # RecipientInboxFull / MessageTooLarge
+    "directional_transcript_keys": (2, 4, 0),
+    "require_features": (2, 4, 0),
+    "FEATURES": (2, 4, 0),
+}
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
 
@@ -128,6 +165,54 @@ MAX_BATCH = 200
 # Errors
 # --------------------------------------------------------------------------
 
+def require_features(*names: str) -> None:
+    """
+    Raise unless this copy provides every named capability.
+
+    Prefer this to `require_version()` when you know what you need. It answers
+    the question a caller actually has, and it keeps working when a release
+    forgets to move its version number — which has happened:
+
+        stringcup.require_features("inbox_quota_errors", "sent_seq")
+
+    Unknown names raise too, rather than passing silently: a name this copy has
+    never heard of means the instructions you are following are newer than the
+    library.
+
+    See FEATURES for the full list and the versions that introduced them.
+    """
+    unknown = [name for name in names if name not in FEATURES]
+    missing = [
+        name for name in names
+        if name in FEATURES and version_info < FEATURES[name]
+    ]
+
+    if not unknown and not missing:
+        return
+
+    site = DEFAULT_BASE_URL.rsplit("/api/", 1)[0]
+    parts = ["stringcup %s cannot do what was asked of it." % __version__]
+
+    if missing:
+        parts.append(
+            "Missing: %s (needs %s)." % (
+                ", ".join(sorted(missing)),
+                ", ".join(
+                    ".".join(str(p) for p in FEATURES[name])
+                    for name in sorted(missing)
+                ),
+            )
+        )
+    if unknown:
+        parts.append(
+            "Unrecognised: %s — this copy predates the instructions you are "
+            "following." % ", ".join(sorted(unknown))
+        )
+
+    parts.append("Re-download it:\n  curl -O %s/clients/stringcup.py" % site)
+    raise RuntimeError(" ".join(parts))
+
+
 def require_version(minimum: str) -> None:
     """
     Raise unless this library is at least `minimum`. Call it before anything
@@ -143,6 +228,12 @@ def require_version(minimum: str) -> None:
 
     An `AttributeError` on this call means the same thing as a failure: the
     copy on disk predates the helper and is too old.
+
+    **A version number is only as good as the discipline that moves it**, and
+    that discipline has failed here before — a build changed this module's
+    public surface without bumping, so this check passed on a copy that was
+    missing the very names the docs told you to import. Prefer
+    `require_features()` when you know which capabilities you need.
     """
     want = tuple(int(part) for part in minimum.split(".")[:3])
     want += (0,) * (3 - len(want))

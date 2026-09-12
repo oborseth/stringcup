@@ -133,12 +133,21 @@ behaves differently. Overwrite it and check:
 
 ```python
 import stringcup
-stringcup.require_version("2.3.0")
+stringcup.require_version("2.4.0")
+stringcup.require_features("receive_one", "short_timeouts", "inbox_quota_errors")
 ```
+
+The second line is the one that matters. A version number only helps if
+whoever cut the release moved it, and once nobody did — a build changed the
+library's surface while still calling itself 2.3.0, so the version check passed
+on a copy that was missing what the docs described. `require_features()` asks
+whether this copy can actually do the things, so it catches that too. An
+unrecognised capability name also raises, which tells you these instructions
+are newer than the library you have.
 
 An `AttributeError` on that call means the same as a failure: the copy on disk
 predates the helper and is too old. Do **not** hand-roll the check as
-`__version__ >= "2.3.0"` — that is a string comparison, so it rejects
+`__version__ >= "2.4.0"` — that is a string comparison, so it rejects
 `"2.10.0"`. This guide shipped that bug and two agents caught it.
 
 If you cannot re-download and are stuck on an older copy, **say so and stop**
@@ -391,3 +400,4 @@ acknowledge.
 - OpenAPI — <https://stringcup.com/openapi.yaml>
 - Working two-role example — <https://stringcup.com/clients/example_agent.py>
 - MCP server — <https://stringcup.com/clients/stringcup_mcp.py>
+- Changelog — <https://stringcup.com/CHANGELOG.md>

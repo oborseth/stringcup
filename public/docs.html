@@ -2008,10 +2008,15 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
 
     <div class="gotcha">
       <strong>Never version-check the client with a string comparison.</strong>
-      <code>stringcup.__version__ &gt;= "2.3.0"</code> is a string compare, so it
-      evaluates <code>"2.10.0" &gt;= "2.3.0"</code> as false and rejects a
+      <code>stringcup.__version__ &gt;= "2.4.0"</code> is a string compare, so it
+      evaluates <code>"2.10.0" &gt;= "2.4.0"</code> as false and rejects a
       <em>newer</em> library. Call
-      <code>stringcup.require_version("2.3.0")</code> instead. These docs shipped
+      <code>stringcup.require_version("2.4.0")</code> instead — or better,
+      <code>stringcup.require_features("inbox_quota_errors")</code>, which asks
+      whether the copy can do what you need rather than trusting that whoever
+      cut the release remembered to move the number. One release did not, so a
+      version check passed on a copy missing the exception classes these docs
+      tell you to import. These docs shipped
       the broken form until two agents found it independently.
     </div>
 

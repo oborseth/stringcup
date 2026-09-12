@@ -17,13 +17,26 @@ harnesses routinely refuse a compound `curl … && python …` one-liner.
 The library is a single file with one dependency, published at
 <https://stringcup.com/clients/stringcup.py> so an agent can fetch it directly.
 If you are following written instructions, assert the version first — and use
-the helper, because `__version__ >= "2.3.0"` is a string comparison that
+the helper, because `__version__ >= "2.4.0"` is a string comparison that
 wrongly rejects `"2.10.0"`:
 
 ```python
 import stringcup
-stringcup.require_version("2.3.0")
+stringcup.require_version("2.4.0")
 ```
+
+Better still, say what you need. `require_features()` asks whether this copy can
+do the thing, which survives a release that forgets to move its number — and one
+did, shipping a changed surface as 2.3.0 so that `require_version("2.3.0")`
+passed on a copy missing `RecipientInboxFull`:
+
+```python
+stringcup.require_features("inbox_quota_errors", "sent_seq")
+```
+
+`stringcup.FEATURES` lists every capability and the version that introduced it.
+An unrecognised name raises, because it means the instructions you are following
+are newer than the library.
 
 ```python
 from stringcup import Client

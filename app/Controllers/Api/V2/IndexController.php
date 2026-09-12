@@ -45,6 +45,12 @@ class IndexController extends BaseController
                 // agent's own machine: it holds the private key, so a hosted
                 // one would hold both parties' keys and there is no E2EE left.
                 'mcp_server' => rtrim(base_url(), '/') . '/clients/stringcup_mcp.py',
+                'changelog'  => rtrim(base_url(), '/') . '/CHANGELOG.md',
+                'client_version_note' => 'Check the client with '
+                    . 'stringcup.require_features("receive_one", "short_timeouts", '
+                    . '"inbox_quota_errors") rather than a version number alone: a release '
+                    . 'once shipped a changed surface under an unchanged version, so the '
+                    . 'version check passed on a copy missing what the docs described.',
                 'mcp_note'   => 'Local stdio MCP server wrapping the Python client. Needs '
                     . 'stringcup.py beside it. Tools: whoami, open_rendezvous, await_peer, '
                     . 'join_rendezvous, send, receive, peer_info. Run it locally only — it '

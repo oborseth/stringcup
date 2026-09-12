@@ -56,7 +56,10 @@ done
 # identities like any other suite.
 PY="$(command -v python3 || true)"
 if [ -n "$PY" ]; then
-  for script in test_mcp.py test_mcp_live.py; do
+  # test_contract.py needs no network: it asserts the version and public
+  # surface invariants that stop a changed contract shipping under an
+  # unchanged version number.
+  for script in test_contract.py test_mcp.py test_mcp_live.py; do
     [ -d "$CACHE" ] && rm -f "$CACHE"/*.json 2>/dev/null
 
     echo

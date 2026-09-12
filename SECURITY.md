@@ -69,6 +69,32 @@ me = Client.load_or_register("./identity.json",
 Trust-on-first-use catches every *later* substitution, which is most of the
 risk in a long-running relationship. It cannot protect the first exchange.
 
+#### This is weakest exactly where Stringcup is aimed
+
+Out-of-band comparison assumes somebody is available to do the comparing. For
+two fully autonomous agents there usually is not, so the step most likely to be
+skipped is the one the whole guarantee rests on. Be clear-eyed about that.
+
+**The rendezvous token does not help, and it is worth understanding why.** It
+arrives out of band — an operator carries it — which makes it tempting to treat
+as a shared secret the two agents could authenticate against. It is not: *the
+relay issues it*, so the relay knows every token. It therefore proves nothing
+about a key the relay served.
+
+The consequence, stated plainly: **for a first contact between two autonomous
+agents with no human comparison and no pre-shared value, a malicious relay can
+substitute both keys and read everything.** Pinning closes every subsequent
+exchange; it cannot close that one. Nothing in this implementation currently
+does.
+
+What actually closes it is a secret the relay never sees. If your operator is
+already copy-pasting a rendezvous token, they can paste a passphrase alongside
+it, and each agent can then check `HMAC(passphrase, both public keys in sorted
+order)` against the value its peer computed. A relay that substituted a key
+cannot produce a matching tag without the passphrase. That is not implemented
+today — it is the shape of the fix, recorded here so the gap is not mistaken
+for an oversight.
+
 ### Known limitations
 
 These are properties of the design, not bugs. They are listed so nobody
@@ -79,13 +105,31 @@ discovers them the hard way.
 | **No forward secrecy** | The ephemeral public key is stored in the message header, so compromising a static private key exposes every past message still in the inbox |
 | **No sender authentication in the crypto** | Sender identity rests on the relay's token check. A malicious relay could forge the `sender_id` on a message it fabricates — though it cannot produce ciphertext the recipient will decrypt without the recipient's key |
 | **At-least-once delivery** | A crash between processing and ACK redelivers. Handlers must be idempotent |
-| **Unbounded inbox** | Nothing ages messages out. A consumer that never acknowledges accumulates a permanent backlog |
+| **Nothing expires** | Only an acknowledgement deletes a message — deliberate, since it is what makes delivery at-least-once and crash-safe. Bounded at the sending end instead; see the storage row below |
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |
 | **Identity loss is terminal** | The API token is returned once and stored only as a hash. Losing the identity file means a new identity with a different id, unreachable at the old one |
 | **Metadata is not protected** | See above |
 | **Storage exhaustion by never acknowledging** | Bounded. One ciphertext is capped at 256 KiB by the application (not by the web server's body limit), and a recipient with 2000 pending messages or 64 MiB pending causes further sends to it to be refused with `507`. Mail is never deleted by age, so this costs no deliverability |
 | **Message ids once leaked platform-wide volume to any user** | **Fixed.** Numbering is per-party: the `id` you acknowledge is your own inbox's sequence, and a send returns only your own outbound count. Nothing is comparable across conversations |
 | **Acknowledging once confirmed other identities' messages existed** | **Fixed.** An ACK resolves within the caller's inbox, so an unknown id is `404` and there is no `403` path — another identity's message cannot be named |
+
+### Assurance — what has actually been verified
+
+Stated bluntly, because "it's open source" is not the same as "it's been
+reviewed", and a reader has no way to tell them apart from the outside.
+
+| | |
+|---|---|
+| External security review | **None.** No audit, no penetration test, no third-party cryptographic review |
+| Who maintains it | One person, as a personal project. No organisation stands behind it |
+| Cryptographic primitives | Not hand-rolled. X25519, HKDF-SHA256 and AES-256-GCM come from `cryptography` (Python) and libsodium / `paragonie/sodium_compat` (PHP) |
+| Protocol implementation | Two independent implementations are held in agreement by `clients/python/test_interop.py`, which drives one from the other and asserts both derive identical message keys. **That proves they agree, not that the construction is sound** — two implementations of a bad idea agree perfectly |
+| Server-side crypto | There is none to get wrong. The relay validates envelope shape and token ownership and stores opaque bytes |
+| Test coverage | Four HTTP suites plus the Python client, MCP and contract suites, run against a live relay. Coverage of behaviour, not a proof of security |
+
+If you are considering this for anything whose disclosure would actually hurt,
+read `public/PROTOCOL.md` and the two client implementations yourself, and
+treat the absence of review as the material fact it is.
 
 ### Out of scope
 

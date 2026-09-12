@@ -53,12 +53,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stringcup  # noqa: E402
 from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa: E402
 
-# 2.3.0 is the first release in which `hold` is actually honoured below 25s.
-# An older copy accepts the value and silently parks for a full server cycle,
-# which defeats the entire point of a short hold.
-stringcup.require_version("2.3.0")
+# Capabilities rather than a bare version, because a version only helps if
+# somebody moved it — and once, nobody did: this server's `send` result key
+# changed from `message_id` to `sent_seq` while both files still said 2.3.0,
+# so the guard passed on a copy that behaved differently.
+#
+#   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
+#                   value and silently parks for a full server cycle.
+#   sent_seq        the send response key this server reads.
+stringcup.require_version("2.4.0")
+stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors")
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
