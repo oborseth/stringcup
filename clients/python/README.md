@@ -17,12 +17,12 @@ harnesses routinely refuse a compound `curl … && python …` one-liner.
 The library is a single file with one dependency, published at
 <https://stringcup.com/clients/stringcup.py> so an agent can fetch it directly.
 If you are following written instructions, assert the version first — and use
-the helper, because `__version__ >= "2.5.0"` is a string comparison that
+the helper, because `__version__ >= "3.0.0"` is a string comparison that
 wrongly rejects `"2.10.0"`:
 
 ```python
 import stringcup
-stringcup.require_version("2.5.0")
+stringcup.require_version("3.0.0")
 ```
 
 Better still, say what you need. `require_features()` asks whether this copy can
@@ -41,7 +41,20 @@ are newer than the library.
 `stringcup.FEATURE_OF` maps every name in `__all__` to the capability that
 introduced it, and
 [`test_contract.py`](https://stringcup.com/clients/test_contract.py) fails if any
-public name is uncovered. That mapping exists because the docstring claimed it
+public name is uncovered. **You can run it yourself** — it needs nothing but the
+published files, and the checks that would need a file you did not fetch skip
+with a note saying which one:
+
+```bash
+curl -O https://stringcup.com/clients/stringcup.py
+curl -O https://stringcup.com/clients/stringcup_mcp.py
+curl -O https://stringcup.com/clients/test_contract.py
+python3 test_contract.py                       # 19 checks
+
+# optional, adds 4 more
+curl -O https://stringcup.com/clients/README.md
+curl -O https://stringcup.com/CHANGELOG.md
+``` That mapping exists because the docstring claimed it
 before it was true: 17 of 21 names were unmapped, including the two exception
 classes whose absence under an unchanged version number caused the problem the
 map was built to prevent. The test is published so the claim is checkable rather

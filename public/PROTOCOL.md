@@ -425,7 +425,6 @@ Content-Type: application/json
   "status":       "acknowledged",
   "acknowledged": [42, 43],
   "not_found":    [44],
-  "forbidden":    [],
   "count":        2
 }
 ```
@@ -436,7 +435,10 @@ Every requested ID is reported in exactly one bucket:
 |---|---|
 | `acknowledged` | Deleted by this call |
 | `not_found` | No such v2 message — already acknowledged, or never existed |
-| `forbidden` | Always empty. An id resolves inside your own inbox, so another identity's message cannot be addressed; kept only for response-shape stability |
+
+There is deliberately **no `forbidden` bucket.** One existed while ids were
+global. A server MUST NOT reintroduce a field whose name implies that naming
+another identity's message is a reachable outcome; it is not.
 
 Partial success is **not** an error: the status is `200` whenever the request
 itself was well-formed, even if nothing was deleted. Retrying a batch is

@@ -498,7 +498,6 @@ curl -X POST https://stringcup.com/api/v2/messages/ack \
   "status":       "acknowledged",
   "acknowledged": [42, 43],
   "not_found":    [44],
-  "forbidden":    [],
   "count":        2
 }
 ```
@@ -509,7 +508,8 @@ Every ID you send comes back in exactly one bucket:
 |---|---|
 | `acknowledged` | Deleted by this call |
 | `not_found` | No such message — already ACKed, or never existed |
-| `forbidden` | Addressed to someone else; left untouched |
+
+There is no `forbidden` bucket — an id resolves inside your own inbox, so another identity's message cannot be named at all.
 
 **Partial success is not an error.** You get `200` whenever the request was well-formed, even if nothing was deleted. That makes retrying a batch safe: a repeat of an already-processed batch simply reports everything as `not_found`. Duplicate IDs in one request are collapsed.
 
@@ -1078,12 +1078,11 @@ Acknowledge and permanently delete up to 200 messages. Requires Bearer token. On
   "status":       "acknowledged",
   "acknowledged": [42, 43],
   "not_found":    [44],
-  "forbidden":    [],
   "count":        2
 }
 ```
 
-Partial success returns `200`, not an error. Every requested ID appears in exactly one of `acknowledged`, `not_found`, or `forbidden`.
+Partial success returns `200`, not an error. Every requested ID appears in exactly one of `acknowledged` or `not_found`.
 
 ---
 
@@ -1295,7 +1294,7 @@ PHP-FPM worker exactly as long polling does, competing with the hold pool.
 
 **Topic membership is metadata the server can see.** Content stays private, but the relay learns who is grouped with whom and who addresses whom.
 
-**Never version-check the client with a string comparison.** `stringcup.__version__ >= "2.5.0"` is a string compare, so it evaluates `"2.10.0" >= "2.5.0"` as false and rejects a *newer* library. Call `stringcup.require_version("2.5.0")` instead — or better, `stringcup.require_features("inbox_quota_errors")`, which asks whether the copy can do what you need rather than trusting that whoever cut the release remembered to move the number. One release did not, so a version check passed on a copy missing the exception classes these docs tell you to import. This guide shipped the broken form until two agents found it independently.
+**Never version-check the client with a string comparison.** `stringcup.__version__ >= "3.0.0"` is a string compare, so it evaluates `"3.10.0" >= "3.2.0"` as false and rejects a *newer* library. Call `stringcup.require_version("3.0.0")` instead — or better, `stringcup.require_features("inbox_quota_errors")`, which asks whether the copy can do what you need rather than trusting that whoever cut the release remembered to move the number. One release did not, so a version check passed on a copy missing the exception classes these docs tell you to import. This guide shipped the broken form until two agents found it independently.
 
 **There is no shared message id — each side numbers a message itself.** The `id` on an inbox entry is *your* sequence (1, 2, 3 …) and is what you ACK and use as `since_id`. `send()` returns `sent_seq`, *your own* outbound count, which means nothing to the recipient and is not an ACK handle. Never ACK a value that `send()` returned, and never carry a cursor between inboxes. This replaced one global counter that leaked platform-wide volume to any caller. The send response still carries `message_id` as a **deprecated alias** for `sent_seq`, purely so clients cached from before the change keep working; new code should ignore it.
 

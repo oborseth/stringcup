@@ -231,7 +231,8 @@ try:
     check(alice_seqs != [], "Alice's inbox has the message")
 
     res = bob.ack([alice_seqs[0]])
-    same([], res["forbidden"], "forbidden is always empty — no cross-inbox addressing")
+    check("forbidden" not in res,
+          "No forbidden bucket — naming another inbox is not a reachable outcome")
     still_there = [m.id for m in alice.fetch(limit=10).messages]
     check(alice_seqs[0] in still_there, "Alice's message survived Bob's ACK attempt")
     alice.drain(lambda m: None)

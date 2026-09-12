@@ -938,9 +938,15 @@ class MessageController extends BaseController
      *
      * Partial success is normal and reported per ID rather than as an error:
      * an already-ACKed or unknown ID lands in not_found, and the response is
-     * 200 as long as the request itself was well-formed. `forbidden` is always
-     * empty now — a sequence cannot name another identity's message — and is
-     * kept only so the response shape does not change.
+     * 200 as long as the request itself was well-formed.
+     *
+     * There is no `forbidden` bucket. One existed while ids were global, and
+     * survived the fix as a permanently-empty field for response-shape
+     * stability — until an agent pointed out that a field *named* `forbidden`
+     * implies the state is reachable, which quietly contradicts the whole
+     * point: a sequence cannot name another identity's message, so there is
+     * nothing to forbid. Adding a field back is non-breaking if a shared-inbox
+     * feature ever needs one.
      */
     public function ackBatch()
     {
@@ -980,11 +986,8 @@ class MessageController extends BaseController
             $recipientExternalId = $currentIdentity['external_id'];
 
             // Scoped to the caller, so an id belonging to another identity is
-            // simply absent rather than reported as forbidden. `forbidden` is
-            // retained in the response for shape compatibility but is now
-            // always empty: a sequence cannot name another inbox's message, so
-            // there is no longer an oracle distinguishing "not yours" from
-            // "does not exist". See ack() above.
+            // simply absent — indistinguishable from one that never existed,
+            // which is what removes the oracle. See ack() above.
             $msgModel = new MessageModel();
             $rows     = $msgModel
                 ->where('recipient_id', $recipientExternalId)
@@ -993,7 +996,6 @@ class MessageController extends BaseController
                 ->findAll();
 
             $acknowledged = [];
-            $forbidden    = [];
             $primaryKeys  = [];
 
             foreach ($rows as $row) {
@@ -1021,14 +1023,13 @@ class MessageController extends BaseController
                 'requested'         => count($ids),
                 'acknowledged'      => count($acknowledged),
                 'not_found'         => count($notFound),
-                'forbidden'         => count($forbidden),
+
             ]);
 
             return $this->respond([
                 'status'       => 'acknowledged',
                 'acknowledged' => $acknowledged,
                 'not_found'    => $notFound,
-                'forbidden'    => $forbidden,
                 'count'        => count($acknowledged),
             ]);
         } catch (\Exception $e) {

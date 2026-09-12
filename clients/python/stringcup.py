@@ -72,10 +72,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.5.0"
+__version__ = "3.0.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (2, 5, 0)
+version_info = (3, 0, 0)
 
 __all__ = [
     "Client",
@@ -146,6 +146,8 @@ FEATURES = {
     "FEATURES": (2, 4, 0),
     # 2.5.0
     "feature_map": (2, 5, 0),          # FEATURE_OF, and its enforcement
+    # 3.0.0
+    "ack_without_forbidden": (3, 0, 0),   # ack() no longer returns a "forbidden" key
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1172,19 +1174,17 @@ class Client:
         """
         ids = [int(i) for i in ids]
         if not ids:
-            return {"acknowledged": [], "not_found": [], "forbidden": [], "count": 0}
+            return {"acknowledged": [], "not_found": [], "count": 0}
 
-        acknowledged, not_found, forbidden = [], [], []
+        acknowledged, not_found = [], []
         for chunk in _chunks(ids, MAX_ACK_BATCH):
             body = self._request("POST", "/messages/ack", {"ids": chunk})
             acknowledged += body.get("acknowledged", [])
             not_found += body.get("not_found", [])
-            forbidden += body.get("forbidden", [])
 
         return {
             "acknowledged": acknowledged,
             "not_found": not_found,
-            "forbidden": forbidden,
             "count": len(acknowledged),
         }
 

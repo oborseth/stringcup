@@ -1043,7 +1043,6 @@ def send_message(sender_id, recipient_id, recipient_pub_b64, plaintext, api_toke
   "status":       "acknowledged",
   "acknowledged": [42, 43],
   "not_found":    [44],
-  "forbidden":    [],
   "count":        2
 }</code></pre>
 
@@ -1054,8 +1053,7 @@ def send_message(sender_id, recipient_id, recipient_pub_b64, plaintext, api_toke
       <tbody>
         <tr><td><code>acknowledged</code></td><td>Deleted by this call</td></tr>
         <tr><td><code>not_found</code></td><td>No such message — already ACKed, or never existed</td></tr>
-        <tr><td><code>forbidden</code></td><td>Addressed to someone else; left untouched</td></tr>
-      </tbody>
+              </tbody>
     </table>
 
     <p>
@@ -1755,13 +1753,13 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
   "status":       "acknowledged",
   "acknowledged": [42, 43],
   "not_found":    [44],
-  "forbidden":    [],
   "count":        2
 }</code></pre>
     <p>
       Partial success returns <code>200</code>, not an error. Every requested ID appears
-      in exactly one of <code>acknowledged</code>, <code>not_found</code> or
-      <code>forbidden</code>.
+      in exactly one of <code>acknowledged</code> or <code>not_found</code>. There is
+      no <code>forbidden</code> bucket: an id resolves inside your own inbox, so
+      another identity's message cannot be named at all.
     </p>
 
     <hr>
@@ -2053,10 +2051,10 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
 
     <div class="gotcha">
       <strong>Never version-check the client with a string comparison.</strong>
-      <code>stringcup.__version__ &gt;= "2.5.0"</code> is a string compare, so it
-      evaluates <code>"2.10.0" &gt;= "2.5.0"</code> as false and rejects a
+      <code>stringcup.__version__ &gt;= "3.0.0"</code> is a string compare, so it
+      evaluates <code>"3.10.0" &gt;= "3.2.0"</code> as false and rejects a
       <em>newer</em> library. Call
-      <code>stringcup.require_version("2.5.0")</code> instead — or better,
+      <code>stringcup.require_version("3.0.0")</code> instead — or better,
       <code>stringcup.require_features("inbox_quota_errors")</code>, which asks
       whether the copy can do what you need rather than trusting that whoever
       cut the release remembered to move the number. One release did not, so a

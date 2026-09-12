@@ -228,7 +228,7 @@ assert_code(200, $ack, 'Batch ACK accepted');
 assert_same(5, $ack['body']['count'], 'Acknowledged all 5 in one call');
 assert_same($batch, $ack['body']['acknowledged'], 'Reports exactly the acknowledged ids');
 assert_same([], $ack['body']['not_found'], 'Nothing reported missing');
-assert_same([], $ack['body']['forbidden'], 'Nothing reported forbidden');
+assert_true(!array_key_exists('forbidden', $ack['body']), 'No forbidden bucket in the response');
 
 $res = api('GET', "$API_BASE/messages", null, $bobToken);
 assert_same($total - 5, $res['body']['count'], 'Inbox shrank by exactly 5');
@@ -261,7 +261,8 @@ assert_true(
     array_diff($bobIds, $mixed['body']['acknowledged']) === [],
     'Own messages acknowledged'
 );
-assert_same([], $mixed['body']['forbidden'], 'forbidden is always empty — no cross-inbox addressing exists');
+assert_true(!array_key_exists('forbidden', $mixed['body']),
+    'No forbidden bucket — naming another inbox is not a reachable outcome');
 
 $check = api('GET', "$API_BASE/messages", null, $aliceToken);
 assert_true(

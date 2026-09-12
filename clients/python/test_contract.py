@@ -14,6 +14,23 @@ A reviewer cannot be relied on to notice. These checks turn "remember to bump
 the version" into something that fails loudly instead.
 
     python3 test_contract.py
+
+**Runnable from the published files alone.** This file is served at
+https://stringcup.com/clients/test_contract.py precisely so a reader can check
+the library's claims instead of trusting them, so it has to work in the
+directory a reader actually assembles:
+
+    curl -O https://stringcup.com/clients/stringcup.py
+    curl -O https://stringcup.com/clients/stringcup_mcp.py
+    curl -O https://stringcup.com/clients/test_contract.py
+    python3 test_contract.py
+
+Checks needing a file that is not published, or that lives at the repo root,
+**skip with a note** rather than failing — a reader cannot satisfy a path
+outside the directory they control. It previously crashed with a traceback on
+README.md and failed on a CHANGELOG.md path two levels up; an agent that
+followed the published instructions literally found both. A skip is honest; a
+failure a reader cannot fix teaches them to ignore the suite.
 """
 
 import os
@@ -82,6 +99,7 @@ EXPECTED_FEATURES = {
     "require_features": (2, 4, 0),
     "FEATURES": (2, 4, 0),
     "feature_map": (2, 5, 0),
+    "ack_without_forbidden": (3, 0, 0),
 }
 
 
@@ -173,6 +191,11 @@ def test_documented_imports_resolve():
     # writes `from stringcup import RecipientInboxFull`, which raised
     # ImportError on a copy whose version said it should work.
     readme = os.path.join(HERE, "README.md")
+    if not os.path.exists(readme):
+        check(True, "README.md not alongside — skipping (fetch "
+                    "/clients/README.md to include this check)")
+        return
+
     documented = set(re.findall(r"from stringcup import ([A-Za-z_, ]+)", open(readme).read()))
     names = {n.strip() for group in documented for n in group.split(",") if n.strip()}
     check(bool(names), "README contains import examples to check (%d names)" % len(names))
@@ -231,9 +254,21 @@ def test_enforcement_is_publicly_fetchable():
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
-    path = os.path.join(os.path.dirname(os.path.dirname(HERE)), "CHANGELOG.md")
-    check(os.path.exists(path), "CHANGELOG.md exists")
-    if not os.path.exists(path):
+    # In the repo it sits two levels up (clients/python -> root). A reader who
+    # downloaded the published URLs into one directory can never satisfy that
+    # path, because it points outside the directory they control — so look in
+    # the plausible places and skip rather than fail.
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(HERE)), "CHANGELOG.md"),
+        os.path.join(os.path.dirname(HERE), "CHANGELOG.md"),
+        os.path.join(HERE, "CHANGELOG.md"),
+    ]
+    path = next((c for c in candidates if os.path.exists(c)), None)
+
+    if path is None:
+        check(True, "CHANGELOG.md not found locally — skipping (fetch "
+                    "https://stringcup.com/CHANGELOG.md alongside to include "
+                    "this check)")
         return
 
     body = open(path).read()

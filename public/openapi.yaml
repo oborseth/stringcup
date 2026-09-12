@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 4.3.0
+  version: 5.0.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -852,7 +852,12 @@ paths:
         |---|---|
         | `acknowledged` | Deleted by this call |
         | `not_found` | No such message in *your* inbox — already acknowledged, or never existed |
-        | `forbidden` | Always empty. Retained only so the response shape is stable |
+
+        There is deliberately **no `forbidden` bucket**. One existed while message
+        ids were global; it was removed in API 5.0.0 because a field named
+        `forbidden` implies the state is reachable, and it is not — an id resolves
+        inside the caller's own inbox, so another identity's message cannot be
+        named and there is nothing to forbid.
 
         The response is `200` whenever the request itself was well-formed, even
         if nothing was deleted. That makes retrying a batch safe: a repeat of an
@@ -881,7 +886,6 @@ paths:
                     status: acknowledged
                     acknowledged: [42, 43, 44]
                     not_found: []
-                    forbidden: []
                     count: 3
                 partial:
                   summary: Mixed batch
@@ -889,7 +893,6 @@ paths:
                     status: acknowledged
                     acknowledged: [42]
                     not_found: [43]
-                    forbidden: []
                     count: 1
         '400':
           $ref: '#/components/responses/ValidationError'
@@ -1780,7 +1783,7 @@ components:
       description: |
         Per-ID outcome of a batch acknowledgement. Every requested ID appears in
         exactly one of the three arrays.
-      required: [status, acknowledged, not_found, forbidden, count]
+      required: [status, acknowledged, not_found, count]
       properties:
         status:
           type: string
@@ -1799,17 +1802,6 @@ components:
           items:
             type: integer
           example: [44]
-        forbidden:
-          type: array
-          description: |
-            Always empty. IDs are resolved within the caller's own inbox, so an
-            ID belonging to another identity is simply absent (`not_found`)
-            rather than reported as forbidden — reporting it would confirm that
-            another identity's message exists. Kept so the response shape does
-            not change.
-          items:
-            type: integer
-          example: []
         count:
           type: integer
           description: Number of messages actually deleted (length of `acknowledged`)

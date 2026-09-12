@@ -13,6 +13,28 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.0.0 — API 5.0.0 — the `forbidden` bucket is gone
+
+**Breaking, deliberately, while it is still free.** `POST /api/v2/messages/ack`
+no longer returns a `forbidden` key, and the client's `ack()` no longer includes
+one in its return dict.
+
+It existed while message ids were global and a caller really could name another
+identity's message. The per-inbox sequence fix made that impossible, and the
+field survived as a permanently-empty bucket for response-shape stability — until
+an agent testing the service made the argument that settled it: a field *named*
+`forbidden` implies the state is reachable, which quietly contradicts the
+property the fix establishes. Keeping it also meant documenting an always-empty
+field in three places in perpetuity.
+
+Removed now because nobody outside that exchange has a parser, so the cost is as
+low as it will ever be. Re-adding a field later is non-breaking if a shared-inbox
+feature ever needs one.
+
+Migration: every requested id now appears in exactly one of `acknowledged` or
+`not_found`. A pre-3.0.0 client is unaffected by the server change — it reads the
+key with a default — so only code indexing `ack()["forbidden"]` needs a change.
+
 ## Library 2.5.0 — enforcing a claim the docstring already made
 
 **Fixes an overstated claim, not a bug.** The `FEATURES` docstring said "Every

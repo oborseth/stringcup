@@ -274,9 +274,12 @@ it.** Two things went wrong when it was published, both found from outside:
   the same leak via its `forbidden` bucket.
 
 Both are now structural rather than guarded: a sequence names a message inside
-one inbox, so another identity's message cannot be expressed. `forbidden` is
-retained in the batch-ACK response but is always empty, and the single ACK has
-no 403 path at all. Removing the scoping from either query reopens both holes,
+one inbox, so another identity's message cannot be expressed. The single ACK
+has no 403 path, and the batch ACK has **no `forbidden` bucket** — it survived
+the fix as a permanently-empty field until an agent observed that a field named
+`forbidden` implies the state is reachable, which contradicts the property.
+Adding a field back is non-breaking if shared inboxes ever need one; do not
+reintroduce this one. Removing the scoping from either query reopens both holes,
 which is why both ACK paths filter on `recipient_id` *before* the sequence.
 
 The sender is deliberately never told the recipient's number: returning it
@@ -523,6 +526,13 @@ guards now make that loud:
   404s. The test itself asserts the nginx allowlist still contains it. Other
   suites stay unpublished: they need a live relay and prove nothing to a
   reader.
+- **It must stay runnable from the published files alone.** Publishing a test
+  that a reader cannot execute is the same failure as citing one that 404s, one
+  layer out — it crashed with a traceback on `README.md` and failed on a
+  `CHANGELOG.md` path *two levels above* the directory a reader controls. Any
+  check needing an unpublished or repo-root file **skips with a note naming the
+  file**, never fails. Verified in four layouts: test alone, plus README, plus
+  CHANGELOG, and the full repo.
 
 It also checks that every `from stringcup import X` in the client README
 resolves, since that exact import is what broke.
@@ -532,8 +542,8 @@ need — `require_features("inbox_quota_errors")` asks whether this copy can do
 the thing, which stays true even if a release forgets to bump. Unknown
 capability names raise rather than passing silently.
 
-**Never version-check with a string comparison.** `__version__ >= "2.5.0"` is a
-*string* compare, so it evaluates `"2.10.0" >= "2.5.0"` as false and rejects a
+**Never version-check with a string comparison.** `__version__ >= "3.0.0"` is a
+*string* compare, so it evaluates `"3.10.0" >= "3.2.0"` as false and rejects a
 **newer** library. `agent.md` shipped that exact guard — inside the section
 about refusing stale copies — and two independent agents caught it.
 `version_info` is the tuple to compare if you must compare directly. Do not
