@@ -402,7 +402,91 @@ assert_same(
 );
 
 // ============================================================
-step('12. Cleanup');
+step('12. Public stats endpoint and its disclosure rules');
+// ============================================================
+
+$stats = api('GET', str_replace('/api/v2', '/api/v2/stats', $API_BASE), null, null);
+assert_code(200, $stats, 'Stats endpoint is public — no token needed');
+$b = $stats['body'];
+
+foreach (['health', 'capacity', 'delivery', 'usage', 'limits', 'privacy'] as $section) {
+    assert_true(isset($b[$section]), "Response has a '$section' section");
+}
+assert_same('ok', $b['health']['status'] ?? null, 'Relay reports healthy');
+
+// The disclosure rules are the whole point of the endpoint, so assert them
+// rather than the numbers, which move.
+// Patterns, not substrings: a naive search for 'ip' hits "recipient" and
+// "description" and tells you nothing.
+$flat = json_encode($b);
+$patterns = [
+    'an assigned identity id'  => '/\bsc-[a-z0-9]{20,}/i',
+    'a rendezvous token'       => '/\brv-[a-z0-9]{24,}/i',
+    'an IPv4 literal'          => '/\b\d{1,3}(?:\.\d{1,3}){3}\b/',
+    'a base64 blob'            => '/"[A-Za-z0-9+\/]{40,}={0,2}"/',
+    'a bearer token'           => '/\b[a-f0-9]{48,}\b/i',
+];
+foreach ($patterns as $what => $regex) {
+    assert_true(!preg_match($regex, $flat), "Publishes nothing resembling $what");
+}
+
+// And no key that would carry per-party or per-event detail.
+$forbiddenKeys = ['recipient_id', 'sender_id', 'identity_id', 'external_id',
+                  'topic', 'topics', 'ciphertext', 'api_token', 'remote_addr'];
+$seenKeys = [];
+array_walk_recursive($b, function ($v, $k) use (&$seenKeys) { $seenKeys[$k] = true; });
+foreach (array_keys($b) as $k) { $seenKeys[$k] = true; }
+foreach (['usage', 'delivery', 'capacity', 'health', 'limits'] as $section) {
+    foreach (array_keys((array) $b[$section]) as $k) { $seenKeys[$k] = true; }
+}
+foreach ($forbiddenKeys as $k) {
+    assert_true(!isset($seenKeys[$k]), "No '$k' key anywhere in the response");
+}
+
+// Small counts must be strings ("<5"), never numbers — and the hourly series
+// must be null rather than a flat line, because a sparkline's shape leaks
+// per-hour timing even with the values hidden.
+$suppressedSeen = false;
+$withheldSeen   = false;
+foreach ($b['usage']['last_24h'] as $metric => $value) {
+    if (is_string($value)) {
+        $suppressedSeen = true;
+        assert_true($value[0] === '<', "Suppressed '$metric' is reported as \"<N\", not a number");
+    }
+}
+foreach ($b['usage']['hourly_24h'] as $metric => $series) {
+    if ($series === null) {
+        $withheldSeen = true;
+    } else {
+        assert_true(is_array($series) && count($series) === 24,
+            "Published series for '$metric' has 24 hourly points");
+    }
+}
+assert_true($suppressedSeen || $withheldSeen,
+    'Suppression or withholding is active at current traffic levels');
+
+// All-time totals are exact integers — they carry no timing information.
+foreach ($b['usage']['all_time'] as $metric => $value) {
+    assert_true(is_int($value), "All-time '$metric' is an exact integer");
+}
+
+// Limits are discoverable here too, so a client needs one call.
+foreach (['message_max_bytes', 'inbox_max_pending_messages', 'inbox_max_pending_bytes'] as $key) {
+    assert_true(($b['limits'][$key] ?? 0) > 0, "Stats advertises $key");
+}
+
+// Percentiles are bucket labels or null, never invented precision.
+if ($b['delivery']['p50'] !== null) {
+    assert_true(is_string($b['delivery']['p50']),
+        'p50 is a bucket label, not an interpolated number');
+}
+
+// The page the dashboard is served from must exist.
+$page = api('GET', str_replace('/api/v2', '/stats.html', $API_BASE), null, null);
+assert_code(200, $page, 'Dashboard page is served');
+
+// ============================================================
+step('13. Cleanup');
 // ============================================================
 $removed = drain_inbox($API_BASE, $newBobToken) + drain_inbox($API_BASE, $aliceToken);
 ok("Drained $removed remaining message(s)");

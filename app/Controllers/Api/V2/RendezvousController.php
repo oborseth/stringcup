@@ -244,6 +244,12 @@ class RendezvousController extends BaseController
                 ], $minting ? ['token' => $token, 'token_issued' => true] : []));
             }
 
+            // Counted once per side that observes the pairing, so a completed
+            // pairing shows as 2. The dashboard labels it "claims", not
+            // "pairings", rather than pretending to halve it — a side that
+            // never polls again would make the halving wrong.
+            \App\Libraries\Stats::bump(\App\Libraries\Stats::RENDEZVOUS_PAIRED);
+
             $this->logWithContext('info', 'Rendezvous paired', [
                 'role' => $role,
                 'me'   => $identity['external_id'],

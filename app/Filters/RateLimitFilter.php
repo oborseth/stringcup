@@ -31,6 +31,10 @@ class RateLimitFilter implements FilterInterface
         'api/v2/topics_get'       => [200, 3600],   // roster reads before each broadcast
         'api/v2/topics_post'      => [60, 3600],    // create + membership changes
         'api/v2/topics_delete'    => [60, 3600],
+        // The dashboard polls this and it is unauthenticated, so the bucket is
+        // per-IP. Generous, because the response is cached for 30s server-side
+        // and a shared NAT would otherwise make the page look broken.
+        'api/v2/stats_get'        => [600, 3600],
         'default'                 => [60, 60],      // 60 per minute default
     ];
 

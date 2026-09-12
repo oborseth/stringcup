@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stringcup — status</title>
+<meta name="description" content="Live health and aggregate usage for the Stringcup relay. Aggregates only: no identifiers, topic names or per-message timing.">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#6c8eff">
+<style>
+  /* Roles, not raw hex, so a value changes in one place.
+     The relay's pages are dark-only, so these are stepped for THIS surface and
+     validated against it — #1a1d27 for cards, #0f1117 for the page — rather
+     than inherited from a light palette and flipped. */
+  :root {
+    color-scheme: dark;
+    --bg: #0f1117;
+    --surface-1: #1a1d27;
+    --border: #2a2d3a;
+    --text-primary: #e2e4ed;
+    --text-secondary: #a6abc2;
+    --text-muted: #8b8fa8;
+
+    /* Single-series hue (categorical slot 1, dark step). Validated on both
+       surfaces: chroma 0.16, contrast >= 3:1. One series, so no legend — the
+       heading names it. */
+    --series-1: #3987e5;
+    --series-1-dim: #24405f;   /* lighter-step track for meters */
+
+    /* Status palette — fixed, never themed, never a series color.
+       good vs critical are CVD dE 4.1: red/green are indistinguishable to
+       protan/deutan viewers, which is why every status here also carries a
+       glyph and a word. Never color alone. */
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-critical: #d03b3b;
+
+    --radius: 8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px; line-height: 1.6;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  a { color: var(--series-1); }
+  h1 { font-size: 1.9rem; margin: 0 0 .35rem; letter-spacing: -.02em; }
+  .sub { color: var(--text-muted); margin: 0 0 2rem; font-size: .95rem; }
+  h2 {
+    font-size: .8rem; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-muted); margin: 2.5rem 0 .9rem; font-weight: 600;
+  }
+
+  /* --- hero: exactly one per view ------------------------------------- */
+  .hero { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 1.5rem 1.6rem; }
+  .hero .label { font-size: .85rem; color: var(--text-secondary); }
+  .hero .value { font-size: 3rem; font-weight: 600; line-height: 1.1;
+                 font-variant-numeric: tabular-nums; margin: .1rem 0 0; }
+  .hero .foot { font-size: .85rem; color: var(--text-muted); margin-top: .35rem; }
+
+  /* --- status rows: glyph + word + colour, never colour alone --------- */
+  .checks { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: .9rem; }
+  .check { display: flex; align-items: center; gap: .45rem; font-size: .9rem; }
+  .glyph { font-size: .85rem; line-height: 1; }
+  .state-ok       { color: var(--status-good); }
+  .state-degraded { color: var(--status-critical); }
+  .state-unknown  { color: var(--text-muted); }
+  .check .name { color: var(--text-secondary); }
+
+  /* --- stat tiles ----------------------------------------------------- */
+  .tiles { display: grid; gap: 1rem;
+           grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .tile { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 1rem 1.1rem; }
+  .tile .label { font-size: .82rem; color: var(--text-secondary); }
+  .tile .value { font-size: 1.55rem; font-weight: 600; margin-top: .15rem;
+                 font-variant-numeric: tabular-nums; }
+  .tile .value.suppressed { color: var(--text-muted); font-weight: 500; }
+  .tile .note { font-size: .78rem; color: var(--text-muted); margin-top: .2rem; }
+
+  /* --- meter: fill carries severity, track is a lighter step of it ---- */
+  .meter { height: 8px; background: var(--series-1-dim);
+           border-radius: 4px; overflow: hidden; margin-top: .5rem; }
+  .meter > span { display: block; height: 100%; background: var(--series-1);
+                  border-radius: 4px; }
+  .meter.warn > span { background: var(--status-warning); }
+  .meter.crit > span { background: var(--status-critical); }
+
+  /* --- charts --------------------------------------------------------- */
+  figure { margin: 0; background: var(--surface-1); border: 1px solid var(--border);
+           border-radius: var(--radius); padding: 1.2rem 1.3rem; }
+  figcaption { font-size: .9rem; color: var(--text-secondary); margin-bottom: .9rem; }
+  .withheld { color: var(--text-muted); font-size: .88rem; border-left: 2px solid var(--border);
+              padding-left: .8rem; }
+  svg { display: block; width: 100%; overflow: visible; }
+  .grid line { stroke: var(--border); stroke-width: 1; }
+  .axis text { fill: var(--text-muted); font-size: 11px; }
+  .bar { fill: var(--series-1); }
+  .bar-label { fill: var(--text-secondary); font-size: 11px;
+               font-variant-numeric: tabular-nums; }
+  .spark-line { fill: none; stroke: var(--series-1); stroke-width: 2;
+                stroke-linejoin: round; stroke-linecap: round; }
+  .spark-end { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+  .crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3;
+               display: none; }
+  .hit { fill: transparent; }
+
+  .tip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity .08s;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .4rem .6rem; font-size: .82rem; color: var(--text-primary);
+    box-shadow: 0 4px 14px rgba(0,0,0,.45); z-index: 10; white-space: nowrap;
+  }
+  details { margin-top: 1rem; }
+  summary { cursor: pointer; color: var(--text-secondary); font-size: .88rem; }
+  table { border-collapse: collapse; margin-top: .8rem; font-size: .86rem; width: 100%; }
+  th, td { text-align: left; padding: .35rem .7rem .35rem 0;
+           border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .privacy { background: var(--surface-1); border-left: 3px solid var(--series-1);
+             border-radius: 0 var(--radius) var(--radius) 0; padding: .9rem 1.1rem;
+             color: var(--text-secondary); font-size: .9rem; margin: 2.5rem 0 0; }
+  footer { margin-top: 3rem; padding-top: 1.4rem; border-top: 1px solid var(--border);
+           color: var(--text-muted); font-size: .87rem; }
+  .err { color: var(--status-critical); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Stringcup status</h1>
+  <p class="sub">
+    Live health and aggregate usage for the relay at
+    <a href="/">stringcup.com</a>. Refreshes every 30&nbsp;seconds.
+  </p>
+
+  <div id="root">
+    <p class="sub" id="loading">Loading…</p>
+  </div>
+
+  <div class="privacy" id="privacy" hidden></div>
+
+  <footer>
+    Source: <code>GET /api/v2/stats</code> ·
+    <a href="/api/v2/stats">raw JSON</a> ·
+    <a href="/docs.html">docs</a> ·
+    <a href="/CHANGELOG.md">changelog</a>
+    <div id="generated" style="margin-top:.4rem"></div>
+  </footer>
+</div>
+
+<div class="tip" id="tip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var POLL_MS = 30000;
+  var tip = document.getElementById("tip");
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
+
+  // 1,284 / 12.9K / 3.4M — proportional figures, tabular only in the table.
+  function compact(n) {
+    if (typeof n !== "number") { return esc(n); }
+    if (n < 1000) { return String(n); }
+    if (n < 1e6) { return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "K"; }
+    return (n / 1e6).toFixed(1) + "M";
+  }
+  function exact(n) {
+    return typeof n === "number" ? n.toLocaleString("en-US") : esc(n);
+  }
+  function bytes(n) {
+    if (typeof n !== "number") { return esc(n); }
+    if (n >= 1048576) { return (n / 1048576).toFixed(0) + " MiB"; }
+    if (n >= 1024) { return (n / 1024).toFixed(0) + " KiB"; }
+    return n + " B";
+  }
+  function isSuppressed(v) { return typeof v === "string"; }
+
+  var LABELS = {
+    messages_relayed: "Messages relayed",
+    messages_acked: "Messages acknowledged",
+    identities_registered: "Identities registered",
+    rendezvous_paired: "Rendezvous claims",
+    sends_refused_inbox_full: "Sends refused (inbox full)"
+  };
+
+  function render(d) {
+    var out = [];
+
+    // ---- hero: exactly one number the page leads with ----------------
+    out.push(
+      '<div class="hero">' +
+        '<div class="label">Messages relayed, all time</div>' +
+        '<p class="value">' + exact(d.usage.all_time.messages_relayed) + '</p>' +
+        '<div class="foot">Encrypted end to end. The relay has never held a key.</div>' +
+      '</div>'
+    );
+
+    // ---- health: glyph + word + colour -------------------------------
+    var h = d.health || {};
+    var overall = h.status === "ok"
+      ? { cls: "state-ok", glyph: "●", word: "Operational" }
+      : { cls: "state-degraded", glyph: "✕", word: "Degraded" };
+
+    out.push('<h2>Health</h2><div class="tile">');
+    out.push(
+      '<div class="check"><span class="glyph ' + overall.cls + '">' + overall.glyph +
+      '</span><strong class="' + overall.cls + '">' + overall.word + '</strong></div>'
+    );
+    out.push('<div class="checks">');
+    Object.keys(h.checks || {}).forEach(function (name) {
+      var ok = h.checks[name] === "ok";
+      out.push(
+        '<span class="check"><span class="glyph ' + (ok ? "state-ok" : "state-degraded") + '">' +
+        (ok ? "●" : "✕") + '</span><span class="name">' + esc(name) + '</span>' +
+        '<span class="' + (ok ? "state-ok" : "state-degraded") + '">' +
+        (ok ? "ok" : "error") + '</span></span>'
+      );
+    });
+    out.push('</div></div>');
+
+    // ---- capacity meter ----------------------------------------------
+    var c = d.capacity || {};
+    if (typeof c.long_poll_slots === "number") {
+      var used = typeof c.long_poll_slots_in_use === "number" ? c.long_poll_slots_in_use : null;
+      var pct = used === null ? 0 : Math.min(100, Math.round(used / c.long_poll_slots * 100));
+      var cls = pct >= 100 ? "crit" : pct >= 75 ? "warn" : "";
+      out.push('<h2>Capacity</h2><div class="tile">' +
+        '<div class="label">Long-poll holds in use</div>' +
+        '<div class="value">' + (used === null ? "—" : used + " / " + c.long_poll_slots) + '</div>' +
+        '<div class="meter ' + cls + '"><span style="width:' + pct + '%"></span></div>' +
+        '<div class="note">' + esc(c.note || "") + '</div></div>');
+    }
+
+    // ---- delivery latency: magnitude -> bars --------------------------
+    out.push('<h2>Delivery</h2>');
+    out.push(renderLatency(d.delivery || {}));
+
+    // ---- usage tiles --------------------------------------------------
+    out.push('<h2>Usage</h2><div class="tiles">');
+    Object.keys(LABELS).forEach(function (k) {
+      var all = d.usage.all_time[k];
+      var recent = d.usage.last_24h[k];
+      out.push(
+        '<div class="tile"><div class="label">' + LABELS[k] + '</div>' +
+        '<div class="value">' + compact(all) + '</div>' +
+        '<div class="note">last 24h: <span' +
+        (isSuppressed(recent) ? ' class="suppressed"' : '') + '>' + esc(recent) + '</span></div></div>'
+      );
+    });
+    out.push('</div>');
+
+    // ---- 24h timeline, or why there isn't one ------------------------
+    out.push('<h2>Last 24 hours</h2>');
+    out.push(renderTimeline(d.usage));
+
+    // ---- limits -------------------------------------------------------
+    var l = d.limits || {};
+    out.push('<h2>Limits</h2><div class="tiles">' +
+      tile("Max message", bytes(l.message_max_bytes), "ciphertext; larger is 413") +
+      tile("Max pending messages", exact(l.inbox_max_pending_messages), "per recipient; over is 507") +
+      tile("Max pending bytes", bytes(l.inbox_max_pending_bytes), "per recipient; over is 507") +
+      tile("Long-poll hold", l.long_poll_max_seconds + "s", "maximum server-side wait") +
+      '</div>');
+
+    // ---- table view ---------------------------------------------------
+    out.push(renderTable(d));
+
+    document.getElementById("root").innerHTML = out.join("");
+
+    var p = document.getElementById("privacy");
+    p.innerHTML = "<strong>What this page does not publish.</strong> " + esc(d.privacy || "");
+    p.hidden = false;
+
+    document.getElementById("generated").textContent =
+      "Generated " + (d.generated_at || "") + " · cached " + (d.cache_seconds || 0) + "s";
+
+    wireTimeline();
+  }
+
+  function tile(label, value, note) {
+    return '<div class="tile"><div class="label">' + esc(label) + '</div>' +
+           '<div class="value">' + value + '</div>' +
+           '<div class="note">' + esc(note) + '</div></div>';
+  }
+
+  function renderLatency(del) {
+    if (!del.histogram || !del.samples) {
+      return '<figure><figcaption>Store-to-acknowledgement</figcaption>' +
+             '<p class="withheld">No deliveries recorded yet.</p></figure>';
+    }
+
+    var keys = Object.keys(del.histogram);
+    var max = Math.max.apply(null, keys.map(function (k) { return del.histogram[k]; })) || 1;
+
+    // Horizontal bars: magnitude across a short ordered set of categories.
+    // 18px thick (under the 24px cap), 4px rounded data-end, square at the
+    // baseline, 2px surface gap between bands.
+    var rowH = 26, barH = 18, labelW = 62, h = keys.length * rowH;
+    var svg = ['<svg viewBox="0 0 600 ' + h + '" role="img" aria-label="Delivery latency histogram">'];
+    keys.forEach(function (k, i) {
+      var v = del.histogram[k];
+      var y = i * rowH + (rowH - barH) / 2;
+      var w = Math.max(v > 0 ? 3 : 0, Math.round(v / max * (600 - labelW - 58)));
+      svg.push('<text class="axis" x="0" y="' + (y + barH / 2 + 4) + '">' + esc(k) + '</text>'
+        .replace('class="axis"', 'class="axis" style="dominant-baseline:middle"'));
+      if (w > 0) {
+        // Square at the baseline, rounded at the data end.
+        svg.push('<path class="bar" d="' +
+          'M' + labelW + ' ' + y +
+          ' H' + (labelW + w - 4) + ' a4 4 0 0 1 4 4' +
+          ' v' + (barH - 8) + ' a4 4 0 0 1 -4 4' +
+          ' H' + labelW + ' Z" />');
+      }
+      svg.push('<text class="bar-label" x="' + (labelW + w + 8) + '" y="' +
+        (y + barH / 2 + 4) + '">' + exact(v) + '</text>');
+    });
+    svg.push('</svg>');
+
+    var pct = (del.p50 || del.p95)
+      ? '<div class="checks"><span class="check"><span class="name">p50</span><strong>' +
+        esc(del.p50) + '</strong></span><span class="check"><span class="name">p95</span><strong>' +
+        esc(del.p95) + '</strong></span></div>'
+      : '<p class="withheld">' + esc(del.percentiles_withheld || "") + '</p>';
+
+    return '<figure><figcaption>Store-to-acknowledgement · ' + exact(del.samples) +
+           ' samples</figcaption>' + svg.join("") + pct +
+           '<p class="note" style="color:var(--text-muted);font-size:.8rem;margin:.7rem 0 0">' +
+           esc(del.note || "") + '</p></figure>';
+  }
+
+  var timelineData = null;
+
+  function renderTimeline(usage) {
+    var series = (usage.hourly_24h || {}).messages_relayed;
+
+    if (!series) {
+      return '<figure><figcaption>Messages relayed per hour</figcaption>' +
+        '<p class="withheld">' + esc(usage.hourly_note || "") + '</p></figure>';
+    }
+
+    timelineData = series;
+    var w = 600, h = 90, pad = 6;
+    var max = Math.max.apply(null, series) || 1;
+    var stepX = (w - pad * 2) / Math.max(1, series.length - 1);
+    var pts = series.map(function (v, i) {
+      return [pad + i * stepX, h - pad - (v / max) * (h - pad * 2)];
+    });
+    var path = pts.map(function (p, i) {
+      return (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1);
+    }).join(" ");
+    var last = pts[pts.length - 1];
+
+    // One series, so no legend — the caption names it. The endpoint is the
+    // only direct label; the rest goes to the tooltip and the table.
+    return '<figure><figcaption>Messages relayed per hour · peak ' + exact(max) +
+      '</figcaption><svg id="spark" viewBox="0 0 ' + w + ' ' + h +
+      '" role="img" aria-label="Messages relayed per hour over the last 24 hours">' +
+      '<g class="grid"><line x1="' + pad + '" y1="' + (h - pad) + '" x2="' + (w - pad) +
+        '" y2="' + (h - pad) + '"/></g>' +
+      '<line class="crosshair" id="cross" y1="0" y2="' + h + '"/>' +
+      '<path class="spark-line" d="' + path + '"/>' +
+      '<circle class="spark-end" cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) +
+        '" r="4"/>' +
+      '<rect class="hit" id="hit" x="0" y="0" width="' + w + '" height="' + h + '"/>' +
+      '</svg><div class="checks" style="margin-top:.6rem">' +
+      '<span class="check"><span class="name">oldest</span>24h ago</span>' +
+      '<span class="check"><span class="name">newest</span>now</span></div></figure>';
+  }
+
+  function wireTimeline() {
+    var svg = document.getElementById("spark");
+    if (!svg || !timelineData) { return; }
+    var hit = document.getElementById("hit");
+    var cross = document.getElementById("cross");
+    var n = timelineData.length;
+
+    function at(evt) {
+      var box = svg.getBoundingClientRect();
+      var frac = (evt.clientX - box.left) / box.width;
+      var i = Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1))));
+      var hoursAgo = n - 1 - i;
+      cross.style.display = "block";
+      cross.setAttribute("x1", String(6 + i * ((600 - 12) / Math.max(1, n - 1))));
+      cross.setAttribute("x2", cross.getAttribute("x1"));
+      tip.innerHTML = "<strong>" + exact(timelineData[i]) + "</strong> relayed<br>" +
+        (hoursAgo === 0 ? "this hour" : hoursAgo + "h ago");
+      tip.style.opacity = "1";
+      tip.style.left = Math.min(window.innerWidth - 150, evt.clientX + 12) + "px";
+      tip.style.top = (evt.clientY - 44) + "px";
+    }
+    hit.addEventListener("mousemove", at);
+    hit.addEventListener("mouseleave", function () {
+      tip.style.opacity = "0";
+      cross.style.display = "none";
+    });
+  }
+
+  function renderTable(d) {
+    var rows = Object.keys(LABELS).map(function (k) {
+      return "<tr><td>" + LABELS[k] + "</td><td class='num'>" +
+        exact(d.usage.all_time[k]) + "</td><td class='num'>" +
+        esc(d.usage.last_24h[k]) + "</td></tr>";
+    });
+    Object.keys(d.delivery.histogram || {}).forEach(function (k) {
+      rows.push("<tr><td>Delivered in " + esc(k) + "</td><td class='num'>" +
+        exact(d.delivery.histogram[k]) + "</td><td class='num'>—</td></tr>");
+    });
+    return '<details><summary>Table view — every published number</summary>' +
+      '<table><thead><tr><th>Measure</th><th>All time</th><th>Last 24h</th></tr></thead>' +
+      '<tbody>' + rows.join("") + '</tbody></table></details>';
+  }
+
+  function load() {
+    fetch("/api/v2/stats", { headers: { "Accept": "application/json" } })
+      .then(function (r) {
+        if (!r.ok) { throw new Error("HTTP " + r.status); }
+        return r.json();
+      })
+      .then(render)
+      .catch(function (e) {
+        document.getElementById("root").innerHTML =
+          '<p class="err">Could not load stats: ' + esc(e.message) +
+          '. The relay may be down — try <a href="/health">/health</a>.</p>';
+      });
+  }
+
+  load();
+  setInterval(load, POLL_MS);
+})();
+</script>
+</body>
+</html>

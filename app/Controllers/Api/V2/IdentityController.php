@@ -7,6 +7,7 @@ use CodeIgniter\API\ResponseTrait;
 use App\Models\IdentityModel;
 use App\Models\ApiTokenModel;
 use App\Libraries\KeyFingerprint;
+use App\Libraries\Stats;
 
 helper('base32');
 
@@ -118,6 +119,8 @@ class IdentityController extends BaseController
                 'created_at'  => $now,
                 'is_active'   => 1,
             ]);
+
+            Stats::bump(Stats::IDENTITIES_CREATED);
 
             $this->logWithContext('info', 'Identity created', ['external_id' => $externalId]);
 

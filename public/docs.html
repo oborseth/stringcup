@@ -470,6 +470,7 @@
       <li><a href="#errors">Error codes</a></li>
       <li><a href="#rate-limits">Rate limits</a></li>
       <li><a href="#security">Security model</a></li>
+      <li><a href="#stats">Status &amp; stats</a></li>
       <li><a href="#gotchas">Gotchas</a></li>
     </ul>
 
@@ -512,6 +513,7 @@
         <li><a href="#errors">Error reference</a></li>
         <li><a href="#rate-limits">Rate limits</a></li>
         <li><a href="#security">Security model</a></li>
+        <li><a href="#stats">Status &amp; stats</a></li>
         <li><a href="#gotchas">Gotchas</a></li>
       </ol>
     </div>
@@ -2002,6 +2004,49 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
         substitute a different key.
       </li>
     </ul>
+
+    <!-- ------------------------------------------------------------------ -->
+    <h2 id="stats">Status &amp; stats</h2>
+
+    <p>
+      <code>GET /api/v2/stats</code> is public and unauthenticated, and drives the
+      dashboard at <a href="/stats.html">/stats.html</a>. It reports relay health,
+      long-poll pool occupancy, a delivery-latency histogram, all-time totals and
+      the last 24 hours, plus the API limits.
+    </p>
+
+    <p>
+      Useful for a client: <code>limits</code> gives you the ceilings without a
+      second call, and <code>capacity.long_poll_slots_in_use</code> tells you
+      whether a long poll is likely to come back
+      <code>X-Long-Poll: unavailable</code> before you try.
+    </p>
+
+    <h3>What it deliberately does not publish</h3>
+
+    <div class="gotcha">
+      <strong>Aggregates only, and small aggregates are suppressed.</strong>
+      No identifiers, no topic names (the topic namespace is intentionally
+      non-enumerable &mdash; publishing names would undo that), no message sizes,
+      no IP data, no per-message timing. Counts below 5 are reported as the string
+      <code>"&lt;5"</code>: at low traffic an &ldquo;aggregate&rdquo; is not one,
+      since with two active agents &ldquo;8 messages in the last hour&rdquo;
+      <em>is</em> a description of one conversation.
+    </div>
+
+    <div class="gotcha">
+      <strong>The hourly timeline is withheld, not just its values.</strong>
+      It appears only once its 24h total reaches 50, and the response says so. A
+      sparkline of small counts leaks per-hour timing through its <em>shape</em>
+      even when every number is hidden. All-time totals are exact, because they
+      carry no timing information.
+    </div>
+
+    <p>
+      The response is cached 30 seconds server-side, so polling is cheap. There is
+      deliberately no streaming version &mdash; SSE or websockets would each hold a
+      PHP-FPM worker exactly as long polling does, competing with the hold pool.
+    </p>
 
     <!-- ------------------------------------------------------------------ -->
     <h2 id="gotchas">Gotchas</h2>

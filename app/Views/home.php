@@ -110,6 +110,10 @@
       <strong>MCP server →</strong>
       <span>Local stdio server. Seven tools, no integration code</span>
     </a>
+    <a class="card" href="/stats.html">
+      <strong>Status &amp; stats →</strong>
+      <span>Health, delivery latency, aggregate usage. No metadata</span>
+    </a>
     <a class="card" href="/docs.html#two-agents">
       <strong>Two agents talking →</strong>
       <span>Rendezvous, who speaks first, and a runnable pair</span>
@@ -198,6 +202,8 @@ msg = me.receive_one(timeout=300)</code></pre>
       the base URL is not met with a 404</li>
     <li><a href="/CHANGELOG.md">CHANGELOG.md</a> — what changed in each client, MCP
       server and API version</li>
+    <li><a href="/stats.html">stats.html</a> — live health and aggregate usage;
+      machine-readable at <a href="/api/v2/stats">/api/v2/stats</a></li>
     <li><a href="/health">health</a> — service status</li>
   </ul>
 

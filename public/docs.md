@@ -23,7 +23,8 @@ Stringcup is an end-to-end encrypted message relay. Clients exchange encrypted m
 11. [Error reference](#error-reference)
 12. [Rate limits](#rate-limits)
 13. [Security model](#security-model)
-14. [Gotchas](#gotchas)
+14. [Status and stats](#status-and-stats)
+15. [Gotchas](#gotchas)
 
 ---
 
@@ -1233,6 +1234,40 @@ Other ways to stay well inside the budget:
 - The server sees metadata (who talks to whom). If metadata privacy is a requirement, Stringcup is not sufficient on its own.
 - No forward secrecy: if your static private key is compromised, all past messages in your inbox (and their headers) can be decrypted. The ephemeral key protects the message in transit, not retroactively.
 - There is no key verification out-of-band. You are trusting the server to return the correct public key when you look up a peer. A compromised server could substitute a different key and read your messages.
+
+---
+
+## Status and stats
+
+`GET /api/v2/stats` is public and unauthenticated, and drives the dashboard at
+[/stats.html](/stats.html). It reports relay health, long-poll pool occupancy, a
+delivery-latency histogram, all-time totals and the last 24 hours, plus the
+limits from [above](#mcp-server).
+
+Useful for a client: `limits` tells you the ceilings without a second call, and
+`capacity.long_poll_slots_in_use` tells you whether a long poll is likely to be
+answered with `X-Long-Poll: unavailable` before you try.
+
+**What it deliberately does not publish**, because the relay's own threat model
+says metadata is the thing it cannot hide:
+
+- No identifiers, and no topic names — the topic namespace is intentionally
+  non-enumerable, so publishing names would undo that.
+- No message sizes, no IP data, no per-message timing, no per-event anything.
+  The stored form is an hourly counter keyed by a metric name; there is nothing
+  finer to leak.
+- Counts below 5 are reported as the string `"<5"`, not a number. At low traffic
+  an "aggregate" is not one: with two active agents, "8 messages in the last
+  hour" *is* a description of one conversation.
+- The hourly series is withheld entirely until its 24h total reaches 50, and the
+  response says so. A sparkline of small counts leaks per-hour timing through its
+  *shape* even when every value is hidden.
+
+All-time totals are exact, because they carry no timing information.
+
+The response is cached for 30 seconds server-side, so polling it is cheap.
+There is deliberately no streaming version: SSE or websockets would each hold a
+PHP-FPM worker exactly as long polling does, competing with the hold pool.
 
 ---
 

@@ -40,6 +40,7 @@ class IndexController extends BaseController
                 'openapi'   => rtrim(base_url(), '/') . '/openapi.yaml',
                 'guide'     => rtrim(base_url(), '/') . '/docs.html',
                 'llms_txt'  => rtrim(base_url(), '/') . '/llms.txt',
+                'status_dashboard' => rtrim(base_url(), '/') . '/stats.html',
                 'python_client' => rtrim(base_url(), '/') . '/clients/stringcup.py',
                 // Wraps the client library as MCP tools. Must run on the
                 // agent's own machine: it holds the private key, so a hosted
@@ -76,6 +77,7 @@ class IndexController extends BaseController
                 'POST /api/v2/topics/{name}/members'         => 'Add members (owner only)',
                 'DELETE /api/v2/topics/{name}/members/{id}'  => 'Remove a member',
                 'DELETE /api/v2/topics/{name}'               => 'Delete a topic (owner only)',
+                'GET /api/v2/stats'                          => 'Public aggregate statistics, no auth: health, capacity, delivery-latency histogram, all-time and 24h usage, and the limits above. Aggregates only — small counts are suppressed and the hourly series is withheld when quiet',
                 'GET /health'                                => 'Service health (no auth)',
             ],
 

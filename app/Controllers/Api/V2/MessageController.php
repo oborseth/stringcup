@@ -10,6 +10,7 @@ use App\Models\ApiTokenModel;
 use App\Models\IdempotencyKeyModel;
 use App\Libraries\LongPollGuard;
 use App\Libraries\RetentionSweeper;
+use App\Libraries\Stats;
 
 /**
  * V2 MessageController
@@ -387,6 +388,7 @@ class MessageController extends BaseController
                     // reuse the key rather than replay a non-existent message.
                     $idemModel->delete($idemRowId);
                 }
+                Stats::bump(Stats::SENDS_REFUSED_FULL);
                 $this->logWithContext('warning', 'V2 message send refused: inbox full', [
                     'recipient_id' => $recipientId,
                 ]);
@@ -426,6 +428,8 @@ class MessageController extends BaseController
                 ]);
                 $idemModel->pruneExpired();
             }
+
+            Stats::bump(Stats::MESSAGES_RELAYED);
 
             // Reclaim unreachable storage, at most once an hour. Hung off the
             // send path because that is where growth happens: a busy relay
@@ -904,6 +908,11 @@ class MessageController extends BaseController
 
             $msgModel->delete((int) $message['id']);
 
+            Stats::bump(Stats::MESSAGES_ACKED);
+            Stats::recordDeliveryLatency(
+                max(0, time() - strtotime((string) $message['created_at']))
+            );
+
             $this->logWithContext('info', 'V2 message acknowledged and deleted', [
                 'message_id'   => $id,
                 'recipient_id' => $currentIdentity['external_id'],
@@ -995,6 +1004,14 @@ class MessageController extends BaseController
             $notFound = array_values(array_diff($ids, $acknowledged));
 
             if ($primaryKeys !== []) {
+                Stats::bump(Stats::MESSAGES_ACKED, count($primaryKeys));
+                $now = time();
+                foreach ($rows as $row) {
+                    Stats::recordDeliveryLatency(
+                        max(0, $now - strtotime((string) $row['created_at']))
+                    );
+                }
+
                 // One DELETE for the whole page.
                 $msgModel->whereIn('id', $primaryKeys)->delete();
             }

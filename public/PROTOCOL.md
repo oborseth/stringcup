@@ -831,6 +831,25 @@ that constraint.
 
 ---
 
+## B.7.2 Public statistics
+
+A deployment MAY publish aggregate statistics (this one does, at
+`GET /api/v2/stats`). A server that does **MUST NOT** publish anything that
+narrows a conversation: no identifiers, no topic names, no message sizes, no
+per-message timing, and no per-event records of any kind.
+
+Two properties are load-bearing and easy to get wrong:
+
+- **Suppress small counts.** Below a handful of events an aggregate is not
+  aggregate — it describes the only conversation happening.
+- **Withhold a timeline, not just its values.** The shape of an hourly series
+  is itself a timing signal; hiding the numbers while publishing the curve
+  leaks the same information.
+
+Statistics are not part of the wire protocol and no client depends on them.
+
+---
+
 ## B.8 Implementation Checklist
 
 - [ ] Generate X25519 keypair, persist `private_key` and `public_key`

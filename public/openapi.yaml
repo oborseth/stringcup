@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 4.2.0
+  version: 4.3.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -285,6 +285,80 @@ paths:
             application/json:
               schema:
                 type: object
+
+  /api/v2/stats:
+    get:
+      tags: [Stats]
+      summary: Public aggregate statistics
+      description: |
+        Unauthenticated. Drives the dashboard at `/stats.html`. Reports relay
+        health, long-poll pool occupancy, a delivery-latency histogram, all-time
+        totals, the last 24 hours, and the API limits.
+
+        Useful to a client for two things: `limits` gives the ceilings without a
+        second call, and `capacity.long_poll_slots_in_use` indicates whether a
+        long poll is likely to be answered `X-Long-Poll: unavailable`.
+
+        **What it deliberately withholds.** No identifiers, no topic names (the
+        topic namespace is intentionally non-enumerable), no message sizes, no IP
+        data, no per-message timing — the stored form is an hourly counter keyed
+        by metric name, so there is nothing finer to leak. Counts below 5 come
+        back as the **string** `"<5"`, and the hourly series is `null` until its
+        24h total reaches 50, because a sparkline's *shape* leaks per-hour timing
+        even when the values are hidden. All-time totals are exact.
+
+        Cached 30s server-side. There is no streaming variant by design: SSE or
+        websockets would each hold a PHP-FPM worker as long polling does.
+      responses:
+        '200':
+          description: Current aggregates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: {type: string}
+                  generated_at: {type: string, format: date-time}
+                  privacy: {type: string}
+                  cache_seconds: {type: integer}
+                  health:
+                    type: object
+                    properties:
+                      status: {type: string, enum: [ok, degraded]}
+                      checks: {type: object, additionalProperties: {type: string}}
+                  capacity:
+                    type: object
+                    properties:
+                      long_poll_slots: {type: integer}
+                      long_poll_slots_in_use: {type: integer, nullable: true}
+                  delivery:
+                    type: object
+                    properties:
+                      samples: {type: integer}
+                      histogram: {type: object, additionalProperties: {type: integer}}
+                      p50: {type: string, nullable: true, description: Bucket label, or null when withheld}
+                      p95: {type: string, nullable: true}
+                  usage:
+                    type: object
+                    properties:
+                      all_time: {type: object, additionalProperties: {type: integer}}
+                      last_24h:
+                        type: object
+                        additionalProperties:
+                          oneOf: [{type: integer}, {type: string}]
+                        description: An integer, or the string "<5" when suppressed.
+                      hourly_24h:
+                        type: object
+                        description: |
+                          metric -> 24 hourly counts (oldest first), or `null`
+                          when withheld for being too quiet to publish.
+                        additionalProperties:
+                          type: array
+                          nullable: true
+                          items: {type: integer}
+                  limits: {type: object}
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v2/rendezvous:
     post:

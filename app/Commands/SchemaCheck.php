@@ -50,6 +50,12 @@ class SchemaCheck extends BaseCommand
         'api_tokens' => [
             'is_active' => 'tinyint(1)',
         ],
+        'stats_counters' => [
+            // Backs the public dashboard. Aggregate only — hourly buckets keyed
+            // by metric name, never per-event rows.
+            'metric' => 'varchar(48)',
+            'count'  => 'bigint(20) unsigned',
+        ],
         'idempotency_keys' => [
             'idem_key' => 'varchar(255)',
             // Echoed by an idempotent replay, so it must outlive the message.
@@ -75,6 +81,11 @@ class SchemaCheck extends BaseCommand
         ],
         'idempotency_keys' => [
             'identity_id_idem_key' => 'identity_id,idem_key',
+        ],
+        'stats_counters' => [
+            // What makes an increment a single upsert instead of a
+            // read-modify-write, and therefore safe under concurrency.
+            'metric_bucket' => 'metric,bucket',
         ],
     ];
 

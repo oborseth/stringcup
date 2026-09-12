@@ -97,7 +97,7 @@ php spark cache:clear
 
 This is a REST API application with one server-side view (the landing page). The only consumer is an external agent speaking v2 over HTTP.
 
-Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **ten** places:
+Public docs are served as static files from `public/` and are **not** generated from each other — `docs.html` is hand-written and duplicates `docs.md`. A change to the API surface needs updating in **eleven** places:
 
 - `public/openapi.yaml` — machine-readable spec (agents consume this)
 - `public/docs.md` — prose developer guide
@@ -109,6 +109,7 @@ Public docs are served as static files from `public/` and are **not** generated 
 - `clients/python/README.md` — the client library reference, including the MCP setup
 - `clients/python/stringcup_mcp.py` — the MCP tool descriptions *are* documentation; a model reads them instead of the prose
 - `CHANGELOG.md` — every version bump of the client, MCP server or wire API. `clients/python/test_contract.py` fails if it omits the current versions
+- `public/stats.html` — the status dashboard; it consumes `GET /api/v2/stats`, so a field rename breaks it silently
 
 Plus `README.md` and `app/Views/home.php` when the change is user-visible. This duplication is the standing tax on the project; the honest fix is generating `docs.html` from `docs.md`.
 
@@ -125,6 +126,7 @@ An agent given only `https://stringcup.com` must be able to reach a working inte
 /clients/stringcup_mcp.py  MCP server for hosts that speak MCP
 /clients/example_agent.py  runnable two-role agent
 /CHANGELOG.md          what changed per client / MCP / API version
+/stats.html            status dashboard (consumes /api/v2/stats)
 ```
 
 `CHANGELOG.md` lives at the repo root, outside the docroot, and is published by
@@ -365,6 +367,53 @@ Identities are deliberately never deleted: each is a single public key, so they
 are not what grows, and a peer holding a pinned fingerprint deserves an honest
 answer rather than a 404 that looks like key substitution. Assigned ids carry
 120 bits of randomness, so nothing is ever reused.
+
+### The public dashboard
+
+`GET /api/v2/stats` (`StatsController`) feeds `public/stats.html`. Counters live
+in `stats_counters` via `App\Libraries\Stats`.
+
+**Counters, never events.** A per-event table would be a timing log of who sent
+what when — exactly the metadata SECURITY.md admits the relay can see, and
+publishing it would be strictly worse than the `message_id` volume leak this
+project spent effort closing. The stored form is an hourly bucket keyed by a
+metric name, so there is nothing finer to leak even if the table were dumped.
+
+It also cannot be backfilled: messages are deleted on ACK, so anything not
+counted at the time is gone. That is why `Stats::bump()` sits on the request
+path rather than a query running over `messages`.
+
+Three disclosure rules, and the third is the subtle one:
+
+- **Small counts are suppressed, not rounded.** Under `SUPPRESS_BELOW` (5) a
+  count is published as the *string* `"<5"`. At low traffic an aggregate is not
+  aggregate: with two active agents, "8 messages in the last hour" is a
+  description of one conversation.
+- **All-time totals are exact**, because they carry no timing information.
+- **A timeline is withheld wholesale, not merely value-hidden.** The 24h series
+  is `null` until its window total reaches `TIMELINE_MIN` (50). A sparkline of
+  small counts leaks per-hour timing through its *shape* even with every value
+  hidden — hiding the numbers and drawing the curve would be no protection.
+
+Never publish an identifier, a topic name (the namespace is deliberately
+non-enumerable — see `TopicController`), a message size, IP data, or anything
+per-event.
+
+**No streaming variant.** SSE or websockets would each hold a PHP-FPM worker for
+the connection's life, exactly as long polling does, competing with the 8-slot
+hold pool and the other vhosts. The endpoint is cached for `CACHE_SECONDS` (30)
+and the page polls.
+
+`Stats::bump()` swallows every exception: a dashboard is worth less than a
+delivered message. `Stats::largestBucket()` exists because `end()` takes its
+argument by reference and a class constant cannot be passed by reference in
+PHP 8 — a fatal error `php -l` does not catch.
+
+Latency is a histogram, not a mean, and percentiles are reported as **bucket
+labels** rather than interpolated numbers: the data is bucketed, so a precise
+figure would be invented. It measures store-to-ACK, which includes the
+recipient's own polling, so it is an upper bound on transport latency — the
+response says so, and removing that caveat would overstate the relay.
 
 ### Schema drift
 

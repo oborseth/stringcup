@@ -14,6 +14,10 @@ $routes->group('api/v2', ['namespace' => 'App\Controllers\Api\V2'], static funct
     // Self-describing index so an agent probing the API base is not met
     // with a 404. Unauthenticated; exposes only what the spec already does.
     $routes->get('/', 'IndexController::index');
+    // Public aggregate stats for the dashboard. Unauthenticated by design;
+    // every field is a deliberate disclosure, and small counts are suppressed
+    // — see StatsController.
+    $routes->get('stats', 'StatsController::index');
 
     // Identities — same system as v1 (shared keys and tokens)
     // external_id is assigned by the server; POST never accepts one.

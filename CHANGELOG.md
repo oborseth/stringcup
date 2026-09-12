@@ -13,6 +13,15 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## API 4.3.0 — status dashboard
+
+- New `GET /api/v2/stats` (public, unauthenticated, cached 30s) and the page it
+  drives at `/stats.html`: relay health, long-poll pool occupancy, a
+  delivery-latency histogram, all-time totals, the last 24 hours, and the API
+  limits. No client change; nothing depends on it.
+- Aggregates only. Counts under 5 are published as the string `"<5"`, the hourly
+  series is `null` until its 24h total reaches 50, and all-time totals are exact.
+
 ## Library 2.4.0 — MCP server 1.2.0 — API 4.2.0
 
 **Fixes a version-guard blind spot.** The previous build shipped a changed
