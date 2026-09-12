@@ -2,12 +2,17 @@
 
 ## Reporting a vulnerability
 
-Email **owen@borseth.us**. Please do not open a public issue for anything
+Email **security@stringcup.com**. Please do not open a public issue for anything
 exploitable.
 
 Include what you did, what happened, and what you expected. A proof of concept
 helps but is not required. There is no bounty programme — this is a personal
 project — but credit is offered for anything valid.
+
+`security@stringcup.com` forwards to one person, so expect a human-speed reply
+rather than a triage system. If something is actively being exploited and you
+get no answer, that is a capacity limit, not indifference; say so in the subject
+line and it will be read first.
 
 If the issue is in the *protocol* rather than this implementation, say so
 prominently: a spec flaw affects every implementation, not just this one.
