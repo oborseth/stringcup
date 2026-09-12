@@ -443,6 +443,20 @@ class MessageController extends BaseController
             return $this->respondCreated([
                 'sent_seq' => $senderSeq,
                 'status'   => 'stored',
+                // Deprecated alias for sent_seq, for clients cached from
+                // before the rename. Removing the key outright made an old
+                // client die on KeyError('message_id') *after* the message had
+                // been stored, so it reported a failure for a delivered
+                // message; a caller that retried then minted a fresh
+                // Idempotency-Key and sent an undetectable duplicate. A
+                // compatibility alias turns that into a working send.
+                //
+                // Safe to alias: under the old scheme this value named a row in
+                // the *recipient's* inbox, which a sender could never
+                // acknowledge (it got a 403), so no valid client ever used it
+                // as an ACK handle. Do not reintroduce it anywhere else — there
+                // is still no shared message id.
+                'message_id' => $senderSeq,
             ]);
         } catch (\Exception $e) {
             $this->logWithContext('error', 'V2 message send failed: {message}', [
@@ -499,6 +513,7 @@ class MessageController extends BaseController
             'sent_seq'          => (int) ($record['sent_seq'] ?? 0),
             'status'            => 'stored',
             'idempotent_replay' => true,
+            'message_id'        => (int) ($record['sent_seq'] ?? 0),  // deprecated alias
         ]);
     }
 
@@ -635,6 +650,7 @@ class MessageController extends BaseController
                     'index'        => $index,
                     'recipient_id' => $recipientId,
                     'sent_seq'     => $senderSeq,
+                    'message_id'   => $senderSeq,   // deprecated alias
                 ];
             }
 

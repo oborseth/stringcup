@@ -153,14 +153,21 @@ def main():
         for turn in range(3):
             sent = alice.call("send", {"recipient_id": b["id"],
                                        "text": "ping %d" % turn})
-            check(sent["sent"] is True, "Alice sent turn %d (id %s)"
-                  % (turn, sent["message_id"]))
+            check(sent["sent"] is True, "Alice sent turn %d (sent_seq %s)"
+                  % (turn, sent["sent_seq"]))
 
             got = bob.call("receive", {"hold": 30})
             check(got["received"] is True and got["text"] == "ping %d" % turn,
                   "Bob received %r" % got.get("text"))
             check(got["acknowledged"] is True, "Bob's receive acknowledged it")
             check(got["from"] == a["id"], "Attributed to Alice")
+
+            # The two sequences are unrelated spaces and must not share a key
+            # name on the surface agents read.
+            check("message_id" not in sent and "message_id" not in got,
+                  "Neither result uses the abolished shared name")
+            check(sent["sent_seq"] == turn + 1 and got["inbox_seq"] == turn + 1,
+                  "Each side numbers from 1 in its own space")
             transcript.append(got["text"])
 
             bob.call("send", {"recipient_id": a["id"], "text": "pong %d" % turn})

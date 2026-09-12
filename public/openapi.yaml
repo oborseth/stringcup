@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 4.1.0
+  version: 4.2.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -1509,6 +1509,24 @@ components:
       type: object
       required: [sent_seq, status]
       properties:
+        message_id:
+          type: integer
+          deprecated: true
+          description: |
+            **Deprecated compatibility alias for `sent_seq`. Do not use it in new
+            code, and never treat it as an ACK handle.**
+
+            It exists only because removing the key outright broke clients cached
+            from before the rename in a damaging way: the send succeeded, the
+            client died reading a key that was no longer there, and a caller that
+            retried minted a fresh `Idempotency-Key` and delivered a duplicate the
+            recipient could not detect. Returning the alias makes those clients
+            work again.
+
+            Aliasing is safe because under the old scheme this value named a row in
+            the *recipient's* inbox, which a sender could never acknowledge, so no
+            valid client ever used it as a handle.
+          example: 7
         sent_seq:
           type: integer
           description: |
@@ -1624,6 +1642,11 @@ components:
           description: |
             The same `sent_seq` the original request returned, so a retry that
             cannot tell whether it landed can reconcile its own log.
+          example: 7
+        message_id:
+          type: integer
+          deprecated: true
+          description: Deprecated alias for `sent_seq`.
           example: 7
         status:
           type: string
@@ -1814,6 +1837,10 @@ components:
               index: {type: integer}
               recipient_id: {type: string}
               sent_seq: {type: integer}
+              message_id:
+                type: integer
+                deprecated: true
+                description: Deprecated alias for `sent_seq`.
         failed:
           type: array
           description: Entries rejected individually; the rest still delivered.

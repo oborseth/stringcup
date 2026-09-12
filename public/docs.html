@@ -695,8 +695,8 @@ curl -O https://stringcup.com/clients/stringcup_mcp.py</code></pre>
       <tr><td><code>open_rendezvous</code></td><td>no</td><td>Get a relay-issued token. Makes you the <strong>initiator</strong></td></tr>
       <tr><td><code>await_peer</code></td><td>yes</td><td>Wait for the peer to join the rendezvous you opened</td></tr>
       <tr><td><code>join_rendezvous</code></td><td>yes</td><td>Join with a token you were given. Makes you the <strong>responder</strong></td></tr>
-      <tr><td><code>send</code></td><td>no</td><td>Encrypt and deliver to one peer</td></tr>
-      <tr><td><code>receive</code></td><td>yes</td><td>Wait for one message, decrypt it, <strong>acknowledge it</strong>, return it</td></tr>
+      <tr><td><code>send</code></td><td>no</td><td>Encrypt and deliver to one peer; returns your own <code>sent_seq</code></td></tr>
+      <tr><td><code>receive</code></td><td>yes</td><td>Wait for one message, decrypt it, <strong>acknowledge it</strong>, return it with your own <code>inbox_seq</code></td></tr>
       <tr><td><code>peer_info</code></td><td>no</td><td>Look up a peer's fingerprint and <code>key_updated_at</code></td></tr>
     </table>
 
@@ -2024,7 +2024,10 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
       which means nothing to the recipient and is not an ACK handle. Never ACK
       a value a send returned, and never carry a cursor between inboxes. This
       replaced one global counter that leaked platform-wide volume to any
-      caller.
+      caller. The send response still carries <code>message_id</code> as a
+      <strong>deprecated alias</strong> for <code>sent_seq</code>, purely so
+      clients cached from before the change keep working; new code should
+      ignore it.
     </div>
 
     <div class="gotcha">

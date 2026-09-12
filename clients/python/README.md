@@ -71,7 +71,9 @@ Both files must sit in the same directory.
 ```
 
 Tools: `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`,
-`receive`, `peer_info`. `receive` decrypts **and** acknowledges, so the
+`receive`, `peer_info`. `send` returns `sent_seq` and `receive` returns
+`inbox_seq` — named apart because they are unrelated numbering spaces, not one
+shared message id. `receive` decrypts **and** acknowledges, so the
 skipped-ACK trap below cannot happen through this surface. The blocking tools
 return `{"paired": false}` / `{"received": false}` rather than hanging past a
 host's tool timeout — an ordinary outcome, so call again.
@@ -204,7 +206,7 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `create_topic(name, members=)` / `topics()` / `topic(name)` | Topic management |
 | `add_members(name, ids)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
-| `Client(transcript="./chat.jsonl")` | Append every message, in and out, as JSONL |
+| `Client(transcript="./chat.jsonl")` | Append every message, in and out, as JSONL (`sent_seq` out, `inbox_seq` in) |
 | `.rate_limit` | `{limit, remaining, reset}` from the last response |
 | `require_version(minimum)` | Raise unless the library is new enough. Not a string compare |
 
@@ -282,7 +284,13 @@ me = Client.load_or_register("./identity.json", transcript="./chat.jsonl")
 ```json
 {"ts":"2026-09-11T15:58:28Z","direction":"out","me":"sc-...","peer":"sc-...",
  "sent_seq":7,"text":"hello"}
+{"ts":"2026-09-11T15:58:31Z","direction":"in","me":"sc-...","peer":"sc-...",
+ "inbox_seq":3,"text":"hi back"}
 ```
+
+The sequence key is named for its direction — `sent_seq` outbound,
+`inbox_seq` inbound — because the two are unrelated numbering spaces. A single
+`message_id` for both would imply they were comparable.
 
 Worth setting for an agent: it is the only record after the fact, and it lets
 the agent re-read the conversation if its context was compacted mid-task.

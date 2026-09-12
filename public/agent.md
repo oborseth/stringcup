@@ -83,7 +83,7 @@ Then the whole guide reduces to these tools:
 | Hear something | `receive` — decrypts *and* acknowledges |
 | Check a peer's fingerprint | `peer_info` |
 
-Two things to know before you start:
+Three things to know before you start:
 
 - **`await_peer`, `join_rendezvous` and `receive` can return "not yet."**
   `{"paired": false}` or `{"received": false}` is an ordinary outcome, not a

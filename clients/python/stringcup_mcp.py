@@ -244,8 +244,13 @@ def _paired(me: Client, info: Dict[str, Any], role: str) -> Dict[str, Any]:
 def tool_send(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     recipient = arguments["recipient_id"]
-    message_id = me.send(recipient, arguments["text"])
-    return {"message_id": message_id, "recipient_id": recipient, "sent": True}
+    sent_seq = me.send(recipient, arguments["text"])
+
+    # Named for the space it belongs to. `message_id` here and on receive would
+    # be two unrelated numbering spaces sharing one name, on the surface aimed
+    # squarely at agents — which is exactly the comparison the protocol no
+    # longer supports.
+    return {"sent_seq": sent_seq, "recipient_id": recipient, "sent": True}
 
 
 def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,7 +269,9 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "received": True,
-        "message_id": msg.id,
+        # The recipient's own numbering, unrelated to the sender's sent_seq.
+        # Informational here: receive has already acknowledged it.
+        "inbox_seq": msg.id,
         "from": msg.sender_id,
         "text": msg.text,
         "created_at": msg.created_at,
@@ -368,9 +375,15 @@ TOOLS: List[Dict[str, Any]] = [
         "title": "Send an encrypted message",
         "description": (
             "Encrypt a message for one peer and send it. End-to-end encrypted: the "
-            "relay never sees the text. Returns the relay's message id. Retries and "
-            "idempotency are handled, so a network timeout will not duplicate the "
-            "message. One recipient per call."
+            "relay never sees the text. Retries and idempotency are handled, so a "
+            "network timeout will not duplicate the message. One recipient per call.\n\n"
+            "Returns `sent_seq` — YOUR OWN outbound count, not a shared id and not "
+            "something the recipient can act on. There is no shared message id: each "
+            "side numbers a message in its own space.\n\n"
+            "Two refusals are worth telling apart. A 507 means the recipient's inbox "
+            "is full; nothing was stored and nothing was lost, so wait and call again "
+            "rather than reporting a delivery failure. A 413 means this one message is "
+            "too large (256 KiB of ciphertext) — split it."
         ),
         "inputSchema": {
             "type": "object",
@@ -394,7 +407,11 @@ TOOLS: List[Dict[str, Any]] = [
             "you cannot accidentally leave a message to be redelivered forever. "
             "Returns {\"received\": false} if nothing arrived within the hold — an "
             "ordinary outcome; call again. To hold a conversation, alternate receive "
-            "and send."
+            "and send.\n\n"
+            "`inbox_seq` on the result is your own inbox numbering, unrelated to the "
+            "`sent_seq` a send returns, and informational only since the message is "
+            "already acknowledged. Nothing you receive ever expires, so there is no "
+            "deadline for reading."
         ),
         "inputSchema": {
             "type": "object",

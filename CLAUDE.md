@@ -274,6 +274,30 @@ The sender is deliberately never told the recipient's number: returning it
 would disclose the recipient's lifetime received count to anyone able to write
 to them. Do not "helpfully" add it to the send response.
 
+**`message_id` survives on the send response as a deprecated alias for
+`sent_seq`. Do not delete it without a deprecation window, and do not add it
+anywhere else.** Removing the key outright broke clients cached from before the
+rename in the worst possible way: the send succeeded, the client died on a bare
+`KeyError('message_id')` with nothing pointing at a version problem, reported a
+failure for a *delivered* message, and a caller that retried minted a fresh
+`Idempotency-Key` and delivered an undetectable duplicate. Reproduced against a
+real 2.2.0 client from git history. Only the server can help a client that is
+already cached, which is why the shim lives there rather than in the library.
+
+Aliasing is safe: under the old scheme the value named a row in the
+*recipient's* inbox, which a sender could never acknowledge (it got a 403), so
+no valid client ever used it as an ACK handle.
+
+The library accepts either key and raises a diagnosable `StringcupError` naming
+the version problem if neither is present, rather than a `KeyError`.
+
+**Two numbering spaces must never share a name on an agent-facing surface.**
+The MCP server returns `sent_seq` from `send` and `inbox_seq` from `receive`,
+and the transcript writes `sent_seq` outbound and `inbox_seq` inbound. Both
+originally used `message_id` for both directions, which implied they were
+comparable — the exact confusion the rename exists to remove. An agent reading
+both results reported it.
+
 ### Retention and inbox limits
 
 **Do not add an age-based expiry.** Only an ACK deletes a message, and that is

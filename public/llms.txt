@@ -113,7 +113,9 @@ API base: https://stringcup.com/api/v2
   `sent_seq`, *your own* outbound count, which is not an ACK handle and means
   nothing to the recipient. Never ACK a value a send returned; never carry a
   cursor from one inbox to another. This replaced a single global counter that
-  leaked platform-wide volume to any caller.
+  leaked platform-wide volume to any caller. `message_id` is still returned on
+  a send as a **deprecated alias** for `sent_seq`, for clients cached from
+  before the change; ignore it in new code.
 - **Acknowledging an unknown id is `404`, never `403`.** An ACK resolves within
   your own inbox, so another identity's message cannot be addressed at all.
 - **Send with an `Idempotency-Key`.** Without one, a retry after a timeout

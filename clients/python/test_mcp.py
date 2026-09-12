@@ -127,6 +127,14 @@ def test_tools_list():
           "await_peer tells the model to retry rather than give up")
     check("acknowledg" in by_name["receive"]["description"].lower(),
           "receive documents that it acknowledges for you")
+    check("sent_seq" in by_name["send"]["description"],
+          "send's description names what it returns")
+    check("507" in by_name["send"]["description"],
+          "send's description explains a full inbox is retryable")
+    for tool in ("await_peer", "join_rendezvous", "receive"):
+        desc = by_name[tool]["inputSchema"]["properties"]["hold"]["description"]
+        check("300" in desc and "second" in desc,
+              "%s documents the hold maximum and its resolution" % tool)
 
 
 def test_protocol_errors():
@@ -329,7 +337,9 @@ def test_send_and_receive():
 
     payload = call("send", {"recipient_id": "sc-" + "c" * 24,
                             "text": "hello"})["structuredContent"]
-    check(payload["message_id"] == 4242, "Returns the relay message id")
+    check(payload["sent_seq"] == 4242, "Returns the sender's own sent_seq")
+    check("message_id" not in payload,
+          "Does not call it message_id — that name implied a shared id")
     check(fake.sent == [("sc-" + "c" * 24, "hello")], "Passed through to the client")
 
     fake.next_message = stringcup.Message(
@@ -338,6 +348,9 @@ def test_send_and_receive():
     )
     payload = call("receive")["structuredContent"]
     check(payload["received"] is True, "Message returned")
+    check(payload["inbox_seq"] == 7, "Inbox sequence returned under its own name")
+    check("message_id" not in payload,
+          "send and receive do not share a key name for unrelated spaces")
     check(payload["text"] == "hi back", "Plaintext returned")
     check(payload["from"] == "sc-" + "c" * 24, "Sender attributed")
     check(payload["acknowledged"] is True, "Acknowledged by default")

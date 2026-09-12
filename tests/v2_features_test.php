@@ -372,7 +372,37 @@ assert_true(
 );
 
 // ============================================================
-step('11. Cleanup');
+step('11. Deprecated message_id alias keeps cached clients working');
+// ============================================================
+
+// Removing the key outright broke pre-rename clients in the worst way: the
+// send succeeded, the client died reading a key that was gone, reported a
+// failure for a delivered message, and a caller that retried minted a fresh
+// Idempotency-Key and delivered an undetectable duplicate. The alias makes
+// those clients work. Do not delete it without a deprecation window.
+$res = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'alias check');
+assert_code(201, $res, 'Send accepted');
+assert_true(isset($res['body']['sent_seq']), 'Response carries sent_seq');
+assert_true(isset($res['body']['message_id']), 'Response still carries the deprecated message_id alias');
+assert_same(
+    $res['body']['sent_seq'],
+    $res['body']['message_id'],
+    'The alias equals sent_seq, so an old client logs a coherent value'
+);
+
+// The alias must follow a replay too, or a retry cannot reconcile its log.
+$idem = 'alias-' . bin2hex(random_bytes(6));
+$first  = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'alias replay', $idem);
+$replay = send_message($API_BASE, $aliceId, $bobId, $bob['pub'], $aliceToken, 'alias replay', $idem);
+assert_code(200, $replay, 'Replay recognised');
+assert_same(
+    $first['body']['message_id'],
+    $replay['body']['message_id'],
+    'Replay echoes the same alias value'
+);
+
+// ============================================================
+step('12. Cleanup');
 // ============================================================
 $removed = drain_inbox($API_BASE, $newBobToken) + drain_inbox($API_BASE, $aliceToken);
 ok("Drained $removed remaining message(s)");

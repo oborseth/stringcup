@@ -7,6 +7,7 @@ Registration is capped at 5/hour per IP and this registers two identities.
 When run on the server host, clear writable/cache/ratelimit/ to re-run.
 """
 
+import json
 import os
 import shutil
 import sys
@@ -186,6 +187,26 @@ try:
     same(0, bob.fetch().count, "Inbox empty after drain")
 
     # ----------------------------------------------------------------
+    step("8b. Transcript records name each numbering space separately")
+    # The two sequences are unrelated spaces; one shared "message_id" key
+    # implied they were comparable, and the README documented a key the code
+    # never wrote. An agent parsing per the docs got a KeyError.
+    tpath = os.path.join(workdir, "transcript.jsonl")
+    t = Client(alice.identity, base_url=BASE, transcript=tpath)
+    t.send(bob_id, "for the transcript")
+    got = bob.receive_one(timeout=30)
+    check(got is not None, "Message arrived for the transcript check")
+    tb = Client(bob.identity, base_url=BASE, transcript=tpath)
+    tb._log_transcript("in", alice_id, got.id, got.text)
+
+    rows = [json.loads(line) for line in open(tpath, encoding="utf-8")]
+    out_rows = [r for r in rows if r["direction"] == "out"]
+    in_rows = [r for r in rows if r["direction"] == "in"]
+    check(out_rows and "sent_seq" in out_rows[0], "Outbound record carries sent_seq")
+    check(out_rows and "message_id" not in out_rows[0],
+          "Outbound record does not use the abolished shared name")
+    check(in_rows and "inbox_seq" in in_rows[0], "Inbound record carries inbox_seq")
+
     step("9. Batch ACK semantics")
     # ACK handles come from the inbox, never from send(). send() returns the
     # *sender's* own sequence, which names nothing in the recipient's inbox.

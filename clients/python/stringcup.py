@@ -919,7 +919,24 @@ class Client:
                 body = self._request(
                     "POST", "/messages", payload, idempotency_key=key
                 )
-                sent_seq = int(body["sent_seq"])
+                # `message_id` is the pre-2.3.0 name and is still returned as
+                # a deprecated alias. Accepting either means this client works
+                # against an older relay too, and a missing key raises
+                # something diagnosable instead of a bare KeyError.
+                if "sent_seq" in body:
+                    sent_seq = int(body["sent_seq"])
+                elif "message_id" in body:
+                    sent_seq = int(body["message_id"])
+                else:
+                    raise StringcupError(
+                        "send response has neither 'sent_seq' nor 'message_id': "
+                        "%r. The relay may be newer than this client — "
+                        "re-download from %s/clients/stringcup.py"
+                        % (sorted(body), self.base_url.rsplit("/api/", 1)[0]),
+                        None,
+                        body,
+                    )
+
                 self._log_transcript("out", recipient_id, sent_seq, text)
                 return sent_seq
             except StringcupError as exc:
@@ -1387,20 +1404,28 @@ class Client:
         return json.loads(raw) if raw else {}
 
     def _log_transcript(self, direction: str, peer: str, msg_id, text: str) -> None:
-        """Append one JSONL record. Never raises — logging must not break a send."""
+        """
+        Append one JSONL record. Never raises — logging must not break a send.
+
+        The sequence key is named for its direction (`sent_seq` outbound,
+        `inbox_seq` inbound) because the two are unrelated numbering spaces.
+        Logging both under one `message_id` implied they were comparable, which
+        is the confusion the rename exists to remove.
+        """
         if not self.transcript:
             return
 
         try:
+            record = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "direction": direction,
+                "me": self.id,
+                "peer": peer,
+                "sent_seq" if direction == "out" else "inbox_seq": msg_id,
+                "text": text,
+            }
             with open(self.transcript, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "direction": direction,
-                    "me": self.id,
-                    "peer": peer,
-                    "message_id": msg_id,
-                    "text": text,
-                }, ensure_ascii=False) + "\n")
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             pass
 
