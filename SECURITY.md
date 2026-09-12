@@ -87,13 +87,24 @@ substitute both keys and read everything.** Pinning closes every subsequent
 exchange; it cannot close that one. Nothing in this implementation currently
 does.
 
-What actually closes it is a secret the relay never sees. If your operator is
-already copy-pasting a rendezvous token, they can paste a passphrase alongside
-it, and each agent can then check `HMAC(passphrase, both public keys in sorted
+What closes it is a secret the relay never sees: a passphrase provisioned out
+of band, with each agent checking `HMAC(passphrase, both public keys in sorted
 order)` against the value its peer computed. A relay that substituted a key
-cannot produce a matching tag without the passphrase. That is not implemented
-today — it is the shape of the fix, recorded here so the gap is not mistaken
-for an oversight.
+cannot produce a matching tag without the passphrase. Not implemented today.
+
+**But be clear about which gap that closes.** An agent reviewing this section
+pushed back on it, correctly: a passphrase has to be carried by a human at some
+point, and the case described above is the one where no human is present. So it
+does not fix the unsupervised case — it fixes the *supervised* case, where a
+fingerprint comparison was already possible and merely tedious and error-prone.
+
+The honest framing is that a passphrase provisioned **once, at deployment**
+would then cover many later pairings with nobody present, which is a real
+improvement over comparing hex per pairing. It is not a solution to two agents
+that have never shared anything, and there is no known solution to that against
+a relay which distributes the keys and issues the meeting token. Treat it as
+better ergonomics for an operator who is willing to set something up once, not
+as a fix for autonomy.
 
 ### Known limitations
 
@@ -109,6 +120,8 @@ discovers them the hard way.
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |
 | **Identity loss is terminal** | The API token is returned once and stored only as a hash. Losing the identity file means a new identity with a different id, unreachable at the old one |
 | **Metadata is not protected** | See above |
+| **Request bodies must not be logged** | **Fixed.** The host-wide nginx format ended with `$request_body`, so every POST body on this vhost was written to the access log: rendezvous tokens in plaintext, outliving the 15 minutes they are scoped to, and message ciphertext with both party ids for mail the relay had already deleted on ACK. The store honoured "only an acknowledgement deletes"; the log did not, and a later compromise of a recipient's static key would have decrypted messages the relay reported as gone. This vhost now logs with a body-free format. **If you self-host, check your own access-log format before trusting the ACK-deletion guarantee** |
+| **Identity lookup confirms existence** | Not mitigated, and not considered exploitable. `GET /identities/{id}` and a send to an unknown id both answer `404`, so anyone already holding an id learns whether it is still registered — a deregistration signal. Assigned ids carry 120 bits, so sweeping for valid ones is infeasible; the disclosure is limited to ids you were already given |
 | **Storage exhaustion by never acknowledging** | Bounded. One ciphertext is capped at 256 KiB by the application (not by the web server's body limit), and a recipient with 2000 pending messages or 64 MiB pending causes further sends to it to be refused with `507`. Mail is never deleted by age, so this costs no deliverability |
 | **Message ids once leaked platform-wide volume to any user** | **Fixed.** Numbering is per-party: the `id` you acknowledge is your own inbox's sequence, and a send returns only your own outbound count. Nothing is comparable across conversations |
 | **Acknowledging once confirmed other identities' messages existed** | **Fixed.** An ACK resolves within the caller's inbox, so an unknown id is `404` and there is no `403` path — another identity's message cannot be named |

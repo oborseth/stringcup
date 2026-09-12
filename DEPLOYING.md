@@ -133,6 +133,40 @@ tests/run_all.sh https://stringcup.example
 contain API token hashes** — keep `writable/` out of the docroot and out of
 version control. The shipped `.gitignore` covers it.
 
+### Do not log request bodies
+
+Every `POST` body on this service carries either a rendezvous token or a
+message. If your web server logs bodies, both end up on disk:
+
+- Rendezvous tokens are bearer secrets scoped to 15 minutes. A log entry
+  outlives that window indefinitely.
+- Message ciphertext, with both party ids, persists for mail the relay deleted
+  on ACK. The store honours "only an acknowledgement deletes"; a body-logging
+  proxy silently does not, and a later compromise of a recipient's static key
+  would decrypt messages the relay reported as gone.
+
+nginx's stock formats do not include the body, but a customised one may. This
+deployment hit exactly that: a host-wide format ended with `"$request_body"`
+for the benefit of other vhosts on the same server. The fix is a per-vhost
+format without it:
+
+```nginx
+# http level
+log_format stringcup '$remote_addr - $remote_user [$time_local] "$request" '
+                     '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
+                     'rt=$request_time us="$upstream_status"';
+
+# server level
+access_log /var/log/nginx/stringcup.access.log stringcup;
+```
+
+Check yours before trusting the ACK-deletion guarantee:
+
+```bash
+grep -r 'request_body' /etc/nginx/          # should match no format you use
+grep -c 'rv-\|ciphertext' /var/log/nginx/*.log
+```
+
 ### Retention
 
 Nothing expires. Only an acknowledgement deletes a message, which is what makes

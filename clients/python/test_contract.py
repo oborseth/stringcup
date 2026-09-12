@@ -62,6 +62,7 @@ EXPECTED_ALL = sorted([
     "PairingTimeout", "RecipientInboxFull", "MessageTooLarge",
     "fingerprint", "fingerprint_short",
     "require_version", "require_features", "version_info", "FEATURES",
+    "FEATURE_OF",
     "StringcupError", "AuthError", "NotFoundError", "RateLimited",
     "ValidationError", "DecryptionError", "KeyPinMismatch",
 ])
@@ -80,6 +81,7 @@ EXPECTED_FEATURES = {
     "directional_transcript_keys": (2, 4, 0),
     "require_features": (2, 4, 0),
     "FEATURES": (2, 4, 0),
+    "feature_map": (2, 5, 0),
 }
 
 
@@ -123,6 +125,37 @@ def test_public_surface_snapshot():
 
     check(sorted(stringcup.FEATURES.items()) == sorted(EXPECTED_FEATURES.items()),
           "FEATURES matches the snapshot", BUMP_HINT)
+
+
+def test_every_public_name_declares_a_capability():
+    step("3b. Every public name maps to a declared capability")
+
+    # The FEATURES docstring promises this. It previously did not exist, so 17
+    # of 21 public names were uncovered — including RecipientInboxFull and
+    # MessageTooLarge, whose absence under an unchanged version number was the
+    # original incident. Reported by an agent reading the shipped file against
+    # its own docstring.
+    uncovered = [n for n in stringcup.__all__ if n not in stringcup.FEATURE_OF]
+    check(not uncovered, "every __all__ name has a FEATURE_OF entry",
+          "Uncovered: %s\nAdd each to FEATURE_OF naming the capability that "
+          "introduced it.\n%s" % (uncovered, BUMP_HINT))
+
+    stale = [n for n in stringcup.FEATURE_OF if n not in stringcup.__all__]
+    check(not stale, "FEATURE_OF names nothing that __all__ does not export",
+          "Stale: %s" % stale)
+
+    undeclared = sorted({f for f in stringcup.FEATURE_OF.values()
+                         if f not in stringcup.FEATURES})
+    check(not undeclared, "every capability referenced is declared in FEATURES",
+          "Not in FEATURES: %s" % undeclared)
+
+    # And the capability a name claims must not postdate this build.
+    for name, feature in sorted(stringcup.FEATURE_OF.items()):
+        if feature in stringcup.FEATURES:
+            ok = stringcup.version_info >= stringcup.FEATURES[feature]
+            if not ok:
+                check(False, "%s claims capability '%s' from the future" % (name, feature))
+    check(True, "no public name claims a capability newer than this build")
 
 
 def test_every_public_name_is_importable():
@@ -176,6 +209,25 @@ def test_mcp_requires_a_library_that_can_serve_it():
           "tool result keys changed under an unchanged MCP version once already.")
 
 
+def test_enforcement_is_publicly_fetchable():
+    step("6b. The test backing the docstring's claim is published")
+
+    # An unfetchable test cannot support a claim a reader is asked to trust.
+    # The FEATURES docstring names this file as the enforcement, so the file
+    # has to be obtainable. Checked against the nginx allowlist rather than
+    # over HTTP, so the suite still runs offline.
+    conf = "/etc/nginx/conf.d/stringcup.com.conf"
+    if not os.path.exists(conf):
+        check(True, "nginx config not present here — skipping exposure check")
+        return
+
+    body = open(conf).read()
+    check("test_contract\\.py" in body or "test_contract.py" in body,
+          "test_contract.py is in the published clients/ allowlist",
+          "The FEATURES docstring points at this file; publish it or stop "
+          "citing it.")
+
+
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
@@ -201,9 +253,11 @@ def main():
     test_version_is_internally_consistent()
     test_no_feature_from_the_future()
     test_public_surface_snapshot()
+    test_every_public_name_declares_a_capability()
     test_every_public_name_is_importable()
     test_documented_imports_resolve()
     test_mcp_requires_a_library_that_can_serve_it()
+    test_enforcement_is_publicly_fetchable()
     test_changelog_records_this_version()
 
     print("\n" + "=" * 52)

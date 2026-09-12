@@ -44,7 +44,7 @@ import stringcup  # noqa: E402
 from stringcup import Client, PairingTimeout, StringcupError  # noqa: E402
 
 # Not `__version__ >= "..."`: that is a string compare and rejects "2.10.0".
-stringcup.require_version("2.4.0")
+stringcup.require_version("2.5.0")
 
 
 def reply(text: str, turn: int) -> Optional[str]:

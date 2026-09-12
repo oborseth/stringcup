@@ -13,6 +13,28 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 2.5.0 — enforcing a claim the docstring already made
+
+**Fixes an overstated claim, not a bug.** The `FEATURES` docstring said "Every
+public name in `__all__` must appear here; `test_stringcup.py` fails if one does
+not." Neither half was true: the enforcing test is `test_contract.py`, and no
+name-to-capability mapping existed, so 17 of 21 public names were uncovered —
+including `RecipientInboxFull` and `MessageTooLarge`, whose absence under an
+unchanged 2.3.0 was the incident the map was built to prevent.
+
+Found by the same agent that found the unbumped version, and its framing is the
+useful part: both were a fix landing slightly ahead of the claim made about it.
+
+- Added `FEATURE_OF`, mapping every name in `__all__` to the capability that
+  introduced it. `test_contract.py` now fails if a public name is uncovered, if
+  `FEATURE_OF` names something `__all__` does not export, if a referenced
+  capability is undeclared, or if a name claims a capability newer than the
+  build. The claim is now enforced rather than softened.
+- `clients/python/test_contract.py` is **published** at
+  `/clients/test_contract.py`. The docstring cites it, and a reader cannot check
+  a claim against a file that 404s. The other suites stay unpublished — they
+  need a live relay and prove nothing to a reader.
+
 ## API 4.3.0 — status dashboard
 
 - New `GET /api/v2/stats` (public, unauthenticated, cached 30s) and the page it

@@ -72,10 +72,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (2, 4, 0)
+version_info = (2, 5, 0)
 
 __all__ = [
     "Client",
@@ -92,6 +92,7 @@ __all__ = [
     "require_features",
     "version_info",
     "FEATURES",
+    "FEATURE_OF",
     "StringcupError",
     "AuthError",
     "NotFoundError",
@@ -113,9 +114,18 @@ __all__ = [
 #:
 #: So state capabilities directly. `require_features()` asks the question a
 #: caller actually has — "does this copy do the thing I am about to use?" —
-#: which stays true even if someone forgets to move the number. Every public
-#: name in `__all__` must appear here; `test_stringcup.py` fails if one does
-#: not, which is what forces a version decision when the surface changes.
+#: which stays true even if someone forgets to move the number.
+#:
+#: Every name in `__all__` maps to a capability here through `FEATURE_OF`
+#: below, and `test_contract.py` fails if one does not — which is what forces a
+#: version decision when the surface changes.
+#:
+#: That sentence used to claim more than was true: it named the wrong test file
+#: and the mapping did not exist, so 17 of 21 public names were uncovered —
+#: including the two whose absence caused the incident this map was built for.
+#: The same agent that found the unbumped version found the overstatement. Both
+#: were a fix landing ahead of the claim made about it, so the fix here was to
+#: make the claim enforceable rather than to soften it.
 FEATURES = {
     # 2.1.0
     "open_rendezvous": (2, 1, 0),
@@ -134,6 +144,8 @@ FEATURES = {
     "directional_transcript_keys": (2, 4, 0),
     "require_features": (2, 4, 0),
     "FEATURES": (2, 4, 0),
+    # 2.5.0
+    "feature_map": (2, 5, 0),          # FEATURE_OF, and its enforcement
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -164,6 +176,41 @@ MAX_BATCH = 200
 # --------------------------------------------------------------------------
 # Errors
 # --------------------------------------------------------------------------
+
+#: Which capability each public name belongs to.
+#:
+#: `test_contract.py` asserts this covers `__all__` exactly, so adding a public
+#: name without declaring the capability that introduced it fails the suite.
+#: That is the mechanism the FEATURES docstring refers to; without it the
+#: completeness claim was unenforced.
+FEATURE_OF = {
+    # Core surface, present since before capabilities were tracked.
+    "Client": "receive_one",
+    "Identity": "receive_one",
+    "Message": "receive_one",
+    "Page": "receive_one",
+    "TrustStore": "receive_one",
+    "fingerprint": "receive_one",
+    "fingerprint_short": "receive_one",
+    "StringcupError": "receive_one",
+    "AuthError": "receive_one",
+    "NotFoundError": "receive_one",
+    "RateLimited": "receive_one",
+    "ValidationError": "receive_one",
+    "DecryptionError": "receive_one",
+    "KeyPinMismatch": "receive_one",
+    "PairingTimeout": "await_peer",
+    # 2.2.0
+    "require_version": "require_version",
+    "version_info": "version_info",
+    # 2.4.0 — the two that were missing, and the map itself.
+    "RecipientInboxFull": "inbox_quota_errors",
+    "MessageTooLarge": "inbox_quota_errors",
+    "require_features": "require_features",
+    "FEATURES": "FEATURES",
+    "FEATURE_OF": "feature_map",
+}
+
 
 def require_features(*names: str) -> None:
     """

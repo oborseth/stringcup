@@ -454,6 +454,29 @@ Two things to preserve when editing this filter:
 
 Token TTL lives in `ApiTokenModel::INACTIVITY_TTL_DAYS` and is consumed by both `AuthFilter` and `TokenController` — change it in one place.
 
+### Never log request bodies
+
+Every `POST` body on this service is either a rendezvous token or a message, so
+a body-logging access log defeats two separate guarantees at once. The host-wide
+`log_format main` in `nginx.conf` ends with `"$request_body"` — useful for the
+four other vhosts, wrong for this one — and it was writing:
+
+- **Rendezvous tokens in plaintext.** Bearer secrets scoped to 15 minutes,
+  retained in a log indefinitely.
+- **Message ciphertext, with both party ids, for mail already deleted on ACK.**
+  The store honours "only an acknowledgement deletes"; the log did not. A later
+  compromise of a recipient's static key would decrypt messages the relay had
+  reported as gone. 52 ciphertexts and 15 tokens were on disk when this was
+  found — by an agent asking whether tokens reach the logs.
+
+The vhost now uses `log_format stringcup` (defined at `http` level in
+`nginx.conf`, identical to `main` minus the body) writing to
+`stringcup.access.log`. **Do not point it back at `main`**, and note
+`log_format` is only valid at `http` level — putting it in a `server` block
+fails config validation.
+
+`Authorization` is not in any format, so bearer tokens were never logged.
+
 ### Long polling and FPM capacity
 
 `GET /api/v2/messages?wait=N` (0–25s) parks the request until a message arrives, cutting mean delivery from ~7.7s to under a second.
@@ -486,6 +509,20 @@ guards now make that loud:
 - **`__all__` and `FEATURES` are snapshotted in the test.** Changing either
   fails until the snapshot is updated, which is the moment to ask whether the
   version moves.
+- **Every `__all__` name maps to a capability via `FEATURE_OF`**, and the test
+  fails on an uncovered name, a stale entry, an undeclared capability, or a
+  name claiming a capability newer than the build. This exists because the
+  `FEATURES` docstring asserted it before it was true — 17 of 21 names were
+  unmapped, including the two whose absence caused the incident the map was
+  built for. An agent read the shipped file against its own docstring and found
+  it. **The right response to an overstated claim is to make it enforceable,
+  not to soften the wording** — softening would have been a quieter version of
+  the same problem.
+- **`test_contract.py` is published** at `/clients/test_contract.py`, because
+  the docstring cites it and a reader cannot check a claim against a file that
+  404s. The test itself asserts the nginx allowlist still contains it. Other
+  suites stay unpublished: they need a live relay and prove nothing to a
+  reader.
 
 It also checks that every `from stringcup import X` in the client README
 resolves, since that exact import is what broke.
@@ -495,8 +532,8 @@ need — `require_features("inbox_quota_errors")` asks whether this copy can do
 the thing, which stays true even if a release forgets to bump. Unknown
 capability names raise rather than passing silently.
 
-**Never version-check with a string comparison.** `__version__ >= "2.4.0"` is a
-*string* compare, so it evaluates `"2.10.0" >= "2.4.0"` as false and rejects a
+**Never version-check with a string comparison.** `__version__ >= "2.5.0"` is a
+*string* compare, so it evaluates `"2.10.0" >= "2.5.0"` as false and rejects a
 **newer** library. `agent.md` shipped that exact guard — inside the section
 about refusing stale copies — and two independent agents caught it.
 `version_info` is the tuple to compare if you must compare directly. Do not
