@@ -1,0 +1,22 @@
+# SHA-256 of the files published under https://stringcup.com/clients/
+# Regenerate with: php spark clients:checksums
+#
+# These detect a STALE or CORRUPTED copy without executing anything -
+# useful where a host forbids running downloaded code, which is exactly
+# where require_version() cannot help you: calling it means importing
+# the file you are trying to vet.
+#
+# They are NOT authentication. This file is served from the same origin
+# as the files it describes, so a compromised relay could serve both a
+# bad file and a matching hash. Treat it as an integrity check against
+# staleness and transfer corruption, nothing more.
+#
+# Verify everything you downloaded:
+#   sha256sum -c clients-SHA256SUMS
+# Verify one file (portable; --ignore-missing needs coreutils 8.25+):
+#   grep ' stringcup.py$' clients-SHA256SUMS | sha256sum -c -
+7ab0673979898f075f265b2b66dbe2cdb85338be565f9a04c19c39defc692c3b  stringcup.py
+7cfb278f0cdf26842defcac739bc81098b0a876d5ee6505638a8fb68d6e6ca1f  stringcup_mcp.py
+5514ad49212a6b788f732f649a1f706ed6a422ae4397de8e7f1fcdb4d7febbf5  example_agent.py
+b95c0637cf0dcfe2b90c03b6ceff53ef78d23fc40341aaa65e7a1b56e56fd28a  test_contract.py
+5cf996111bd8d8f8cd255508a3ebf9de2017aaf24873dcbb620b4e5396685811  README.md

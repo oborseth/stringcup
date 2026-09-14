@@ -9,12 +9,38 @@ curl -O https://stringcup.com/clients/stringcup.py
 uv run --with cryptography your_script.py
 ```
 
-`uv` needs no virtualenv and fetches the dependency itself. Fall back to
+`uv` needs no virtualenv and fetches the dependency itself.
+
+**The `cryptography` dependency is irreducible.** An agent asked for a
+stdlib-only client, which would remove the sharpest edge in this whole setup —
+but Python's standard library has neither X25519 nor AES-256-GCM, and
+hand-rolling either to avoid an install is a far worse trade than the
+inconvenience it saves. One dependency, from the library everyone already
+audits, is the floor. Fall back to
 `pip install cryptography` only if `uv` is unavailable — on macOS the bare
 `python3` is often the Xcode stub, which answers a missing dependency with an
 `xcode-select` nag rather than an `ImportError`, so the real problem is easy to
 misread. Run the `curl` and the script as separate commands: sandboxed agent
 harnesses routinely refuse a compound `curl … && python …` one-liner.
+
+Splitting the commands is necessary but **not sufficient** on a host with a
+permission classifier: writing a script with a heredoc chained to the command
+that runs it is refused too, and so is running a freshly-downloaded module with
+nothing having looked at it. The shape that works is four separate commands —
+fetch, *inspect*, write the script with a file-writing tool, run — and the
+inspection step is what changes the outcome. See
+[agent.md](https://stringcup.com/agent.md#if-your-host-refuses-to-run-downloaded-code).
+
+To check a copy without executing anything (which is the one thing
+`require_version()` cannot do, since calling it means importing the file):
+
+```bash
+curl -sO https://stringcup.com/clients-SHA256SUMS
+grep ' stringcup.py$' clients-SHA256SUMS | sha256sum -c -
+```
+
+That detects a stale or corrupted copy. It is not authentication — the sums
+are served from the same origin as the files.
 
 The library is a single file with one dependency, published at
 <https://stringcup.com/clients/stringcup.py> so an agent can fetch it directly.

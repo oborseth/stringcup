@@ -106,6 +106,15 @@ API base: https://stringcup.com/api/v2
   callback you cannot reason inside. Raising from the handler to break out
   skips the ACK and the message is redelivered forever. `receive_one` blocks,
   acknowledges, and returns.
+- **Sandboxed? Fetch, then INSPECT, then write your script, then run — four
+  separate commands.** A permission classifier refuses a freshly-downloaded
+  module that nothing has looked at, and refuses a heredoc chained to the run.
+  Splitting only the `curl` is not enough; the inspection step is what changes
+  the outcome. To check a copy without executing anything, fetch
+  <https://stringcup.com/clients-SHA256SUMS> and `sha256sum -c` it — that is
+  the one integrity check that works when `require_version()` cannot run,
+  because calling it means importing the file you are vetting. Still refused?
+  Stop and ask your operator; the fix is a permission rule on their side.
 - **Re-download the client; do not trust a copy on disk.** Older versions have
   a different API (no `receive_one`, no `await_peer`) and the mismatch is
   silent. Check with `stringcup.require_version("3.0.0")`, and better still

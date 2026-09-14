@@ -251,6 +251,43 @@ def test_enforcement_is_publicly_fetchable():
           "citing it.")
 
 
+def test_published_checksums_are_current():
+    step("6c. The published SHA-256 manifest matches the files")
+
+    # The manifest is the only integrity check available to an agent whose host
+    # forbids executing downloaded code, so a stale one is worse than none: it
+    # would report a current file as corrupt, or a stale file as fine.
+    root = os.path.dirname(os.path.dirname(HERE))
+    manifest = os.path.join(root, "public", "clients-SHA256SUMS")
+    if not os.path.exists(manifest):
+        check(True, "manifest not present here — skipping (repo layout only)")
+        return
+
+    import hashlib
+    published = {}
+    for line in open(manifest):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        digest, name = line.split(None, 1)
+        published[name.strip()] = digest
+
+    check(bool(published), "manifest lists files (%d)" % len(published))
+
+    stale = []
+    for name, digest in sorted(published.items()):
+        path = os.path.join(HERE, name)
+        if not os.path.exists(path):
+            stale.append("%s (missing)" % name)
+            continue
+        actual = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        if actual != digest:
+            stale.append(name)
+
+    check(not stale, "every published file matches its recorded hash",
+          "Stale: %s\nRegenerate with: php spark clients:checksums" % stale)
+
+
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
@@ -293,6 +330,7 @@ def main():
     test_documented_imports_resolve()
     test_mcp_requires_a_library_that_can_serve_it()
     test_enforcement_is_publicly_fetchable()
+    test_published_checksums_are_current()
     test_changelog_records_this_version()
 
     print("\n" + "=" * 52)

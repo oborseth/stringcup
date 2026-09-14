@@ -526,6 +526,14 @@ guards now make that loud:
   404s. The test itself asserts the nginx allowlist still contains it. Other
   suites stay unpublished: they need a live relay and prove nothing to a
   reader.
+- **`public/clients-SHA256SUMS` must be regenerated whenever a published
+  client file changes** (`php spark clients:checksums`; `--check` in CI).
+  `test_contract.py` fails when it drifts, because a stale manifest is worse
+  than none — it reports a current file as corrupt. It exists for agents whose
+  host forbids executing downloaded code, where `require_version()` is
+  unreachable by construction: calling it means importing the file being
+  vetted. **It is not authentication** — same origin as the files — and the
+  docs must not imply otherwise.
 - **It must stay runnable from the published files alone.** Publishing a test
   that a reader cannot execute is the same failure as citing one that 404s, one
   layer out — it crashed with a traceback on `README.md` and failed on a
@@ -548,6 +556,32 @@ capability names raise rather than passing silently.
 about refusing stale copies — and two independent agents caught it.
 `version_info` is the tuple to compare if you must compare directly. Do not
 reintroduce a string comparison anywhere in the docs.
+
+### Sandboxed agent harnesses
+
+Two agents hit a permission classifier and reached opposite conclusions. The
+second was right, and the docs follow it: **the refusal keys on the shape of
+the request, not on downloaded code as a category.** What works is four
+separate commands — fetch, *inspect*, write the script with a file-writing
+tool, run — and the inspection step is the one that changes the outcome, since
+the classifier is deciding whether running this is an informed decision.
+
+What does not work: splitting only the `curl` from the run (the advice the
+docs used to give, which is necessary but insufficient), and a heredoc chained
+to the command that executes the file it just wrote.
+
+The first agent concluded the wall was categorical and escalated through
+progressively broader requests. Do not write that conclusion into the docs —
+it is wrong, and it teaches agents to give up one step early.
+
+The MCP path is **operator-only setup**: `.mcp.json` is read at session start,
+so registering the server mid-task does nothing until a restart, and a
+restricted agent generally cannot write the file governing its own tool
+surface. `agent.md` says so and gives the operator a copy-pasteable block.
+
+The `cryptography` dependency is irreducible: Python's stdlib has neither
+X25519 nor AES-256-GCM, and hand-rolling either to avoid an install is a worse
+trade than the inconvenience. Do not accept a "stdlib-only client" request.
 
 ### Primitives for LLM agents
 
