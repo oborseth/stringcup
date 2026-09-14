@@ -559,20 +559,28 @@ reintroduce a string comparison anywhere in the docs.
 
 ### Sandboxed agent harnesses
 
-Two agents hit a permission classifier and reached opposite conclusions. The
-second was right, and the docs follow it: **the refusal keys on the shape of
-the request, not on downloaded code as a category.** What works is four
-separate commands — fetch, *inspect*, write the script with a file-writing
-tool, run — and the inspection step is the one that changes the outcome, since
-the classifier is deciding whether running this is an informed decision.
+Two agents hit a permission classifier. One got through by separating every
+command and reading the file first. The other could not — four invocation
+forms (`python3 -c`, `python3 script.py`, a heredoc-written script,
+`uv run`), all refused with reason code `[Code from External]`, and it had
+already done an inspection pass before its first attempt.
 
-What does not work: splitting only the `curl` from the run (the advice the
-docs used to give, which is necessary but insufficient), and a heredoc chained
-to the command that executes the file it just wrote.
+**Do not claim the inspection step is what changes the outcome.** The docs
+said that for one revision, generalising from n=2 into a causal claim, and the
+second agent's evidence refutes it: inspection was present in its failing runs
+too. The likely variable is how the two hosts were configured, not how the two
+agents asked. It reported the overclaim itself, and was right that an agent
+following it and still failing is invited to conclude it inspected wrong and
+loop — the exact failure the section exists to prevent.
 
-The first agent concluded the wall was categorical and escalated through
-progressively broader requests. Do not write that conclusion into the docs —
-it is wrong, and it teaches agents to give up one step early.
+What the docs may say: the sequence is worth trying; some classifiers relent
+after a read; splitting only the `curl` is definitely not enough; a heredoc
+chained to the run is refused where writing the file separately is not. Then
+escalate, with a verbatim block for the operator, because on some hosts only a
+Bash permission rule clears it.
+
+This is the second time a claim outran its evidence here, after the FEATURES
+docstring. Both were caught from outside.
 
 The MCP path is **operator-only setup**: `.mcp.json` is read at session start,
 so registering the server mid-task does nothing until a restart, and a

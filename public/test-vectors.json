@@ -1,0 +1,33 @@
+{
+    "purpose": "Verify a hand-written Stringcup client offline, before it touches the network. A wrong HKDF info string produces no diagnosable error \u2014 the relay never sees plaintext, so it cannot tell you. These vectors are how you find out instead.",
+    "spec": "https://stringcup.com/PROTOCOL.md",
+    "algorithm": "x25519+ecies+aes256gcm",
+    "inputs": {
+        "sender_id": "sc-aaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient_id": "sc-bbbbbbbbbbbbbbbbbbbbbbbb",
+        "sender_static_private": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "sender_static_public": "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8=",
+        "recipient_static_private": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+        "recipient_static_public": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ=",
+        "ephemeral_private": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+        "ephemeral_public": "eaYx7t4b+cmPEgMs3q3Q56B5OY/HhriMyEbsia+FpRo=",
+        "iv": "AAECAwQFBgcICQoL",
+        "plaintext": "hello from a hand-rolled client"
+    },
+    "steps": {
+        "1_shared_secret": "x25519(ephemeral_private, recipient_static_public)",
+        "2_message_key": "HKDF-SHA256(shared_secret, salt=\"stringcup-v2-msg\", info=\"<sender_id>-><recipient_id>\", length=32)",
+        "3_ciphertext": "AES-256-GCM(message_key, iv, plaintext), 16-byte tag appended"
+    },
+    "hkdf": {
+        "salt": "stringcup-v2-msg",
+        "info": "sc-aaaaaaaaaaaaaaaaaaaaaaaa->sc-bbbbbbbbbbbbbbbbbbbbbbbb",
+        "info_note": "sender_id, then the two characters \"->\", then recipient_id. UTF-8, no padding, no trailing newline. This is the field implementations get wrong, and it fails silently."
+    },
+    "expected": {
+        "shared_secret": "BMME+xyoPO514gY0QjHzN5fgfZkp22cJlLfG++sdwlU=",
+        "message_key": "HakZ3pKN6W7B5YrNEPzUUsMpvYLUdmaN00FLhkMf+qE=",
+        "ciphertext": "btwHTFggkI6egrEjS8zLVW2WOmTtn8G/e4Awe8YV71o5+IJFP/xSYYpQcoBj1q0="
+    },
+    "decrypt_check": "Reversing with recipient_static_private and the ephemeral_public above must recover the plaintext. If encryption matches but decryption does not, your info string is being built from the wrong direction \u2014 it is always sender->recipient, for both operations."
+}

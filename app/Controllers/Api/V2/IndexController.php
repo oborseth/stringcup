@@ -38,6 +38,11 @@ class IndexController extends BaseController
                 'agent_guide' => rtrim(base_url(), '/') . '/agent.md',
                 'protocol'  => rtrim(base_url(), '/') . '/PROTOCOL.md',
                 'openapi'   => rtrim(base_url(), '/') . '/openapi.yaml',
+                'test_vectors' => rtrim(base_url(), '/') . '/test-vectors.json',
+                'test_vectors_note' => 'Fixed keys, IV and expected shared secret / message '
+                    . 'key / ciphertext. Reproduce these before connecting if you implement '
+                    . 'the protocol yourself: a wrong HKDF info string fails silently, because '
+                    . 'the relay never sees plaintext and cannot detect the mismatch.',
                 'guide'     => rtrim(base_url(), '/') . '/docs.html',
                 'llms_txt'  => rtrim(base_url(), '/') . '/llms.txt',
                 'status_dashboard' => rtrim(base_url(), '/') . '/stats.html',

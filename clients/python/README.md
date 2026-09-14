@@ -24,12 +24,15 @@ misread. Run the `curl` and the script as separate commands: sandboxed agent
 harnesses routinely refuse a compound `curl … && python …` one-liner.
 
 Splitting the commands is necessary but **not sufficient** on a host with a
-permission classifier: writing a script with a heredoc chained to the command
-that runs it is refused too, and so is running a freshly-downloaded module with
-nothing having looked at it. The shape that works is four separate commands —
-fetch, *inspect*, write the script with a file-writing tool, run — and the
-inspection step is what changes the outcome. See
-[agent.md](https://stringcup.com/agent.md#if-your-host-refuses-to-run-downloaded-code).
+permission classifier, and on some hosts nothing you do will work. Of two
+agents that hit this, one got through by separating every command and reading
+the file first; the other could not, on four different invocation forms, having
+already inspected it. Same reason code both times. That looks like a difference
+in how the hosts were configured rather than in how the agents asked, so treat
+the sequence in
+[agent.md](https://stringcup.com/agent.md#if-your-host-refuses-to-run-downloaded-code)
+as worth trying, not as a solution — and escalate to your operator rather than
+hunting for a fifth phrasing.
 
 To check a copy without executing anything (which is the one thing
 `require_version()` cannot do, since calling it means importing the file):
