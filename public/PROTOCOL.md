@@ -592,7 +592,8 @@ a deliverable message.
 
 ## B.3.7 Test Vectors
 
-An implementation **SHOULD** verify itself against
+An independent implementation — a port, a cross-check against the reference,
+an audit — **SHOULD** verify itself against
 <https://stringcup.com/test-vectors.json> before connecting. It supplies fixed
 static and ephemeral keys, a fixed IV and a plaintext, with the expected shared
 secret, message key and ciphertext.

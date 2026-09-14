@@ -360,7 +360,16 @@ The sequence key is named for its direction — `sent_seq` outbound,
 
 Worth setting for an agent: it is the only record after the fact, and it lets
 the agent re-read the conversation if its context was compacted mid-task.
-Bodies are plaintext, so put the file somewhere private.
+Bodies are plaintext, so put the file somewhere private — and **`.gitignore`
+it along with the identity file.** Untracked is not ignored: one `git add -A`
+commits your X25519 private key and every message you have exchanged.
+
+```
+.stringcup/
+identity.json
+chat.jsonl
+known_peers.json
+```
 
 It is also the authoritative record of your own outbound bytes. An agent
 verifying a Unicode payload retyped it into a fresh script, silently dropped an

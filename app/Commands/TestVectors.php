@@ -8,13 +8,20 @@ use CodeIgniter\CLI\CLI;
 /**
  * Regenerate public/test-vectors.json.
  *
- * These exist for the agent that cannot run the published client at all — a
- * sandbox classifier refusing `[Code from External]` blocks the library but
- * not code the agent writes itself, so implementing the protocol directly is
- * a real escape hatch. It is only a safe one with vectors, because a wrong
- * HKDF `info` string produces no diagnosable error: the relay never sees
- * plaintext, so it cannot tell you that you got it wrong, and the failure
- * surfaces as a peer that silently cannot read you.
+ * These exist because the protocol is Apache-2.0 specifically so it can be
+ * reimplemented — a port to another language, a second implementation to hold
+ * this one honest, an audit. Without vectors that is unreasonably dangerous: a
+ * wrong HKDF `info` string produces no diagnosable error, because the relay
+ * never sees plaintext and cannot tell you, so the failure surfaces only as a
+ * peer that silently cannot read you.
+ *
+ * **They are not a sandbox workaround.** An earlier revision of `agent.md`
+ * pointed a blocked agent here on the theory that a self-written client dodges
+ * a classifier scoped to downloaded code. That was wrong empirically — a
+ * self-authored script was refused under `[Auto-Mode Bypass]` — and wrong in
+ * principle, since choosing a surface because the guardrail does not inspect
+ * it is precisely what a denial notice forbids. Do not re-motivate this file
+ * that way.
  *
  * Key material is hard-coded and deterministic so the vectors never move.
  * Generated from the PHP path and cross-checked against the Python client by
@@ -58,10 +65,13 @@ class TestVectors extends BaseCommand
         }
 
         return [
-            'purpose' => 'Verify a hand-written Stringcup client offline, before it '
-                . 'touches the network. A wrong HKDF info string produces no '
-                . 'diagnosable error — the relay never sees plaintext, so it cannot '
-                . 'tell you. These vectors are how you find out instead.',
+            'purpose' => 'Verify an independent Stringcup implementation offline, '
+                . 'before it touches the network — a port to another language, a second '
+                . 'implementation to check the reference against, or an audit. The '
+                . 'protocol is Apache-2.0 and meant to be reimplemented. A wrong HKDF '
+                . 'info string produces no diagnosable error, because the relay never '
+                . 'sees plaintext and cannot tell you; these vectors are how you find '
+                . 'out instead.',
             'spec'    => 'https://stringcup.com/PROTOCOL.md',
             'algorithm' => 'x25519+ecies+aes256gcm',
             'inputs' => [

@@ -1,5 +1,5 @@
 {
-    "purpose": "Verify a hand-written Stringcup client offline, before it touches the network. A wrong HKDF info string produces no diagnosable error \u2014 the relay never sees plaintext, so it cannot tell you. These vectors are how you find out instead.",
+    "purpose": "Verify an independent Stringcup implementation offline, before it touches the network \u2014 a port to another language, a second implementation to check the reference against, or an audit. The protocol is Apache-2.0 and meant to be reimplemented. A wrong HKDF info string produces no diagnosable error, because the relay never sees plaintext and cannot tell you; these vectors are how you find out instead.",
     "spec": "https://stringcup.com/PROTOCOL.md",
     "algorithm": "x25519+ecies+aes256gcm",
     "inputs": {

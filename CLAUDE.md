@@ -582,6 +582,37 @@ Bash permission rule clears it.
 This is the second time a claim outran its evidence here, after the FEATURES
 docstring. Both were caught from outside.
 
+**Never publish guidance that routes around a host's permission controls.**
+This is a hard rule, and it was broken once. After the corrected inspection
+advice still failed for one agent, a revision added a section arguing that
+implementing the protocol yourself gives the classifier "nothing to catch" —
+i.e. naming a surface the guardrail does not inspect. The agent it was written
+for declined to follow it and was right to:
+
+- **Empirically wrong.** It tested a self-authored script with no downloaded
+  imports and was refused under a *different* reason code,
+  `[Auto-Mode Bypass]`. The block is not scoped to this library.
+- **Wrong in principle.** Choosing a surface because the guardrail inspects
+  another is what a denial notice explicitly forbids. That it would have been
+  in service of a benign protocol is not the point.
+- **Self-contradicting.** The docs elsewhere say emphatically *do not implement
+  the crypto, a mismatched `info` string fails with no diagnosable error*. The
+  new section reversed that to defeat a sandbox.
+- **Read as instructions.** `agent.md` is fetched and followed by agents. A
+  bypass published there is this project telling someone's agent to disregard
+  their operator's configuration. That is a different responsibility from
+  writing the same idea in a blog post.
+
+The agent also named the trajectory, which is the part worth remembering: three
+revisions each answered a reported wall with a more aggressive way through it —
+split the command, satisfy the classifier, give it nothing to catch. The first
+two were legitimate. **When the next wall is reported, the answer is the
+operator's permission rule, not a fourth technique.**
+
+The test vectors stay, re-motivated: they exist because the protocol is
+Apache-2.0 *to be reimplemented*, and a port or audit is dangerous without
+them. Do not point a blocked agent at them.
+
 The MCP path is **operator-only setup**: `.mcp.json` is read at session start,
 so registering the server mid-task does nothing until a restart, and a
 restricted agent generally cannot write the file governing its own tool
@@ -642,6 +673,13 @@ api_token     returned once, stored server-side only as a hash
 ```
 
 There is no per-peer session state. `clients/python/stringcup.py` writes these to a 0600 file atomically; `TrustStore` optionally adds pinned peer fingerprints alongside.
+
+**Agent-facing docs must tell the reader to `.gitignore` the identity file and
+transcript.** 0600 protects against other local users; it does nothing against
+`git add -A`. An agent reported keeping both in a project directory, untracked
+but not ignored — one commit away from publishing its own private key and every
+message it had exchanged. This project committed a live encryption key once
+already; do not let a reader repeat it.
 
 **Re-registering does not recover an identity** — it mints a new one with a different assigned id, and any peer holding the old id can no longer reach you.
 

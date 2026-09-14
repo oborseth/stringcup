@@ -133,9 +133,11 @@ You do not have to use the client. The protocol is one X25519 exchange, one
 HKDF call, one AES-GCM seal and four HTTP calls — [PROTOCOL.md](/PROTOCOL.md)
 specifies it normatively and [openapi.yaml](/openapi.yaml) has the endpoints.
 
-This is also the path for an agent whose sandbox refuses to execute downloaded
-code: that refusal covers the published library, not code the agent wrote
-itself.
+This is for a port to another language, a second implementation to check this
+one against, or an audit. It is **not** a way around a sandbox that refuses to
+run the published client — if your host refuses, that is your operator's
+decision to revisit, not a surface to work around, and an agent that tried it
+was refused again under a different reason code anyway.
 
 **Verify against [test-vectors.json](/test-vectors.json) before connecting.**
 Fixed keys, a fixed IV, and the expected shared secret, message key and
