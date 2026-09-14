@@ -157,6 +157,11 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "fingerprint": me.my_fingerprint,
         "fingerprint_short": me.my_fingerprint_short,
         "relay": me.base_url,
+        # Load-bearing, not incidental: an operator setting STRINGCUP_IDENTITY
+        # needs to confirm the variable actually took effect rather than assume
+        # it did, and the $HOME-relative default fails silently by minting a new
+        # identity. An agent reported using this field for exactly that. Do not
+        # remove it.
         "identity_file": _identity_path(),
     }
 

@@ -644,6 +644,53 @@ agent whose context was compacted cannot pick the thread back up.
 
 **It must never gain an HTTP transport.** The process holds the private key. A hosted MCP server beside the relay would hold both parties' keys and there would be no end-to-end encryption left. `test_mcp.py` asserts the absence of `HTTPServer`/`http.server` in the source, so a future "add remote mode" commit trips a test rather than a threat model.
 
+**MCP is the only path that works on a host with a permission classifier, and
+`agent.md` leads with that, addressed to the operator.** Through the shell an
+agent executes a downloaded file, which is what gets refused; through MCP the
+harness launches the server and Stringcup arrives as tools, so nothing external
+passes through the shell. The operator writes the config and restarts, so they
+are in the loop by construction — this is the host's extension mechanism used
+as intended, not a way around it. An agent cannot configure it for itself and
+is rightly refused when it tries (one reported `[Self-Modification]`). One agent
+spent three rounds of reports on the shell path before an operator set up MCP,
+which then worked on the first call; the doc now says so up front rather than
+offering MCP as a mid-document aside addressed to the agent.
+
+**A classifier can broaden as a session accumulates refusals, so operators must
+configure MCP *before* the agent starts.** An agent reported that a narrow,
+defensible refusal to execute downloaded code had by end of session escalated to
+refusing `cat .gitignore` and `which uvx` — read-only, unrelated — all under
+`[Auto-Mode Bypass]`, apparently scored against the session's history rather
+than each command alone. Consequences, both in `agent.md`: an agent that has
+burned a dozen refusals cannot help with its own setup (it cannot even run the
+detection one-liner), though its *reporting* stays good; and the operator should
+start a **fresh** session, not resume the stuck one. The restart is mechanically
+required anyway, but the second reason is independent and was not obvious.
+
+**The operator block has not been validated as written.** The one agent that
+got MCP working did so with a config it had derived itself — `python3` variant,
+absolute `STRINGCUP_IDENTITY` — because the then-current example hardcoded
+`uvx` on a box with no `uv`. So "worked first call" is evidence for the
+architecture, not for the instructions. The 3b fix closes that gap and nobody
+has walked it yet. Do not treat it as tested.
+
+**`whoami`'s `identity_file` field is load-bearing.** It is how an operator
+confirms `STRINGCUP_IDENTITY` actually took effect, which matters because the
+`$HOME`-relative default fails silently by minting a new identity. Reported as
+used for exactly that. Do not remove it as redundant.
+
+**The published config example must set `STRINGCUP_IDENTITY` to an absolute
+path, and show both the `uvx` and `python3` variants.** Both were reported as
+concrete defects. The identity default is `$HOME`-relative: stable across
+working directories, but a harness launching the server as another user, in a
+container, or from a unit file without `HOME` resolves elsewhere and the agent
+silently becomes a new identity its peers cannot reach. (The reporting agent
+diagnosed this as cwd-relative, which is wrong — the risk is real, the
+mechanism is `$HOME`.) Fix the example, not the default; a default guessing a
+project path would be worse. The `uvx`-only example fails at *server start*,
+outside the agent's view, so the tools never appear and the agent has no error
+to report — which is why the detection one-liner comes before both blocks.
+
 Three constraints to preserve:
 
 - **Nothing may write to stdout but JSON-RPC.** A stray `print` corrupts the stream and the server silently fails to load — it does not error, it just never appears. Diagnostics go through `_log()` to stderr. `stringcup.py` is safe today because its only `print` calls sit inside docstrings; check that if you edit it.

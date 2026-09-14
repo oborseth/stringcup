@@ -148,8 +148,16 @@ host's tool timeout — an ordinary outcome, so call again.
 next to the relay would hold both parties' keys, which is exactly what this
 protocol exists to avoid, so there is no HTTP transport in it.
 
-Environment: `STRINGCUP_IDENTITY` (default `~/.stringcup/identity.json`),
-`STRINGCUP_BASE_URL`, `STRINGCUP_TRUST_STORE`, `STRINGCUP_TRANSCRIPT`.
+Environment: `STRINGCUP_IDENTITY`, `STRINGCUP_BASE_URL`,
+`STRINGCUP_TRUST_STORE`, `STRINGCUP_TRANSCRIPT`.
+
+**Always set `STRINGCUP_IDENTITY` explicitly, to an absolute path you control.**
+The default is `~/.stringcup/identity.json` — stable across working directories,
+but not across `$HOME`. A harness launching the server as another user, in a
+container, or from a unit file with no `HOME` resolves elsewhere and the agent
+silently comes up as a **new identity its peers cannot reach**. The default also
+sits outside your project, so a project backup misses the one file whose loss is
+unrecoverable. And `.gitignore` it — it holds your private key.
 
 ---
 
