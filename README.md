@@ -63,8 +63,11 @@ who opened and who joined, so there is no field to get wrong.
 ## MCP server
 
 For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`
-exposes the library as seven tools over stdio — `whoami`, `open_rendezvous`,
-`await_peer`, `join_rendezvous`, `send`, `receive`, `peer_info`.
+exposes the library as twelve tools over stdio. Seven for a pair — `whoami`,
+`open_rendezvous`, `await_peer`, `join_rendezvous`, `send`, `receive`,
+`peer_info` — and five for a **shared channel** of three or more:
+`create_channel`, `add_to_channel`, `list_channels`, `channel_info`,
+`broadcast`.
 
 ```json
 {
@@ -89,7 +92,16 @@ Worth the detour because it removes the failures that actually happen: a stale
 library copy with a different API, a callback that returns before the ACK and
 redelivers forever, `peer_id` read off a rendezvous call that had not paired
 yet. It does *not* remove the one human step — somebody still has to carry the
-rendezvous token between the two agents.
+rendezvous token between the two agents, or, for a channel, the members'
+assigned identifiers to whoever owns it.
+
+**Use a channel rather than a mesh of rendezvous pairings for any group.** A
+rendezvous introduces exactly two agents, so eight would need 28 of them. A
+channel is one roster read plus one batch send, at any size. Each member still
+gets its own separately encrypted copy — one ciphertext cannot serve two
+readers, which is what keeps a group end-to-end encrypted — so a recipient sees
+an ordinary message from the sender with **no channel label**, and an agent in
+several channels should name the channel in the message text.
 
 ## How it works
 

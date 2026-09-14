@@ -64,7 +64,7 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 stringcup.require_version("3.1.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors")
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -301,6 +301,84 @@ def tool_peer_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def tool_create_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    name = arguments["name"]
+    members = list(arguments.get("members") or [])
+    body = me.create_topic(name, members)
+
+    # `unknown` rather than a failure: one mistyped id must not discard the
+    # other six. The operator pastes these by hand, so a typo is the expected
+    # case, not the exceptional one.
+    return {
+        "created": True,
+        "name": name,
+        "members_added": len(members) - len(body.get("unknown") or []),
+        "unknown": body.get("unknown") or [],
+        "owner": me.id,
+    }
+
+
+def tool_add_to_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    name = arguments["name"]
+    ids = list(arguments.get("members") or [])
+    body = me.add_members(name, ids)
+    return {
+        "name": name,
+        "added": len(ids) - len(body.get("unknown") or []),
+        "unknown": body.get("unknown") or [],
+    }
+
+
+def tool_list_channels(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    topics = me.topics()
+    return {
+        "channels": [
+            {"name": t.get("name"), "owner": t.get("owner_id") or t.get("owner"),
+             "mine": (t.get("owner_id") or t.get("owner")) == me.id}
+            for t in topics
+        ],
+        "count": len(topics),
+    }
+
+
+def tool_channel_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    roster = me.topic(arguments["name"])
+    members = roster.get("members", [])
+    return {
+        "name": arguments["name"],
+        # Short fingerprints, because these are the form a human reads aloud
+        # to confirm a member is who the roster says. The relay serves both
+        # the key and its fingerprint, so only an out-of-band comparison
+        # rules out substitution inside a group.
+        "members": [
+            {"id": m["id"], "fingerprint_short": m.get("fingerprint_short"),
+             "me": m["id"] == me.id}
+            for m in members
+        ],
+        "count": len(members),
+    }
+
+
+def tool_broadcast(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    name = arguments["name"]
+    result = me.broadcast(name, arguments["text"])
+
+    # Partial success is reported, never raised: one member with a rotated or
+    # unreadable key must not stop delivery to the rest.
+    return {
+        "name": name,
+        "delivered": result.get("count", 0),
+        "recipients": result.get("recipients", 0),
+        "failed": result.get("failed") or [],
+        "sent": True,
+    }
+
+
 TOOLS: List[Dict[str, Any]] = [
     {
         "name": "whoami",
@@ -468,6 +546,120 @@ TOOLS: List[Dict[str, Any]] = [
             "required": ["peer_id"],
         },
         "handler": tool_peer_info,
+    },
+    {
+        "name": "create_channel",
+        "title": "Create a shared channel",
+        "description": (
+            "Create a named channel (a topic) for group messaging, seeding it with "
+            "member identifiers. Use this instead of pairwise rendezvous when three or "
+            "more agents need to talk to each other. YOU BECOME THE OWNER: only you can "
+            "add or remove members afterwards. "
+            "You need every member's assigned identifier up front — there is no "
+            "discovery and members cannot add themselves, so each one must run whoami "
+            "and have its identifier relayed to you (usually your operator pastes them "
+            "in one go). Mistyped identifiers come back in 'unknown' and the rest are "
+            "still added. Channel names are global and unguessable-by-design: pick "
+            "something specific, because a name already taken is refused."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Channel name. Global, so make it specific.",
+                },
+                "members": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Assigned identifiers to seed, each starting 'sc-'. You are "
+                        "added automatically; you do not need to list yourself."
+                    ),
+                },
+            },
+            "required": ["name"],
+        },
+        "handler": tool_create_channel,
+    },
+    {
+        "name": "add_to_channel",
+        "title": "Add members to a channel",
+        "description": (
+            "Add agents to a channel you own, for when someone joins after it was "
+            "created. Owner only. You need each new member's assigned identifier, which "
+            "it gets from whoami. Already-present members are a no-op, so re-adding is "
+            "safe."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The channel name."},
+                "members": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Assigned identifiers to add.",
+                },
+            },
+            "required": ["name", "members"],
+        },
+        "handler": tool_add_to_channel,
+    },
+    {
+        "name": "list_channels",
+        "title": "List your channels",
+        "description": (
+            "List the channels this agent belongs to, marking the ones it owns. Call "
+            "this if you have lost track of a channel name — for example after your "
+            "context was compacted — because there is no way to search for one by "
+            "guessing."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": tool_list_channels,
+    },
+    {
+        "name": "channel_info",
+        "title": "Read a channel roster",
+        "description": (
+            "List a channel's members with their short key fingerprints. Only members "
+            "can read a roster; a channel you are not in reports as not found rather "
+            "than refused, so do not read a not-found as proof the channel is absent. "
+            "The fingerprints are what a human compares out of band to confirm a member "
+            "is who the roster claims."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The channel name."}
+            },
+            "required": ["name"],
+        },
+        "handler": tool_channel_info,
+    },
+    {
+        "name": "broadcast",
+        "title": "Send to a whole channel",
+        "description": (
+            "Encrypt and send one message to every other member of a channel. Each "
+            "member gets its own separately encrypted copy — the relay cannot read any "
+            "of them — and you are excluded, so your own message does not come back to "
+            "you. "
+            "IMPORTANT: recipients receive this as an ordinary message from you, with "
+            "no channel label, because fan-out is N direct messages rather than a "
+            "server-side room. If members belong to more than one channel, say which "
+            "one you mean in the text. Read incoming messages with receive as usual. "
+            "'delivered' may be lower than 'recipients': partial delivery is reported "
+            "in 'failed', not raised, so one unreachable member does not block the rest."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The channel name."},
+                "text": {"type": "string", "description": "The plaintext to send."},
+            },
+            "required": ["name", "text"],
+        },
+        "handler": tool_broadcast,
     },
 ]
 

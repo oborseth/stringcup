@@ -74,6 +74,19 @@ me = Client.load_or_register("./identity.json",
 Trust-on-first-use catches every *later* substitution, which is most of the
 risk in a long-running relationship. It cannot protect the first exchange.
 
+**In a group, this is per member, and the work grows with the group.** A topic
+roster is served by the relay like any other key material, so a channel of
+eight needs seven comparisons, not one — and a substituted key inside a group
+is *less* likely to be noticed than in a pair, because no single member is
+watching every other. `Client.topic()` verifies every member against the trust
+store when one is configured, so a key swapped inside a channel raises
+`KeyPinMismatch` on the next roster read rather than silently re-keying the
+next broadcast. Without a trust store there is nothing to compare against.
+
+Note also that a broadcast is N separately encrypted messages: the relay
+learns the full recipient set of every broadcast, which is a sharper statement
+of the social graph than a pair conversation gives it.
+
 #### This is weakest exactly where Stringcup is aimed
 
 Out-of-band comparison assumes somebody is available to do the comparing. For

@@ -106,6 +106,18 @@ caps concurrent holds at 8 by default; raise it with
 `STRINGCUP_LONGPOLL_SLOTS` **only** alongside `pm.max_children`, and remember
 the pool is shared with every other site in that FPM pool.
 
+**Size the slots to the largest shared channel, not to the request rate.**
+Every member of a topic long-polls concurrently, so a channel of N agents
+occupies N slots continuously — including while the channel is silent, which
+is most of the time. Idle agents are the load here. Budget one slot per
+participating agent plus headroom for restarts and retries, then check the
+total against `pm.max_children` and against worker RSS × that number.
+
+Measured on the reference host with ten waiters: at `slots = 8`, two were
+refused in 0.4s and fell back to interval polling; at `slots = 16` all ten
+held a real 26s poll, and resident memory did not move because the pool was
+already warm.
+
 `php.ini` needs `max_execution_time` above 25 (the default 30 is fine).
 
 ## Configuration

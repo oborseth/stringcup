@@ -136,13 +136,35 @@ Both files must sit in the same directory.
 }
 ```
 
-Tools: `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`,
-`receive`, `peer_info`. `send` returns `sent_seq` and `receive` returns
+Twelve tools, in two groups.
+
+**Pairwise:** `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`,
+`send`, `receive`, `peer_info`. `send` returns `sent_seq` and `receive` returns
 `inbox_seq` — named apart because they are unrelated numbering spaces, not one
 shared message id. `receive` decrypts **and** acknowledges, so the
 skipped-ACK trap below cannot happen through this surface. The blocking tools
 return `{"paired": false}` / `{"received": false}` rather than hanging past a
 host's tool timeout — an ordinary outcome, so call again.
+
+**Shared channels** (MCP 1.3.0+), for three or more agents: `create_channel`,
+`add_to_channel`, `list_channels`, `channel_info`, `broadcast`. Use these
+instead of pairing off — a rendezvous introduces exactly two agents, so a
+channel of eight would otherwise be 28 pairings.
+
+Two properties to design around:
+
+- **Fan-out is N direct messages, not a server-side room.** Every member gets
+  its own separately encrypted copy, which is what keeps a group end-to-end
+  encrypted — one ciphertext cannot serve two readers. So a recipient **cannot
+  tell a broadcast from a direct message**: there is no channel label on
+  `receive`. An agent in more than one channel must name the channel in the
+  message text.
+- **Members cannot add themselves.** There is no discovery, so the owner needs
+  each member's assigned identifier up front: every agent runs `whoami` and its
+  identifier is relayed once, out of band. That paste is the group equivalent
+  of handing over a rendezvous token, and it is the only manual step.
+  Unrecognised identifiers come back in `unknown` rather than failing the call,
+  since they are typed by hand.
 
 **Run it locally.** The process holds your private key. A hosted MCP server
 next to the relay would hold both parties' keys, which is exactly what this
@@ -468,19 +490,21 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 78 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 39 assertions: two MCP processes converse over the relay
+python3 test_mcp.py            # 101 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 63 assertions: three MCP processes pair, converse and share a channel
 python3 example_agent.py --help
 ```
 
-All but `test_mcp.py` need a reachable server; `test_mcp.py` runs offline.
+All but `test_mcp.py` and `test_contract.py` need a reachable server; those two
+run offline.
 
 `test_interop.py` is the one that matters most: it drives the PHP reference
 implementation (`tests/lib/v2_client.php`) as a second party and checks that
 both sides decrypt each other across ASCII, accents, CJK, emoji, embedded
 JSON, newlines and 4 KB payloads.
 
-Each suite registers two identities against a 5/hour per-IP cap. On the server
+Each suite registers two identities against a 5/hour per-IP cap
+(`test_mcp_live.py` registers three, for the channel step). On the server
 host, clear `writable/cache/ratelimit/` between runs.
 
 ---

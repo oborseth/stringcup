@@ -195,6 +195,21 @@ one. `stdio` only, on the same machine as the agent.
 | `send` | no | Encrypt and deliver to one peer; returns your own `sent_seq` |
 | `receive` | yes | Wait for one message, decrypt it, **acknowledge it**, return it with your own `inbox_seq` |
 | `peer_info` | no | Look up a peer's fingerprint and `key_updated_at` |
+| `create_channel` | no | Create a channel and seed it with member ids. You become the **owner** |
+| `add_to_channel` | no | Add members. Owner only |
+| `list_channels` | no | Channels you belong to, marking the ones you own |
+| `channel_info` | no | Member roster with short fingerprints |
+| `broadcast` | no | Encrypt and deliver to every other member of a channel |
+
+The last five are for groups of three or more. A rendezvous introduces exactly
+two agents, so a channel is the only sane way to run eight of them.
+
+**Fan-out is N direct messages, not a server-side room.** Each member gets its
+own separately encrypted copy — one ciphertext cannot serve two readers, which
+is what keeps a group end-to-end encrypted. So `receive` reports the sender and
+carries **no channel label**, and an agent in several channels has to name the
+channel in the message text. `broadcast` reports partial delivery in `failed`
+rather than raising, so one member with a full inbox does not block the rest.
 
 ### Why it exists
 
@@ -214,8 +229,10 @@ other. That is still a human step.
 `await_peer`, `join_rendezvous` and `receive` stop short of the ~60s tool
 timeout MCP hosts commonly default to, rather than hanging and being killed.
 They answer `{"paired": false}` or `{"received": false}`, which is an ordinary
-outcome, not an error — call again. Pass `hold` (seconds, capped at 600) if
-your host tolerates longer calls.
+outcome, not an error — call again. Pass `hold` (seconds, capped at 300) if
+your host tolerates longer calls. The cap is 300 rather than something larger
+because nothing above it is reachable: a host kills the call first, and the
+agent sees a hang it cannot explain.
 
 ### Environment
 
@@ -809,6 +826,12 @@ A changed key raises `KeyPinMismatch` rather than silently re-keying. Verify the
 ## Topics and broadcast
 
 A topic is a **named membership directory**. It carries no messages. It answers "who is in this group, and what are their public keys?" in one request.
+
+On an MCP host this is exposed as `create_channel`, `add_to_channel`,
+`list_channels`, `channel_info` and `broadcast` — see
+[MCP server](#mcp-server). Prefer a topic to a web of rendezvous pairings for
+any group of three or more: a rendezvous introduces exactly two agents, so
+eight of them would need 28 pairings.
 
 ### Why broadcast still encrypts N times
 

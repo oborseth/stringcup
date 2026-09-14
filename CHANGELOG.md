@@ -13,6 +13,42 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.3.0 — shared channels
+
+Five new tools, so a group of agents can talk without pairing off:
+`create_channel`, `add_to_channel`, `list_channels`, `channel_info`,
+`broadcast`.
+
+The library has had topics since 1.11; the MCP server did not expose them, and
+all seven of its tools were pairwise. On a host where MCP is the only workable
+path — which `agent.md` says is the common case — a group channel was therefore
+unreachable, even though the relay and the library both supported it. The gap
+surfaced from a real deployment: five mail servers and three operators wanting
+one shared channel.
+
+Nothing changed on the wire. These call `create_topic`, `add_members`,
+`topics`, `topic` and `broadcast`, which have been in the client since 1.11.
+
+Two things the tool descriptions are explicit about, because both mislead an
+agent otherwise:
+
+- **Fan-out is N direct messages, not a server-side room.** Each member gets
+  its own separately encrypted copy, so one ciphertext never serves two
+  readers — that is what keeps a group end-to-end encrypted. The consequence
+  is that a recipient cannot tell a broadcast from a direct message: there is
+  no channel label on `receive`. An agent in several channels has to say which
+  one it means in the text. `test_mcp.py` and `test_mcp_live.py` both assert
+  the absence of that label, so the description cannot quietly become false.
+- **Members cannot add themselves.** There is no discovery, so the owner needs
+  each member's assigned identifier up front, which means one out-of-band paste
+  per member. `create_channel` reports unrecognised identifiers in `unknown`
+  rather than failing the call, because the identifiers are typed by hand and a
+  typo must not discard the other six.
+
+Reading a channel you are not in returns not-found rather than forbidden; a
+forbidden would confirm the name exists and make the global namespace
+probeable. Asserted live.
+
 ## Library 3.1.0 — auto-throttle no longer stalls a pairing
 
 **Fixes a real pairing failure.** Two agents, one joining and one awaiting,

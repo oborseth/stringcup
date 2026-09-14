@@ -105,7 +105,7 @@ def main():
     print("=" * 48)
 
     workdir = tempfile.mkdtemp(prefix="stringcup-mcp-")
-    alice = bob = None
+    alice = bob = carol = None
 
     try:
         step("1. Two independent agents come up")
@@ -210,8 +210,72 @@ def main():
         check(looked_up["fingerprint"] == b["fingerprint"],
               "Independent lookup matches Bob's own fingerprint")
 
+        step("9. Three agents in one shared channel")
+        # The group path, which is what a real deployment looks like: several
+        # agents in one channel rather than a pairwise rendezvous. Live rather
+        # than stubbed, because a stub that shares the server's wrong field
+        # name passes every assertion — that is exactly how the MCP server
+        # read `peer_public_key` off a response whose field is
+        # `peer_identity_public_key`.
+        carol = Peer("carol", workdir)
+        c = carol.call("whoami")
+
+        import time as _time
+        channel = "live-mcp-%d" % int(_time.time())
+        bogus = "sc-" + "z" * 24
+        made = alice.call("create_channel",
+                          {"name": channel, "members": [b["id"], c["id"], bogus]})
+        check(made["created"] is True, "Alice created channel %s" % channel)
+        check(made["owner"] == a["id"], "Alice is the owner")
+        check(made["unknown"] == [bogus],
+              "A mistyped identifier is reported, and the valid ones still land")
+        check(made["members_added"] == 2, "Both real members were added")
+
+        roster = alice.call("channel_info", {"name": channel})
+        check(roster["count"] == 3, "Roster holds all three, creator included")
+        ids = sorted(m["id"] for m in roster["members"])
+        check(ids == sorted([a["id"], b["id"], c["id"]]), "Roster names the right agents")
+        by_id = {m["id"]: m for m in roster["members"]}
+        check(by_id[b["id"]]["fingerprint_short"] == b["fingerprint_short"],
+              "The roster's fingerprint for Bob matches what Bob computed locally")
+        check(by_id[a["id"]]["me"] is True, "Alice's own entry is flagged")
+
+        mine = carol.call("list_channels")
+        check(any(ch["name"] == channel and ch["mine"] is False
+                  for ch in mine["channels"]),
+              "Carol sees the channel and knows she does not own it")
+
+        fan = alice.call("broadcast", {"name": channel, "text": "queue drained"})
+        check(fan["recipients"] == 2, "Broadcast excluded the sender")
+        check(fan["delivered"] == 2 and fan["failed"] == [],
+              "Both other members received a copy")
+
+        for peer, who in ((bob, "Bob"), (carol, "Carol")):
+            got = peer.call("receive", {"hold": 30})
+            check(got["received"] is True and got["text"] == "queue drained",
+                  "%s decrypted the broadcast" % who)
+            check(got["from"] == a["id"], "%s sees it as from Alice" % who)
+            # The claim the broadcast tool description makes to the model.
+            check("channel" not in got and "topic" not in got,
+                  "%s got no channel label — fan-out really is N direct messages"
+                  % who)
+
+        step("10. A non-member cannot enumerate channels")
+        # 404 rather than 403: a 403 would confirm the name exists and make the
+        # global namespace probeable.
+        alice.call("broadcast", {"name": channel, "text": "second"})
+        for peer in (bob, carol):
+            peer.call("receive", {"hold": 30})
+        outsider = None
+        try:
+            bob.call("channel_info", {"name": channel + "-nope"})
+        except RuntimeError as exc:
+            outsider = str(exc)
+        check(outsider is not None and "404" in outsider,
+              "A channel you are not in reports not-found, never forbidden")
+
     finally:
-        for peer in (alice, bob):
+        for peer in (alice, bob, carol):
             if peer is not None:
                 peer.close()
         shutil.rmtree(workdir, ignore_errors=True)

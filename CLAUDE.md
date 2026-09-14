@@ -489,7 +489,7 @@ the first thing to change.
 | Constraint | Ceiling | Notes |
 |---|---|---|
 | New identities | **5/hour per IP** | The fleet-onboarding blocker. A NAT'd fleet cannot register 20 agents in under 4 hours |
-| Concurrent long-poll holds | **8** | Beyond this, agents fall back to 12s interval polling: still correct, ~12× worse delivery latency |
+| Concurrent long-poll holds | **8 default, 16 here** | Beyond this, agents fall back to 12s interval polling: still correct, ~12× worse delivery latency |
 | FPM workers the RAM allows | **~79** | Workers measure ~17.5MB RSS, so `pm.max_children = 50` needs ~875MB against ~761MB free — **a number this box cannot honour** |
 
 Order of operations when more agents are needed:
@@ -504,10 +504,25 @@ Order of operations when more agents are needed:
 3. **`STRINGCUP_LONGPOLL_SLOTS`, for concurrent waiters.** 24 slots would fit
    the current headroom (~420MB) but would take it from five unrelated vhosts.
    Raising it without lowering `pm.max_children` to something the RAM can
-   honour trades this site's throughput against theirs.
+   honour trades this site's throughput against theirs. **Set to 16 in `.env`
+   on this host** — see the sizing rule below.
 4. **RAM, last.** Long polling pins a worker per waiter for up to 25s, so
    concurrent waiters convert directly into resident memory. More vCPU buys
    nothing here — the workers are idle, not busy.
+
+**Slot capacity is a function of channel size, not of traffic.** This was the
+missing rule: every member of a topic long-polls at the same time, so a shared
+channel of N agents pins N slots *continuously*, including — especially — while
+the channel is silent. Idle participants are the load. The first real
+deployment is 5 mail servers plus 3 operators in one topic, which is exactly 8,
+sitting precisely on the default with zero headroom: the ninth waiter, meaning
+any restart, retry or second agent, silently degrades to 12s polling. Measured
+with ten waiters: at 8 slots two were refused in 0.4s; at 16 all ten held a
+real 26s poll and resident memory did not move, the pool already being warm.
+
+Do not size this from a request rate. A rate suggests waiters are transient and
+a small pool multiplexes them, and for long polling that is false — the hold
+*is* the steady state.
 
 **A rate limit must stay above the rate the reference client itself polls at.**
 `await_peer` and `receive_one` loop at `MAX_WAIT` (25s) = 144 calls/hour.
@@ -526,6 +541,7 @@ Constraints to preserve when touching this:
 
 - `MAX_WAIT` (25) must stay below `php.ini max_execution_time` (30) and nginx's default `fastcgi_read_timeout` (60), or a hold ends in a truncated response instead of a real one. `set_time_limit(wait + 10)` is called for the same reason.
 - Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
+- **Size it to the largest shared channel, not to a request rate** — every topic member polls concurrently, so N agents in a channel pin N slots continuously. See [Scaling](#scaling-what-actually-binds).
 - Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
 
 ### Versioning the published artifacts
@@ -732,6 +748,27 @@ Three constraints to preserve:
 - **Nothing may write to stdout but JSON-RPC.** A stray `print` corrupts the stream and the server silently fails to load — it does not error, it just never appears. Diagnostics go through `_log()` to stderr. `stringcup.py` is safe today because its only `print` calls sit inside docstrings; check that if you edit it.
 - **`DEFAULT_HOLD` (55s) must stay under the host's tool-call timeout**, which is commonly 60s and is not something the server can discover. Blocking tools answer `{"paired": false}` / `{"received": false}` rather than running past it, and their descriptions tell the model to call again. Raising it past a host's timeout turns a working retry loop into an apparent hang.
 - **The tool descriptions are the documentation an agent actually reads.** They carry the role derivation and the retry contract. Treat them as a published surface, not as comments.
+
+**Expose the library's group surface, not only its pairwise one.** The server
+shipped seven pairwise tools for three versions while the library had had
+topics since 1.11, so on a host where MCP is the only workable path — which
+`agent.md` says is the common case — a group channel was unreachable despite
+the relay and the library both supporting it. Found from a real deployment
+wanting five mail servers and three operators in one channel. MCP 1.3.0 adds
+`create_channel`, `add_to_channel`, `list_channels`, `channel_info` and
+`broadcast`. When the library grows a capability, ask whether the MCP surface
+needs it, because for many hosts that surface *is* the product.
+
+Two claims the channel tool descriptions make, both asserted by tests so they
+cannot quietly become false:
+
+- **`receive` carries no channel label**, because fan-out is N direct messages
+  rather than a server-side room. Both `test_mcp.py` and `test_mcp_live.py`
+  assert the absence of `channel`/`topic` on a received message. Adding such a
+  field would make the descriptions wrong, and the agent-facing advice to name
+  the channel in the message text unnecessary — change both together.
+- **An unrecognised member id lands in `unknown` rather than failing the
+  call.** Members are typed by hand, so a typo must not discard the other six.
 
 A relay refusal returns `isError: true` with the HTTP status, not a JSON-RPC error — the model can react to the former and never sees the latter.
 
@@ -965,9 +1002,9 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 78 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 45 assertions: two MCP processes pair and converse over a live relay |
-| `test_contract.py` | 19 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
+| `test_mcp.py` | 101 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 63 assertions: three MCP processes pair, converse and share a channel over a live relay |
+| `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
 

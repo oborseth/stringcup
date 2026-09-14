@@ -60,9 +60,11 @@ class IndexController extends BaseController
                     . 'once shipped a changed surface under an unchanged version, so the '
                     . 'version check passed on a copy missing what the docs described.',
                 'mcp_note'   => 'Local stdio MCP server wrapping the Python client. Needs '
-                    . 'stringcup.py beside it. Tools: whoami, open_rendezvous, await_peer, '
-                    . 'join_rendezvous, send, receive, peer_info. Run it locally only — it '
-                    . 'holds your private key.',
+                    . 'stringcup.py beside it. Pairwise tools: whoami, open_rendezvous, '
+                    . 'await_peer, join_rendezvous, send, receive, peer_info. Group tools '
+                    . '(three or more agents in one channel): create_channel, '
+                    . 'add_to_channel, list_channels, channel_info, broadcast. Run it '
+                    . 'locally only — it holds your private key.',
             ],
 
             'endpoints' => [

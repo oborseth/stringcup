@@ -106,8 +106,10 @@ def test_tools_list():
 
     names = [t["name"] for t in tools]
     expected = ["whoami", "open_rendezvous", "await_peer", "join_rendezvous",
-                "send", "receive", "peer_info"]
-    check(names == expected, "All seven tools listed in order: %s" % ", ".join(names))
+                "send", "receive", "peer_info",
+                "create_channel", "add_to_channel", "list_channels",
+                "channel_info", "broadcast"]
+    check(names == expected, "All twelve tools listed in order: %s" % ", ".join(names))
     check(all("handler" not in t for t in tools),
           "The Python handler is not leaked into the wire schema")
     check(all(t.get("description") for t in tools), "Every tool has a description")
@@ -198,6 +200,9 @@ class FakeClient:
         self.next_message = None
         self.acked = None
         self.role = "initiator"
+        self.broadcasts = []
+        self.created = None
+        self.added = None
 
     def open_rendezvous(self):
         return {"token": "rv-" + "b" * 32, "token_issued": True}
@@ -230,6 +235,39 @@ class FakeClient:
             "fingerprint_short": stringcup.fingerprint_short(self.PUB),
             "key_updated_at": "2026-09-11 00:00:00",
         }
+
+    # -- channels ----------------------------------------------------------
+    #
+    # These mirror the library signatures the server actually calls. A stub
+    # that agreed with the server but not the library is how the
+    # `peer_public_key` / `peer_identity_public_key` bug passed every
+    # stub-based assertion, so the names here are copied from stringcup.py,
+    # not from the handler. `test_mcp_live.py` is the real check.
+
+    def create_topic(self, name, members=None):
+        self.created = (name, list(members or []))
+        # One deliberately unknown id, so the partial-success path is covered.
+        return {"name": name, "unknown": [i for i in (members or []) if i.endswith("zz")]}
+
+    def add_members(self, name, ids):
+        self.added = (name, list(ids))
+        return {"unknown": []}
+
+    def topics(self):
+        return [{"name": "ops", "owner_id": self.id}]
+
+    def topic(self, name, verify_pins=True):
+        return {"name": name, "members": [
+            {"id": self.id, "identity_public_key": self.PUB,
+             "fingerprint_short": stringcup.fingerprint_short(self.PUB)},
+            {"id": "sc-" + "c" * 24, "identity_public_key": self.PUB,
+             "fingerprint_short": stringcup.fingerprint_short(self.PUB)},
+        ]}
+
+    def broadcast(self, topic, text, include_self=False):
+        self.broadcasts.append((topic, text))
+        return {"sent": [{"recipient_id": "sc-" + "c" * 24, "sent_seq": 1}],
+                "failed": [], "count": 1, "topic": topic, "recipients": 1}
 
 
 def with_fake(fake):
@@ -421,8 +459,59 @@ def test_peer_info():
           "key_updated_at exposed so rotation is visible")
 
 
+def test_channels():
+    step("16. channels")
+
+    fake = FakeClient()
+    with_fake(fake)
+
+    bogus = "sc-" + "y" * 22 + "zz"
+    payload = call("create_channel",
+                   {"name": "ops", "members": ["sc-" + "c" * 24, bogus]})["structuredContent"]
+    check(fake.created == ("ops", ["sc-" + "c" * 24, bogus]),
+          "create_channel passes the member list straight through")
+    check(payload["unknown"] == [bogus], "An unrecognised id is reported, not raised")
+    check(payload["members_added"] == 1,
+          "members_added counts only what was actually added, not what was asked")
+    check(payload["owner"] == fake.id, "The creator is named as owner")
+
+    payload = call("channel_info", {"name": "ops"})["structuredContent"]
+    check(payload["count"] == 2, "Roster reports every member")
+    check([m for m in payload["members"] if m["me"]][0]["id"] == fake.id,
+          "The caller's own entry is flagged, so an agent can tell itself apart")
+    check(all(m.get("fingerprint_short") for m in payload["members"]),
+          "Every member carries the short fingerprint a human reads aloud")
+    check(not any("identity_public_key" in m for m in payload["members"]),
+          "Raw public keys stay out of the model's context; fingerprints are enough")
+
+    payload = call("list_channels")["structuredContent"]
+    check(payload["count"] == 1 and payload["channels"][0]["mine"] is True,
+          "list_channels marks a channel this identity owns")
+
+    payload = call("broadcast", {"name": "ops", "text": "drained"})["structuredContent"]
+    check(fake.broadcasts == [("ops", "drained")], "broadcast reaches the library")
+    check(payload["delivered"] == 1 and payload["recipients"] == 1,
+          "delivered and recipients are reported separately")
+    check(payload["failed"] == [], "An empty failure list is present rather than omitted")
+
+    payload = call("add_to_channel",
+                   {"name": "ops", "members": ["sc-" + "d" * 24]})["structuredContent"]
+    check(fake.added == ("ops", ["sc-" + "d" * 24]), "add_to_channel reaches the library")
+    check(payload["added"] == 1, "added counts the new members")
+
+    # The distinction the broadcast description exists to make: fan-out is N
+    # direct messages, so a recipient cannot tell a broadcast from a DM. If a
+    # channel field ever appears on receive, that description is wrong.
+    fake.next_message = stringcup.Message(
+        id=1, sender_id="sc-" + "c" * 24, recipient_id=fake.id,
+        text="hi", created_at="2026-09-14 00:00:00")
+    payload = call("receive", {"hold": 1})["structuredContent"]
+    check("channel" not in payload and "topic" not in payload,
+          "receive carries no channel label, as the broadcast description states")
+
+
 def test_no_remote_transport():
-    step("16. There is no remote transport")
+    step("17. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -450,6 +539,7 @@ def main():
     test_relay_errors_reach_the_model()
     test_unexpected_exception_is_contained()
     test_peer_info()
+    test_channels()
     test_no_remote_transport()
 
     print("\n" + "=" * 48)
