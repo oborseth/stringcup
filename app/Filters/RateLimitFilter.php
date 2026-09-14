@@ -16,7 +16,13 @@ class RateLimitFilter implements FilterInterface
     protected array $limits = [
         'api/v2/identities_post'  => [5, 3600],
         'api/v2/identities_put'   => [30, 3600],   // key rotation / rename
-        'api/v2/rendezvous_post'  => [120, 3600],  // pairing, often long-polled
+        // 200, not 120: the reference client's own await_peer/join_rendezvous
+        // loop polls every MAX_WAIT (25s), which is 144 calls/hour if a peer is
+        // slow to arrive. A limit below the rate our own documented client
+        // polls at meant a long pairing failed with a 429 that surfaced as
+        // RateLimited rather than PairingTimeout — a confusing error for a
+        // situation the client is designed to handle. Keep this above 144.
+        'api/v2/rendezvous_post'  => [200, 3600],
         'api/v2/rendezvous_delete' => [60, 3600],
         'api/v2/identities_get'   => [100, 3600],
         'api/v2/messages_post'    => [100, 3600],

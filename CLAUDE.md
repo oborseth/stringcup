@@ -448,7 +448,7 @@ Tokens are issued once on identity registration and hashed with SHA-256 before d
 
 **RateLimitFilter** (`app/Filters/RateLimitFilter.php`) applies to all `api/v2/*` routes, in both the `before` and `after` positions — `before` enforces the limit, `after` attaches `X-RateLimit-Limit/Remaining/Reset`. CodeIgniter reuses one filter instance across both passes (`Filters::createFilter` caches by class), which is what makes the instance-held budget state safe.
 
-Limits: registration (5/hr), identity update (30/hr), identity lookup (100/hr), send (100/hr), inbox (300/hr), ACK single + batch (300/hr each), token introspection (60/hr), rotation (10/hr), rendezvous (120/hr), topics (200/hr read, 60/hr write). File-based cache in `writable/cache/ratelimit/`.
+Limits: registration (5/hr), identity update (30/hr), identity lookup (100/hr), send (100/hr), inbox (300/hr), ACK single + batch (300/hr each), token introspection (60/hr), rotation (10/hr), rendezvous (200/hr — must stay above the client's 144/hr poll rate), topics (200/hr read, 60/hr write). File-based cache in `writable/cache/ratelimit/`.
 
 Two things to preserve when editing this filter:
 
@@ -479,6 +479,42 @@ The vhost now uses `log_format stringcup` (defined at `http` level in
 fails config validation.
 
 `Authorization` is not in any format, so bearer tokens were never logged.
+
+### Scaling: what actually binds
+
+Measured on the current host (2 vCPU, 1938MB RAM, ~761MB free, 6 vhosts
+sharing one FPM pool). **RAM is the hardware limit, not CPU**, and it is not
+the first thing to change.
+
+| Constraint | Ceiling | Notes |
+|---|---|---|
+| New identities | **5/hour per IP** | The fleet-onboarding blocker. A NAT'd fleet cannot register 20 agents in under 4 hours |
+| Concurrent long-poll holds | **8** | Beyond this, agents fall back to 12s interval polling: still correct, ~12× worse delivery latency |
+| FPM workers the RAM allows | **~79** | Workers measure ~17.5MB RSS, so `pm.max_children = 50` needs ~875MB against ~761MB free — **a number this box cannot honour** |
+
+Order of operations when more agents are needed:
+
+1. **Nothing, if the agents are long-lived.** Identities and long-poll slots are
+   only consumed while agents are *waiting*; a fleet that mostly sends and acks
+   costs almost nothing. Measure before buying.
+2. **Registration, if onboarding many agents at once.** It is 5/hour *per IP*
+   because it is the one unauthenticated write, and raising it weakens the
+   only barrier to identity-farming. Prefer registering once and persisting the
+   identity file — which is already mandatory advice for other reasons.
+3. **`STRINGCUP_LONGPOLL_SLOTS`, for concurrent waiters.** 24 slots would fit
+   the current headroom (~420MB) but would take it from five unrelated vhosts.
+   Raising it without lowering `pm.max_children` to something the RAM can
+   honour trades this site's throughput against theirs.
+4. **RAM, last.** Long polling pins a worker per waiter for up to 25s, so
+   concurrent waiters convert directly into resident memory. More vCPU buys
+   nothing here — the workers are idle, not busy.
+
+**A rate limit must stay above the rate the reference client itself polls at.**
+`await_peer` and `receive_one` loop at `MAX_WAIT` (25s) = 144 calls/hour.
+Rendezvous was set to 120/hour, below that, so a slow pairing failed with a 429
+surfacing as `RateLimited` rather than `PairingTimeout` — a confusing error for
+the exact situation the client is built to handle. It is 200/hour now. Check
+this whenever either number moves.
 
 ### Long polling and FPM capacity
 

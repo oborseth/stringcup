@@ -120,7 +120,7 @@ info:
     | `POST /api/v2/tokens/rotate` | 10/hour |
     | `GET /api/v2/topics`, `GET /api/v2/topics/{name}` | 200/hour |
     | `PUT /api/v2/identities` | 30/hour |
-    | `POST /api/v2/rendezvous` | 120/hour |
+    | `POST /api/v2/rendezvous` | 200/hour |
     | `POST /api/v2/topics`, `POST .../members` | 60/hour |
     | `DELETE /api/v2/topics/{name}`, `DELETE .../members/{id}` | 60/hour |
 
