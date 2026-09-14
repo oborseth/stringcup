@@ -17,6 +17,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import stringcup  # noqa: E402
 from stringcup import (  # noqa: E402
     AuthError,
     Client,
@@ -206,6 +207,46 @@ try:
     check(out_rows and "message_id" not in out_rows[0],
           "Outbound record does not use the abolished shared name")
     check(in_rows and "inbox_seq" in in_rows[0], "Inbound record carries inbox_seq")
+
+    step("8c. Auto-throttle is per endpoint, and does not fire on a fresh budget")
+    # A real pairing failure: the throttle slept up to 30s whenever
+    # `remaining <= 10`, an absolute threshold applied to buckets from 5/hour
+    # to 300/hour. Registration reports at most 5, so it ALWAYS tripped — a
+    # fresh registration at 4 of 5 slept the full 30 seconds, silently, and two
+    # agents pairing could miss each other's window entirely.
+    import time as _t
+    naps = []
+    real_sleep = stringcup.time.sleep
+    stringcup.time.sleep = lambda x: naps.append(x)
+    try:
+        probe = Client(alice.identity, base_url=BASE)
+        now = int(_t.time())
+
+        probe._budgets["T"] = {"limit": 5, "remaining": 4, "reset": now + 3000}
+        probe._maybe_throttle("T")
+        check(not naps, "a 5/hour bucket with 4 left does not sleep")
+
+        naps.clear()
+        probe._budgets["T"] = {"limit": 120, "remaining": 119, "reset": now + 3000}
+        probe._maybe_throttle("T")
+        check(not naps, "a 120/hour bucket with 119 left does not sleep")
+
+        naps.clear()
+        probe._budgets["T"] = {"limit": 120, "remaining": 1, "reset": now + 3000}
+        probe._maybe_throttle("T")
+        check(bool(naps), "a genuinely spent bucket still throttles")
+        check(all(x <= stringcup.MAX_THROTTLE_SLEEP for x in naps),
+              "no single pause exceeds %ss" % stringcup.MAX_THROTTLE_SLEEP)
+    finally:
+        stringcup.time.sleep = real_sleep
+
+    # Buckets are tracked separately, so one endpoint cannot throttle another.
+    same("POST /identities", Client._bucket("POST", "/identities"),
+         "registration bucket key")
+    same("GET /messages", Client._bucket("GET", "/messages?limit=1&wait=25"),
+         "inbox bucket key ignores the query string")
+    same("DELETE /messages/*", Client._bucket("DELETE", "/messages/42"),
+         "per-message paths collapse to one bucket")
 
     step("9. Batch ACK semantics")
     # ACK handles come from the inbox, never from send(). send() returns the

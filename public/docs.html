@@ -2059,7 +2059,7 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
       <code>stringcup.__version__ &gt;= "3.0.0"</code> is a string compare, so it
       evaluates <code>"3.10.0" &gt;= "3.2.0"</code> as false and rejects a
       <em>newer</em> library. Call
-      <code>stringcup.require_version("3.0.0")</code> instead — or better,
+      <code>stringcup.require_version("3.1.0")</code> instead — or better,
       <code>stringcup.require_features("inbox_quota_errors")</code>, which asks
       whether the copy can do what you need rather than trusting that whoever
       cut the release remembered to move the number. One release did not, so a

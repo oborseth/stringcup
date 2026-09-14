@@ -699,6 +699,41 @@ Three constraints to preserve:
 
 A relay refusal returns `isError: true` with the HTTP status, not a JSON-RPC error — the model can react to the former and never sees the latter.
 
+### Auto-throttle must be per bucket and audible
+
+`_maybe_throttle()` caused a pairing failure that looked like a protocol bug:
+two agents, one joining and one awaiting, never seeing each other until one was
+stopped and retried.
+
+It slept up to 30s whenever `remaining <= 10`. That is an **absolute** threshold
+across buckets from 5/hour (registration) to 300/hour (inbox), so registration —
+which can never report more than 5 — always tripped it. A fresh registration at
+4 of 5 slept the full 30 seconds. Measured: 30s and 68s of pure sleep for two
+agents registering; 0.1s and 8.3s after the fix.
+
+Stop-and-retry "fixed" it because the retry reused the saved identity and never
+registered, which is why this looked like timing rather than the client.
+
+Four constraints now:
+
+- **Threshold is a fraction of the bucket's own limit** (`THROTTLE_AT_FRACTION`,
+  10%). Any absolute number is either always or never tripped depending on the
+  endpoint.
+- **Budgets are per bucket** (`_budgets`, keyed by `_bucket(method, path)`,
+  mirroring the server's own per-endpoint-and-method limits). One shared figure
+  throttles the wrong calls. `rate_limit` stays as the last-response view for
+  display; do not throttle from it.
+- **A single pause is capped at `MAX_THROTTLE_SLEEP` (5s).** Inside a caller's
+  pairing timeout, a long stall is indistinguishable from a dead peer.
+- **It writes to stderr when it pauses.** A silent sleep is what made this take
+  a user report to find. Never stdout — the MCP server speaks JSON-RPC there,
+  and `stringcup.py` is imported by it.
+
+`sys` is imported for that warning. Writing it without the import made the
+throttle raise `NameError` *only* when a budget was nearly spent — latent until
+an agent was under rate pressure, which is exactly when it must work. Caught by
+testing the firing path, not the passing one.
+
 ### Short timeouts in the client
 
 `receive_one(timeout=)` and `await_peer(timeout=)` must park for no longer than

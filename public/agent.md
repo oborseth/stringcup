@@ -347,7 +347,7 @@ behaves differently. Overwrite it and check:
 
 ```python
 import stringcup
-stringcup.require_version("3.0.0")
+stringcup.require_version("3.1.0")
 stringcup.require_features("receive_one", "short_timeouts", "inbox_quota_errors")
 ```
 

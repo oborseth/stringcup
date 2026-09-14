@@ -13,6 +13,38 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.1.0 — auto-throttle no longer stalls a pairing
+
+**Fixes a real pairing failure.** Two agents, one joining and one awaiting,
+would not see each other until one was stopped and retried.
+
+The cause was `_maybe_throttle()`. It slept up to **30 seconds** whenever
+`remaining <= 10` — an absolute threshold applied to buckets whose limits range
+from 5/hour (registration) to 300/hour (inbox). Registration can never report
+more than 5 remaining, so it *always* tripped: a fresh registration at 4 of 5,
+a budget 80% intact, slept the maximum. Measured before the fix, registration
+alone cost 30s and 68s for two agents; after, 0.1s and 8.3s, the 8s being a
+deliberate relay delay.
+
+That is why stop-and-retry appeared to fix it: the retry reused the saved
+identity, never registered, and so never hit the sleep.
+
+- The threshold is now a **fraction of each bucket's own limit** (10%), so
+  "nearly exhausted" means what it says on a 5/hour endpoint and a 300/hour one
+  alike.
+- Budgets are tracked **per endpoint bucket**. One shared figure meant a
+  registration reading throttled the next call even when that endpoint had 119
+  of 120 left.
+- A single pause is capped at **5 seconds**, down from 30. A long silent stall
+  inside a caller's pairing timeout is indistinguishable from a dead peer,
+  which is the failure this exists to prevent.
+- It is **no longer silent**: a pause writes one line to stderr naming the
+  bucket, what is left, and how long it is pausing. Never stdout — the MCP
+  server speaks JSON-RPC there.
+
+`rate_limit` still reports the most recent response, for display. Throttling
+reads the per-bucket store.
+
 ## Library 3.0.0 — API 5.0.0 — the `forbidden` bucket is gone
 
 **Breaking, deliberately, while it is still free.** `POST /api/v2/messages/ack`

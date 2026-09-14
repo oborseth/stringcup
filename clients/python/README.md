@@ -53,7 +53,7 @@ wrongly rejects `"2.10.0"`:
 
 ```python
 import stringcup
-stringcup.require_version("3.0.0")
+stringcup.require_version("3.1.0")
 ```
 
 Better still, say what you need. `require_features()` asks whether this copy can

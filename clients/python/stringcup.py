@@ -41,6 +41,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import random
 import re
 import time
@@ -72,10 +73,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 0, 0)
+version_info = (3, 1, 0)
 
 __all__ = [
     "Client",
@@ -148,6 +149,8 @@ FEATURES = {
     "feature_map": (2, 5, 0),          # FEATURE_OF, and its enforcement
     # 3.0.0
     "ack_without_forbidden": (3, 0, 0),   # ack() no longer returns a "forbidden" key
+    # 3.1.0
+    "per_bucket_throttle": (3, 1, 0),     # auto-throttle is per endpoint, and audible
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -167,6 +170,17 @@ MAX_ACK_BATCH = 200
 # Only relevant when long polling is unavailable; a `wait` hold is itself the
 # delay, so a waiting client needs no extra sleep.
 MIN_POLL_INTERVAL = 12.0
+
+#: Throttle only when a bucket is down to this fraction of its own limit.
+#:
+#: An absolute threshold cannot work: the server's buckets range from 5/hour
+#: (registration) to 300/hour (inbox), so any fixed number is either always or
+#: never tripped depending on the endpoint.
+THROTTLE_AT_FRACTION = 0.10
+
+#: Longest single automatic pause. Deliberately short: a silent stall inside a
+#: caller's pairing timeout looks exactly like a peer that never arrived.
+MAX_THROTTLE_SLEEP = 5.0
 
 # Server ceiling on a long-poll hold (MessageController::MAX_WAIT).
 MAX_WAIT = 25
@@ -730,6 +744,10 @@ class Client:
         self.transcript = transcript
 
         self._peer_keys: Dict[str, str] = {}
+        #: Rate-limit budget per endpoint bucket. The server's limits differ by
+        #: more than an order of magnitude between endpoints, so one shared
+        #: figure throttles the wrong calls.
+        self._budgets: Dict[str, Dict[str, Optional[int]]] = {}
         self._pending_ack: List[int] = []
         self._last_headers: Dict[str, str] = {}
         self._last_drain_long_poll = "off"
@@ -1512,6 +1530,7 @@ class Client:
         idempotency_key: Optional[str] = None,
     ):
         url = f"{self.base_url}{path}"
+        bucket = self._bucket(method, path)
         data = json.dumps(body).encode() if body is not None else None
 
         headers = {"Accept": "application/json"}
@@ -1528,17 +1547,17 @@ class Client:
 
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                self._note_budget(resp.headers)
+                self._note_budget(bucket, resp.headers)
                 self._last_headers = {
                     k.lower(): v for k, v in dict(resp.headers).items()
                 }
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
-            self._note_budget(exc.headers)
+            self._note_budget(bucket, exc.headers)
             self._last_headers = {}
             raise self._error_for(exc)
 
-        self._maybe_throttle()
+        self._maybe_throttle(bucket)
         return json.loads(raw) if raw else {}
 
     def _log_transcript(self, direction: str, peer: str, msg_id, text: str) -> None:
@@ -1567,7 +1586,35 @@ class Client:
         except OSError:
             pass
 
-    def _note_budget(self, headers) -> None:
+    @staticmethod
+    def _bucket(method: str, path: str) -> str:
+        """
+        The server's rate-limit bucket a request falls in.
+
+        Mirrors RateLimitFilter server-side: buckets are per endpoint *and*
+        method, which is why POST /identities (5/hour) and GET /messages
+        (300/hour) must not share a tracked budget. Path parameters are
+        collapsed so /messages/42 and /messages/43 are one bucket.
+        """
+        head = path.lstrip("/").split("?", 1)[0]
+        parts = [p for p in head.split("/") if p]
+        # Collapse anything that looks like an id or a name parameter.
+        shaped = [p if (p.isalpha() or p in ("current", "rotate", "ack", "batch"))
+                  else "*" for p in parts]
+        return "%s /%s" % (method.upper(), "/".join(shaped))
+
+    def _note_budget(self, bucket: str, headers) -> None:
+        """
+        Record the budget the server reported, against the bucket it describes.
+
+        Also mirrored into `self.rate_limit` for the documented
+        `{limit, remaining, reset}` surface, which reflects the most recent
+        response — useful for display, wrong for throttling decisions, which is
+        why `_maybe_throttle` reads the per-bucket store instead.
+        """
+        budget = self._budgets.setdefault(
+            bucket, {"limit": None, "remaining": None, "reset": None})
+
         for key, header in (
             ("limit", "X-RateLimit-Limit"),
             ("remaining", "X-RateLimit-Remaining"),
@@ -1576,30 +1623,74 @@ class Client:
             value = headers.get(header)
             if value is not None:
                 try:
+                    budget[key] = int(value)
                     self.rate_limit[key] = int(value)
                 except ValueError:
                     pass
 
-    def _maybe_throttle(self) -> None:
+    def _maybe_throttle(self, bucket: str) -> None:
         """
-        Spread the tail of a budget over the time left in the window.
+        Spread the tail of a budget over the time left in its window.
 
         Without this an agent burns its allowance early and then stalls for the
         remainder of the hour; the server tells us enough to avoid that.
+
+        Two things here were wrong and caused a real pairing failure.
+
+        **The threshold was absolute.** It slept whenever `remaining <= 10`,
+        applied to buckets whose limits range from 5/hour (registration) to
+        300/hour (inbox). Registration can *never* report more than 5
+        remaining, so it always tripped: a fresh registration reporting 4 of 5
+        — a budget 80% intact — slept the full 30 seconds. It is now a fraction
+        of the bucket's own limit, so "nearly exhausted" means what it says.
+
+        **The budget was global.** One `rate_limit` dict was overwritten by
+        every response, so a figure from the 5/hour registration bucket
+        throttled the *next* call even when that endpoint had 119 of 120 left.
+        Budgets are now tracked per bucket.
+
+        Together those made an agent sleep ~30s immediately after registering,
+        silently. Two agents pairing would miss each other's rendezvous window
+        while one sat in that sleep — and a stop-and-retry appeared to fix it,
+        because the retry reused the saved identity and never registered again.
+
+        The sleep is also capped far lower now. A 30-second silent stall inside
+        a caller's pairing timeout is indistinguishable from a dead peer, which
+        is the failure this is supposed to prevent, not cause.
         """
         if not self.auto_throttle:
             return
 
-        remaining = self.rate_limit.get("remaining")
-        reset = self.rate_limit.get("reset")
-        if remaining is None or reset is None or remaining > 10:
+        budget = self._budgets.get(bucket)
+        if not budget:
+            return
+
+        limit = budget.get("limit")
+        remaining = budget.get("remaining")
+        reset = budget.get("reset")
+        if limit is None or remaining is None or reset is None:
+            return
+
+        # Nearly exhausted, relative to this bucket's own allowance.
+        if remaining > max(1, int(limit * THROTTLE_AT_FRACTION)):
             return
 
         seconds_left = reset - int(time.time())
         if seconds_left <= 0:
             return
 
-        time.sleep(min(seconds_left / max(remaining, 1), 30.0))
+        nap = min(seconds_left / max(remaining, 1), MAX_THROTTLE_SLEEP)
+        if nap <= 0:
+            return
+
+        # Never silently. stdout is reserved (the MCP server speaks JSON-RPC on
+        # it), so this goes to stderr.
+        sys.stderr.write(
+            "[stringcup] %s budget nearly spent (%s of %s left, window resets in "
+            "%ds) — pausing %.1fs\n" % (bucket, remaining, limit, seconds_left, nap)
+        )
+        sys.stderr.flush()
+        time.sleep(nap)
 
     @staticmethod
     def _error_for(exc: urllib.error.HTTPError) -> StringcupError:

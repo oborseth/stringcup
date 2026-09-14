@@ -61,7 +61,7 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.0.0")
+stringcup.require_version("3.1.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors")
 
 __version__ = "1.2.0"
