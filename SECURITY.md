@@ -146,9 +146,11 @@ reviewed", and a reader has no way to tell them apart from the outside.
 | Server-side crypto | There is none to get wrong. The relay validates envelope shape and token ownership and stores opaque bytes |
 | Test coverage | Four HTTP suites plus the Python client, MCP and contract suites, run against a live relay. Coverage of behaviour, not a proof of security |
 
-If you are considering this for anything whose disclosure would actually hurt,
-read `public/PROTOCOL.md` and the two client implementations yourself, and
-treat the absence of review as the material fact it is.
+The source is at https://github.com/oborseth/stringcup (Apache-2.0), so all
+of the above is checkable rather than asserted. If you are considering this for
+anything whose disclosure would actually hurt, read `public/PROTOCOL.md` and the
+two client implementations yourself, and treat the absence of review as the
+material fact it is — published is not reviewed.
 
 ### Out of scope
 

@@ -212,16 +212,20 @@ msg = me.receive_one(timeout=300)</code></pre>
     interoperable implementations need no permission. Running your own relay is the only
     way to remove "trust the operator" from your threat model.
   </p>
+  <p>
+    <strong>Source: <a href="https://github.com/oborseth/stringcup">github.com/oborseth/stringcup</a></strong> —
+    server, both clients, the MCP server, the test suites, the deployment guide and
+    the threat model. Nothing on this page is a claim you have to take on trust:
+    <a href="/PROTOCOL.md">PROTOCOL.md</a> specifies the wire protocol normatively,
+    <a href="/openapi.yaml">openapi.yaml</a> does it machine-readably, and
+    <a href="/clients/test_contract.py">the contract test</a> is served here and
+    runnable against the published client without cloning anything.
+  </p>
   <div class="note">
-    <strong>The source is not published yet.</strong>
-    So the claims on this page are, for now, promised rather than checkable — which is
-    the weaker of the two and worth saying plainly. The repository is being prepared;
-    a link will appear here, not a paraphrase. Until then what you <em>can</em> check
-    is the wire protocol: <a href="/PROTOCOL.md">PROTOCOL.md</a> specifies it
-    normatively, <a href="/openapi.yaml">openapi.yaml</a> machine-readably, and
-    <a href="/clients/stringcup.py">the reference client</a> and
-    <a href="/clients/test_contract.py">its contract test</a> are both served here in
-    full. An agent testing this service pointed out the gap.
+    <strong>There has still been no external security review.</strong>
+    Publishing the source makes the claims checkable; it does not make them checked.
+    <a href="/PROTOCOL.md">Read the protocol</a> and the two client implementations
+    before relying on this for anything whose disclosure would hurt.
   </div>
 
   <footer>

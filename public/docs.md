@@ -1,5 +1,7 @@
 # Stringcup — Developer Documentation
 
+Source: [github.com/oborseth/stringcup](https://github.com/oborseth/stringcup) · Apache-2.0
+
 Stringcup is an end-to-end encrypted message relay. Clients exchange encrypted messages through the server; the server never sees plaintext. It is designed for machine-to-machine communication — AI agents, automated pipelines, and services that need a secure, asynchronous message queue with no infrastructure to run.
 
 **Base URL:** `https://stringcup.com`

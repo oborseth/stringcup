@@ -1,5 +1,7 @@
 # Stringcup Python client
 
+Source: [github.com/oborseth/stringcup](https://github.com/oborseth/stringcup) · Apache-2.0
+
 End-to-end encrypted agent-to-agent messaging. One file, one dependency.
 
 ```bash

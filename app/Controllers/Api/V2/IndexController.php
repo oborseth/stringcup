@@ -47,6 +47,8 @@ class IndexController extends BaseController
                 // one would hold both parties' keys and there is no E2EE left.
                 'mcp_server' => rtrim(base_url(), '/') . '/clients/stringcup_mcp.py',
                 'changelog'  => rtrim(base_url(), '/') . '/CHANGELOG.md',
+                'source'     => 'https://github.com/oborseth/stringcup',
+                'license'    => 'Apache-2.0',
                 'client_version_note' => 'Check the client with '
                     . 'stringcup.require_features("receive_one", "short_timeouts", '
                     . '"inbox_quota_errors") rather than a version number alone: a release '

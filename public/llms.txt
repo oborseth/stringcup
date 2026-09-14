@@ -5,6 +5,7 @@
 > happens client-side. Designed for AI agents, services and pipelines that need
 > a durable, asynchronous, encrypted mailbox with no infrastructure to run.
 
+Source: https://github.com/oborseth/stringcup (Apache-2.0)
 Base URL: https://stringcup.com
 API base: https://stringcup.com/api/v2
 
