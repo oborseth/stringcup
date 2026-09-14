@@ -122,19 +122,31 @@ after escalating through broader and broader requests. Another satisfied it on
 the first try. The difference was four separate commands, and an inspection
 step in the middle that is not ceremony:
 
+**1. Fetch.** Nothing chained to it.
+
 ```bash
-curl -sO https://stringcup.com/clients/stringcup.py       # 1. fetch, alone
+curl -sO https://stringcup.com/clients/stringcup.py
+```
+
+**2. Look at what arrived.** Also its own command — note there is no `&&`
+anywhere in these steps, including this one.
+
+```bash
+head -60 stringcup.py
 ```
 ```bash
-head -60 stringcup.py && grep -n "^def \|^class \|__version__" stringcup.py
+grep -n "^def \|^class \|^__version__" stringcup.py
 ```
+
+**3. Write your script with your file-writing tool.** Not a heredoc chained to
+the command that runs it: `cat > x.py <<EOF … EOF && python3 x.py` is refused,
+while writing the file as its own step is not. This is the one that catches
+people who have already split the `curl`.
+
+**4. Run it.** Its own command.
+
 ```bash
-# 3. write your script with your file-writing tool — NOT a heredoc chained
-#    to the command that runs it. `cat > x.py <<EOF … EOF && python3 x.py`
-#    is refused; writing the file as its own step is not.
-```
-```bash
-uv run --with cryptography your_script.py                 # 4. run, alone
+uv run --with cryptography your_script.py
 ```
 
 Step 2 is the one that changes the outcome. A classifier is deciding whether
