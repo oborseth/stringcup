@@ -727,7 +727,10 @@ def test_pairing_secret():
     # its role by construction, which is why handoff_block() already prints it
     # from the local call.
     lib = open(os.path.join(HERE, "stringcup.py")).read()
-    verify_body = lib.split("def _verify_pairing(")[1].split("\n    def ")[0]
+    # The exchange, not the thin guard wrapper around it: the wrapper owns the
+    # pin rollback, the exchange owns the protocol.
+    verify_body = lib.split(
+        "def _verify_pairing_exchange(")[1].split("\n    def ")[0]
     # The precise property: the role BOUND INTO THE TAG is the local one.
     # Reading the relay's claim is fine and desirable -- it is compared, never
     # bound. So the thing that must not exist is the ASSIGNMENT of the bound
@@ -929,6 +932,50 @@ def test_pairing_pin_lifecycle():
     except stringcup.VerificationFailed:
         raised = True
     check(raised, "With no trust store at all, failure still raises cleanly")
+
+    # ---- the rollback must be STRUCTURAL, not per-call-site ----
+    #
+    # It was a closure called from each failure path, and the
+    # role-disagreement check -- added later, in the SAME commit as the
+    # closure -- sat above the closure's definition, so it raised with the
+    # poisoned pin intact. Worst of the four exits to miss, because
+    # info["role"] comes from the relay: a hostile relay could substitute a
+    # key, ALSO report a disagreeing role, and deliberately take the one exit
+    # that left poison on disk. The poisoning went from accident to selection.
+    c, store_obj = _client(pin_created=True)
+    store_obj.pin(peer, stringcup.fingerprint(GOOD))
+    disagreed = None
+    try:
+        # Relay claims responder; this client is the initiator by construction.
+        c._verify_pairing(
+            {"peer_id": peer, "peer_identity_public_key": GOOD,
+             "role": "responder"}, secret, "rv-x", "initiator", 5)
+    except stringcup.VerificationFailed as exc:
+        disagreed = str(exc)
+    check(disagreed is not None and "reports this pairing" in disagreed,
+          "A relay disagreeing with the local role is detected")
+    check(store_obj.get(peer) is None,
+          "...and that ATTACKER-SELECTABLE exit rolls the pin back too")
+
+    # And the invariant lives where it cannot be forgotten by the next edit.
+    source = open(os.path.join(HERE, "stringcup.py")).read()
+    exchange = source.split(
+        "def _verify_pairing_exchange(")[1].split("\n    def ")[0]
+    check("forget(" not in exchange,
+          "No failure path inside the exchange cleans up for itself")
+    guard = source.split(
+        "def _verify_pairing(")[1].split("def _verify_pairing_exchange(")[0]
+    check("except Exception:" in guard and "forget(peer_id)" in guard,
+          "...the wrapper does it for EVERY exit, including ones not yet written")
+
+    # A verify-framed message must not be ACKed until its tag is one of ours:
+    # the header is unauthenticated, so a relay can bolt purpose/tag onto an
+    # ordinary message, and acknowledging DELETES.
+    ack_idx = exchange.find("self.ack([msg.id])")
+    ours_idx = exchange.find("compare_digest(theirs, expected)")
+    check(ours_idx != -1 and ack_idx != -1 and ours_idx < ack_idx,
+          "The tag is checked BEFORE acking, so a relay cannot make the client "
+          "delete a genuine message by bolting a header field onto it")
 
 
 def test_sync_barrier():

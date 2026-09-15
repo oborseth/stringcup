@@ -118,6 +118,7 @@ EXPECTED_FEATURES = {
     "local_pairing_role": (3, 10, 0),
     "header_framed_verify": (3, 10, 0),
     "undecryptable_visible": (3, 10, 0),
+    "structural_pin_rollback": (3, 11, 0),
 }
 
 

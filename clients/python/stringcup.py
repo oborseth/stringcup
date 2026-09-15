@@ -74,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.10.0"
+__version__ = "3.11.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 10, 0)
+version_info = (3, 11, 0)
 
 __all__ = [
     "Client",
@@ -178,6 +178,8 @@ FEATURES = {
     "local_pairing_role": (3, 10, 0),     # the role is never taken from the relay
     "header_framed_verify": (3, 10, 0),   # the verify tag is not in the body
     "undecryptable_visible": (3, 10, 0),  # Page.undecryptable, not silent drops
+    # 3.11.0
+    "structural_pin_rollback": (3, 11, 0),  # every pairing exit cleans up
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1329,6 +1331,48 @@ class Client:
     def _verify_pairing(self, info: dict, secret: str, token: str,
                         role: str, timeout: float) -> dict:
         """
+        Verify a pairing, guaranteeing the pin cleanup on EVERY exit.
+
+        The cleanup used to be a closure called from each failure path, and
+        the role-disagreement check -- added later, in the same commit -- sat
+        ABOVE the closure's definition, so it raised with the poisoned pin
+        intact. That is the exact bug the closure existed to fix, through a
+        door cut by its own fix.
+
+        It was also the worst of the four exits to miss, because `info["role"]`
+        comes from the relay: a hostile relay could substitute a key (which
+        first-sight-pins it), ALSO report a disagreeing role, and deliberately
+        take the one exit that left the poison on disk. The poisoning went from
+        an accident to something the attacker selects.
+
+        So the invariant does not live in call sites any more. Four sites where
+        one can be forgotten is what produced this; a wrapper cannot be skipped
+        by a failure path nobody has written yet. An auditor made exactly this
+        argument, and it is the fourth time in a day that a fix was applied to
+        the instances named rather than the class described.
+        """
+        peer_id = info["peer_id"]
+
+        # Captured BEFORE the body runs. Asking afterwards is what made the
+        # first version of this inert: rendezvous() has already pinned by then.
+        created_pin = (
+            self.trust_store is not None
+            and self._pin_created_for == peer_id
+        )
+
+        try:
+            return self._verify_pairing_exchange(
+                info, secret, token, role, timeout)
+        except Exception:
+            # Every failure, including any added later.
+            if created_pin and self.trust_store is not None:
+                self.trust_store.forget(peer_id)
+                self._pin_created_for = None
+            raise
+
+    def _verify_pairing_exchange(self, info: dict, secret: str, token: str,
+                                 role: str, timeout: float) -> dict:
+        """
         Exchange and compare DIRECTIONAL verification tags with the peer.
 
         Runs over the ordinary message path, so the relay needs no change.
@@ -1384,21 +1428,6 @@ class Client:
         expected = verification_tag(
             secret, other_pairing_role(role), ids, keys, token)
 
-        # A failed verification must not leave a poisoned pin.
-        #
-        # `rendezvous()` pins on first sight, BEFORE verification has decided
-        # anything. So a substituted key gets pinned, verification fails, and
-        # the NEXT attempt -- against the genuine key -- raises
-        # KeyPinMismatch, which reads as an attack when it is really poison
-        # from a failed pairing. `rendezvous()` records whether it was the one
-        # that created the pin, which is the only way to roll back exactly
-        # that pin and not a pre-existing one.
-        def _unpoison() -> None:
-            if (self.trust_store is not None
-                    and self._pin_created_for == peer_id):
-                self.trust_store.forget(peer_id)
-                self._pin_created_for = None
-
         self.send(
             peer_id,
             VERIFY_BODY,
@@ -1411,7 +1440,6 @@ class Client:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _unpoison()
                 raise VerificationFailed(
                     "peer never sent a verification tag within %.0fs. It may be "
                     "running a client older than 3.8.0, whose tag construction was "
@@ -1448,10 +1476,24 @@ class Client:
                 if not theirs:
                     continue
 
+                # Do NOT acknowledge yet. The header is not authenticated
+                # (AES-GCM is called with no AAD), so a relay can bolt
+                # `purpose`/`tag` onto an ORDINARY message -- and acknowledging
+                # DELETES. Acking before comparing therefore handed the relay a
+                # way to make the CLIENT destroy a genuine message on the
+                # strength of a field the relay itself controls. Only a tag
+                # that is actually one of this pairing's two values is ours to
+                # consume. Reported by an auditor, who also noted this makes
+                # `purpose` an unauthenticated dispatch key -- see the AAD note
+                # in PROTOCOL.md.
+                ours = (hmac.compare_digest(theirs, mine)
+                        or hmac.compare_digest(theirs, expected))
+                if not ours:
+                    continue
+
                 self.ack([msg.id])
 
                 if hmac.compare_digest(theirs, mine):
-                    _unpoison()
                     # Our own tag, echoed back at us. Nothing legitimate does
                     # this: the peer holds the other role and cannot produce
                     # this value. This is the reflection attack, caught.
@@ -1466,7 +1508,6 @@ class Client:
                     )
 
                 if not hmac.compare_digest(theirs, expected):
-                    _unpoison()
                     raise VerificationFailed(
                         "the pairing secret did not authenticate this peer. The tag "
                         "it sent does not match the one expected for its role over "

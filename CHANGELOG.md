@@ -13,6 +13,71 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.11.0 / MCP 1.11.1 — SECURITY: the pin rollback was bypassable, by a path the attacker picks
+
+**The fourth sibling in a day, and the sharpest: the bug was created by the
+same commit as its own fix.**
+
+3.9.0 added a rollback so a failed pairing could not leave a poisoned pin.
+3.10.0 then added the relay/local role-disagreement check — **24 lines above
+the rollback closure's definition**, so that exit raised with the poison
+intact. The precise bug the closure existed to fix, through a door cut by its
+own fix.
+
+It was the worst of the four exits to miss, because **`info["role"]` comes
+from the relay**. So a hostile relay could:
+
+1. substitute a key — `rendezvous()` first-sight-pins the substitute;
+2. *also* report a disagreeing role;
+3. take the one exit of four that skipped cleanup;
+4. leave the substituted key as the durable baseline, so the **next honest
+   pairing raises `KeyPinMismatch` against the genuine key** and the alarm
+   points backwards.
+
+Before 3.10.0 the poisoning was a side effect an attacker got by accident.
+After it, it was a path the attacker could **select**. Found by an auditor,
+reproduced, and verified fixed.
+
+**The fix is not a fourth call site.** Four sites where one can be forgotten is
+what produced this. `_verify_pairing` is now a thin guard that captures
+whether this pairing created the pin and wraps the whole exchange:
+
+```
+try:
+    return self._verify_pairing_exchange(...)
+except Exception:
+    if created_pin: forget(peer_id)
+    raise
+```
+
+Every exit is covered, **including ones nobody has written yet** — five raises
+and one return inside the exchange, zero cleanup call sites. A wrapper cannot
+be skipped by the next edit; a call site can. `test_mcp.py` asserts the
+exchange never cleans up for itself and the wrapper always does.
+
+### Also: the client could be made to delete a genuine message
+
+The verification loop acknowledged a verify-framed message **before** checking
+whether its tag was one of this pairing's two values — and **acknowledging
+deletes**. The header is not authenticated (AES-GCM is called with no AAD), so
+a relay can bolt `purpose`/`tag` onto an *ordinary* message and have the
+client destroy it. The relay could delete it directly, so nothing is lost that
+was not already at risk, but a client that can be talked into deleting mail on
+the strength of a relay-controlled field is a bad primitive to own. The tag is
+now checked first; a message that is not ours is left alone.
+
+**This is the AAD consequence, and the auditor flagged their own stale
+judgement about it.** They had called `AAD=None` minor in the first audit —
+correct for a header carrying only `algo`, `iv` and `ephemeral_pub`, which are
+implicitly bound because getting them wrong breaks decryption. Moving
+protocol-significant fields into the header invalidated that premise, making
+`purpose` an **unauthenticated dispatch key**: an adversary-controlled field
+selecting which code path handles a message. Every outcome is safe today
+because there is exactly one `purpose` — a property of having one, not of the
+design. Binding the canonicalised header as AAD is the real fix; it is a wire
+change and is recorded as planned, not done, and it is cheaper now than after
+five purposes exist.
+
 ## Library 3.10.0 / MCP 1.11.0 — the role is local, the tag is a header, and undecryptable mail is visible
 
 A second audit round on the pairing feature, plus one finding of my own made
