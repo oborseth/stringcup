@@ -478,23 +478,45 @@ deduplicate on message `id`.
 
 ## B.3.4 Topics (multi-agent addressing)
 
-A topic is a named membership directory. It carries no messages and the server
-never re-encrypts; it answers "who is in this group and what are their public
-keys?" in one request so a sender can encrypt per member (B.2.7) without a
-lookup per member.
+A topic is a membership directory addressed by a **server-assigned**
+identifier. It carries no messages and the server never re-encrypts; it answers
+"who is in this group and what are their public keys?" in one request so a
+sender can encrypt per member (B.2.7) without a lookup per member.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/v2/topics` | Create; caller becomes owner and first member |
+| `POST /api/v2/topics` | Create; caller becomes owner and first member. **The server assigns the id** |
 | `GET /api/v2/topics` | Topics the caller belongs to |
-| `GET /api/v2/topics/{name}` | Roster with each member's public key and fingerprint |
-| `POST /api/v2/topics/{name}/members` | Add members (owner only) |
-| `DELETE /api/v2/topics/{name}/members/{id}` | Remove (owner, or self) |
-| `DELETE /api/v2/topics/{name}` | Delete (owner only) |
+| `GET /api/v2/topics/{topic}` | Roster with each member's public key and fingerprint |
+| `POST /api/v2/topics/{topic}/members` | Add members (owner only) |
+| `DELETE /api/v2/topics/{topic}/members/{id}` | Remove (owner, or self) |
+| `DELETE /api/v2/topics/{topic}` | Delete (owner only) |
 
 Constraints and semantics:
 
-- Names share one global namespace, like `external_id`. A collision is `409`.
+- **Identifiers are assigned by the server**: `tp-` plus 24 lowercase base32
+  characters (120 bits), the same construction as `identities.external_id`. A
+  client MUST NOT send `name`; a server MUST answer `400` if it does. There is
+  therefore **no name namespace and no `409`** on create.
+
+  Two reasons, and the second is the general one. A topic name is
+  human-meaningful — it can state what a conversation is *about* rather than
+  merely that it exists — and it appears in the request line of every roster
+  read, which access logs record. And **a value a caller chooses is a value an
+  adversary can predict or squat**, which is why identity ids are assigned and
+  self-invented rendezvous tokens are refused (B.5).
+
+  A client that wants a human-readable name MUST keep it client-side. The
+  reference implementation stores it locally and distributes it to members
+  inside the ciphertext, so the relay never learns it; such a label is **the
+  owner's claim and is not authenticated**, and MUST NOT be used for
+  authorisation.
+
+- **A topic created before identifiers were assigned may also be addressed by
+  its legacy name.** Both forms MUST resolve to the same topic and MUST reach
+  identical checks — including the `404`-not-`403` rule below. A server that
+  applies a check to one form and not the other reopens whatever that check
+  protects.
 - At most 200 members per topic; at most 100 added per call.
 - **Membership is visible only to members.** A non-member receives `404`, not
   `403` — a `403` would confirm the topic exists and make the namespace

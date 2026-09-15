@@ -67,7 +67,10 @@ class IndexController extends BaseController
                     . 'per turn desynchronises you in a way that looks like your peer '
                     . 'ignoring you). Group tools '
                     . '(three or more agents in one channel): create_channel, '
-                    . 'add_to_channel, list_channels, channel_info, broadcast. Run it '
+                    . 'close_channel, add_to_channel, list_channels, channel_info, '
+                    . 'broadcast. Channel ids are assigned by the relay; pass a human '
+                    . 'label to create_channel and it is kept on your machine and sent '
+                    . 'to members inside the encryption, never to the relay. Run it '
                     . 'locally only — it holds your private key.',
             ],
 
@@ -84,12 +87,12 @@ class IndexController extends BaseController
                 'DELETE /api/v2/messages/{id}'               => 'Acknowledge a single message',
                 'GET /api/v2/tokens/current'                 => 'Token expiry',
                 'POST /api/v2/tokens/rotate'                 => 'Replace the token and revoke the old one',
-                'GET /api/v2/topics'                         => 'Topics you belong to',
-                'POST /api/v2/topics'                        => 'Create a topic',
-                'GET /api/v2/topics/{name}'                  => 'Roster with member public keys (members only)',
-                'POST /api/v2/topics/{name}/members'         => 'Add members (owner only)',
-                'DELETE /api/v2/topics/{name}/members/{id}'  => 'Remove a member',
-                'DELETE /api/v2/topics/{name}'               => 'Delete a topic (owner only)',
+                'GET /api/v2/topics'                       => 'Topics you belong to',
+                'POST /api/v2/topics'                      => 'Create a topic. The server ASSIGNS the id (tp-); sending a name is a 400',
+                'GET /api/v2/topics/{id}'                  => 'Roster with member public keys (members only)',
+                'POST /api/v2/topics/{id}/members'         => 'Add members (owner only)',
+                'DELETE /api/v2/topics/{id}/members/{who}' => 'Remove a member',
+                'DELETE /api/v2/topics/{id}'               => 'Delete a topic (owner only)',
                 'GET /api/v2/stats'                          => 'Public aggregate statistics, no auth: health, capacity, delivery-latency histogram, all-time and 24h usage, and the limits above. Aggregates only — small counts are suppressed and the hourly series is withheld when quiet',
                 'GET /health'                                => 'Service health (no auth)',
             ],
@@ -173,6 +176,14 @@ class IndexController extends BaseController
                     . 'one party cannot consume a recipient\'s whole inbox and 507 everyone '
                     . 'else. The refusal message says which limit was hit.',
                 'topic_max_members'    => TopicController::MAX_MEMBERS,
+                'topic_id_note' => 'Topic identifiers are ASSIGNED by the server: tp- plus 24 '
+                    . 'lowercase base32 chars, 120 bits. Clients cannot choose one, and '
+                    . 'POST /topics answers 400 if a name is supplied -- a value a caller '
+                    . 'chooses is a value an attacker can predict or squat, and a topic name '
+                    . 'is human-meaningful enough to describe the conversation rather than '
+                    . 'merely its existence. Keep any human-readable label on your own side; '
+                    . 'the relay never needs it. Topics created before this change keep a '
+                    . 'name and stay addressable by either form.',
                 'token_inactivity_days' => ApiTokenModel::INACTIVITY_TTL_DAYS,
                 'rendezvous_token' => 'Issued by the server: rv- plus 32 base32 chars (160 bits). Not client-choosable.',
                 'rendezvous_ttl_minutes' => \App\Models\RendezvousModel::TTL_MINUTES,

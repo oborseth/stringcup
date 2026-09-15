@@ -194,18 +194,51 @@ Replay guard for `POST /api/v2/messages`.
 
 ### Table: `topics`
 
-Named membership directories for multi-agent fan-out.
+Membership directories for multi-agent fan-out, addressed by a
+**server-assigned** opaque identifier.
 
 **Columns:**
 - `id` (BIGINT UNSIGNED, PRIMARY KEY, AUTO_INCREMENT)
-- `name` (VARCHAR(64), UNIQUE, NOT NULL) - Global namespace, like `external_id`
+- `external_id` (VARCHAR(32), UNIQUE, NULL) - **Assigned by the server**: `tp-`
+  plus 24 lowercase base32 chars (120 bits, as `identities.external_id`).
+  Clients cannot choose one; `POST /api/v2/topics` answers 400 if a `name` is
+  supplied. Nullable only so the backfill migration could add the column; every
+  row has one
+- `name` (VARCHAR(64), UNIQUE, **NULL**) - A **legacy human-chosen** name, and
+  nothing else. NULL for every topic created after ids were assigned
 - `owner_identity_id` (BIGINT UNSIGNED, NOT NULL) - Only the owner may change membership
 - `created_at` (DATETIME, NOT NULL)
 
 **Indexes:**
 - PRIMARY KEY on `id`
+- UNIQUE KEY on `external_id`
 - UNIQUE KEY on `name`
 - KEY on `owner_identity_id`
+
+**`name IS NOT NULL` is the grandfathered set, and that is the point of leaving
+it NULL.** A channel name states a subject rather than an existence — one real
+channel is named for a company, the function of its agents and a date — and it
+travelled in the request line of every roster read. Existing topics keep their
+name and are addressable by *either* form so nothing breaks, but no new one can
+ever have one. So:
+
+```sql
+SELECT COUNT(*) FROM topics WHERE name IS NOT NULL;   -- php spark topics:audit
+```
+
+is exactly the set still addressable by a meaningful name, and it is
+monotonically non-increasing. **"Frozen, not growing" is therefore a number
+anyone can check rather than an argument** — which is why the id was *not*
+stored in `name` as well. Doing that would have put two kinds of thing in one
+column distinguished only by row age, and renaming the column would have
+preserved exactly that. MySQL does not treat NULL as equal to NULL, so the
+UNIQUE index tolerates any number of them.
+
+**Both addressing forms must reach identical checks.** Resolution goes through
+`TopicModel::findAddressable()` via the single `requireMembership()`
+chokepoint; `tests/v2_topic_id_test.php` asserts byte-identical responses for
+id and legacy name at every endpoint, because two ways to name one object is
+the shape that produced the rate limiter's IP-only-bucket bypass.
 
 ---
 
@@ -612,6 +645,11 @@ Current schema version: **v3.0** (2026-09-10)
 | `2026-09-10-000004` | Add `key_updated_at` to identities (key-rotation detection) |
 | `2026-09-10-000005` | Create topics and topic_members |
 | `2026-09-10-000006` | Create rendezvous (agent pairing) |
+| `2026-09-11-000001` | Per-recipient and per-sender message sequences |
+| `2026-09-12-000001` | Add inbox quota accounting (`byte_len`, `idx_messages_quota`) |
+| `2026-09-12-000002` | Create `stats_counters` |
+| `2026-09-15-000001` | Add `idx_messages_sender_quota` for per-sender fairness |
+| `2026-09-15-000002` | **Assign topic identifiers** — adds `topics.external_id`, backfills every row, makes `name` nullable |
 
 The `2026-09-10-000003` reconcile migration is the reason the earlier ones can
 be read literally without misleading you: it corrects what they produce to

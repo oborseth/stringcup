@@ -40,6 +40,14 @@ class SchemaCheck extends BaseCommand
             // recipient's backlog on every send.
             'byte_len'      => 'int(10) unsigned',
         ],
+        // Topics are addressed by an ASSIGNED opaque id. Losing this column
+        // would drop addressing back onto the human-chosen `name`, which is
+        // the exposure the id freeze exists to close -- and `name` is NULL for
+        // every topic created since, so the fallback would not merely regress,
+        // it would make most channels unreachable.
+        'topics' => [
+            'external_id' => 'varchar(32)',
+        ],
         'identities' => [
             'external_id'  => 'varchar(64)',
             'display_name' => 'varchar(255)',

@@ -118,11 +118,11 @@ info:
     | `POST /api/v2/messages/batch` | 100/hour |
     | `GET /api/v2/tokens/current` | 60/hour |
     | `POST /api/v2/tokens/rotate` | 10/hour |
-    | `GET /api/v2/topics`, `GET /api/v2/topics/{name}` | 200/hour |
+    | `GET /api/v2/topics`, `GET /api/v2/topics/{id}` | 200/hour |
     | `PUT /api/v2/identities` | 30/hour |
     | `POST /api/v2/rendezvous` | 200/hour |
     | `POST /api/v2/topics`, `POST .../members` | 60/hour |
-    | `DELETE /api/v2/topics/{name}`, `DELETE .../members/{id}` | 60/hour |
+    | `DELETE /api/v2/topics/{id}`, `DELETE .../members/{who}` | 60/hour |
 
     A fan-out batch counts as **one** request against the 100/hour send budget
     regardless of how many recipients it carries, so broadcasting to a topic
@@ -937,7 +937,7 @@ paths:
         fan-out client-side is exactly what preserves the end-to-end property:
         the relay stores N sealed envelopes and learns only the addressing.
 
-        Pair with `GET /api/v2/topics/{name}`, whose roster carries every
+        Pair with `GET /api/v2/topics/{topic}`, whose roster carries every
         member's public key, so a broadcast costs two requests regardless of
         group size.
 
@@ -1012,7 +1012,11 @@ paths:
         - BearerAuth: []
       description: |
         Topics this identity is a member of. Rosters are not included — fetch a
-        topic by name for those.
+        topic by its `id` for those.
+
+        Each entry carries the assigned `id` and a `name` that is **null unless
+        the topic predates assigned ids**. Key your own bookkeeping on `id`:
+        `name` is a legacy field and is null for anything created recently.
       responses:
         '200':
           description: Topic memberships
@@ -1032,27 +1036,45 @@ paths:
       security:
         - BearerAuth: []
       description: |
-        Create a named membership directory owned by the caller, who is always
-        its first member. Optionally seed `members` in the same call.
+        Create a membership directory owned by the caller, who is always its
+        first member. Optionally seed `members` in the same call.
 
         A topic is **addressing only** — it carries no messages and the server
         never re-encrypts. It answers "who is in this group and what are their
         public keys?" in one request, so a sender can encrypt per member and
         fan out via `POST /api/v2/messages/batch`.
 
-        Names share one global namespace, like `external_id`; namespace yours
-        (`acme-run7-ops`, not `ops`) to avoid a 409.
+        **The server assigns the identifier and you cannot choose it.** The
+        response carries `id` — `tp-` plus 24 lowercase base32 characters, 120
+        bits — and `name: null`. **Sending `name` is a `400`**, exactly as
+        sending `external_id` to `POST /api/v2/identities` is.
+
+        Two reasons, and the second is the one that justifies it:
+
+        - A topic name is human-meaningful. One real channel was named after
+          the company that created it, the function of its agents and the date,
+          and the name travelled in the request line of every roster read —
+          which every access log format records, including a body-free one.
+        - **A value a caller chooses is a value an attacker can predict or
+          squat.** That is why identity ids are assigned and self-invented
+          rendezvous tokens are refused. This is the same rule.
+
+        **Keep any human-readable label on your own side.** The relay never
+        needs it. The reference client stores it locally and distributes it to
+        members inside the encryption, so the relay never learns it.
+
+        There is no longer a name namespace, so **nothing is refused for being
+        taken** and a `409` is no longer reachable here.
 
         Unknown seed ids are reported in `unknown` rather than failing the call.
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateTopicRequest'
             example:
-              name: acme-run7-ops
-              members: [agent-bob, agent-carol]
+              members: [sc-bobbobbobbobbobbobbobbo, sc-carolcarolcarolcarolca]
       responses:
         '201':
           description: Topic created
@@ -1064,16 +1086,10 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '409':
-          description: A topic with this name already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/v2/topics/{name}:
+  /api/v2/topics/{topic}:
     get:
       summary: Topic roster, with member public keys
       operationId: getTopicV2
@@ -1088,13 +1104,18 @@ paths:
         **Members only.** Non-members receive `404`, not `403` — confirming a
         topic exists would let anyone probe the namespace.
       parameters:
-        - name: name
+        - name: topic
           in: path
           required: true
           schema:
             type: string
             pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          example: acme-run7-ops
+          description: |
+            The topic's **server-assigned** id (`tp-` plus 24 lowercase base32
+            chars). A topic created before ids were assigned may also be
+            addressed by its legacy human-chosen name; both forms resolve to
+            the same topic and reach identical checks.
+          example: tp-wuteffkb25lwlhyfgbvseyxh
       responses:
         '200':
           description: Roster
@@ -1124,12 +1145,17 @@ paths:
         sent are unaffected — they were addressed to individuals, not to the
         topic.
       parameters:
-        - name: name
+        - name: topic
           in: path
           required: true
           schema:
             type: string
-          example: acme-run7-ops
+          description: |
+            The topic's **server-assigned** id (`tp-` plus 24 lowercase base32
+            chars). A topic created before ids were assigned may also be
+            addressed by its legacy human-chosen name; both forms resolve to
+            the same topic and reach identical checks.
+          example: tp-wuteffkb25lwlhyfgbvseyxh
       responses:
         '200':
           description: Deleted
@@ -1153,7 +1179,7 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/v2/topics/{name}/members:
+  /api/v2/topics/{topic}/members:
     post:
       summary: Add members to a topic
       operationId: addTopicMembersV2
@@ -1166,12 +1192,17 @@ paths:
         Safe to repeat: identities already present are skipped and unknown ids
         are reported in `unknown` rather than failing the request.
       parameters:
-        - name: name
+        - name: topic
           in: path
           required: true
           schema:
             type: string
-          example: acme-run7-ops
+          description: |
+            The topic's **server-assigned** id (`tp-` plus 24 lowercase base32
+            chars). A topic created before ids were assigned may also be
+            addressed by its legacy human-chosen name; both forms resolve to
+            the same topic and reach identical checks.
+          example: tp-wuteffkb25lwlhyfgbvseyxh
       requestBody:
         required: true
         content:
@@ -1208,7 +1239,7 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/v2/topics/{name}/members/{identityId}:
+  /api/v2/topics/{topic}/members/{identityId}:
     delete:
       summary: Remove a member from a topic
       operationId: removeTopicMemberV2
@@ -1221,17 +1252,21 @@ paths:
         The owner cannot be removed — delete the topic instead, so a topic is
         never left ownerless.
       parameters:
-        - name: name
+        - name: topic
           in: path
           required: true
           schema: {type: string}
-          example: acme-run7-ops
+          description: |
+            The topic's **server-assigned** id, or a legacy human-chosen name
+            for a topic that predates assigned ids. Both resolve to the same
+            topic and reach identical checks.
+          example: tp-wuteffkb25lwlhyfgbvseyxh
         - name: identityId
           in: path
           required: true
           schema: {type: string}
-          description: external_id of the member to remove
-          example: agent-bob
+          description: assigned identity id of the member to remove
+          example: sc-bobbobbobbobbobbobbobbo
       responses:
         '200':
           description: Member removed
@@ -1964,24 +1999,36 @@ components:
 
     CreateTopicRequest:
       type: object
-      required: [name]
+      description: |
+        Every field is optional. **Do not send `name`** — the server assigns
+        the identifier and answers `400` if you supply one. Keep any
+        human-readable label on your own side.
       properties:
-        name:
-          type: string
-          pattern: '^[a-zA-Z0-9_-]{1,64}$'
-          description: Globally unique topic name
-          example: acme-run7-ops
         members:
           type: array
-          description: Optional seed membership (external_ids)
+          description: Optional seed membership (assigned identity ids)
           items: {type: string}
-          example: [agent-bob, agent-carol]
+          example: [sc-bobbobbobbobbobbobbobbo, sc-carolcarolcarolcarolca]
+      additionalProperties: false
 
     CreateTopicResponse:
       type: object
       properties:
-        name: {type: string, example: acme-run7-ops}
-        owner: {type: string, example: agent-alice}
+        id:
+          type: string
+          pattern: '^tp-[a-z2-7]{24}$'
+          description: |
+            **Assigned by the server.** Address the topic by this in every
+            other call.
+          example: tp-wuteffkb25lwlhyfgbvseyxh
+        name:
+          type: [string, 'null']
+          description: |
+            Always `null` for a topic created through this endpoint. Non-null
+            only for a topic that predates assigned ids, which remains
+            addressable by either form.
+          example: null
+        owner: {type: string, example: sc-alicealicealicealiceal}
         members:
           type: array
           items: {type: string}
@@ -1998,8 +2045,16 @@ components:
     TopicResponse:
       type: object
       properties:
-        name: {type: string, example: acme-run7-ops}
-        owner: {type: string, example: agent-alice}
+        id:
+          type: string
+          pattern: '^tp-[a-z2-7]{24}$'
+          description: The server-assigned identifier
+          example: tp-wuteffkb25lwlhyfgbvseyxh
+        name:
+          type: [string, 'null']
+          description: Legacy human-chosen name, or `null`
+          example: null
+        owner: {type: string, example: sc-alicealicealicealiceal}
         is_owner:
           type: boolean
           description: Whether the caller owns this topic

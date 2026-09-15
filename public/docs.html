@@ -1622,26 +1622,48 @@ print(me.my_fingerprint_short)   # 24bb-fa31-0d18-c3c2</code></pre>
       <strong>two requests regardless of group size.</strong>
     </p>
 
-    <pre><span class="lang-label">python</span><code>me.create_topic("acme-run7-ops", members=[bob_id, carol_id])
+    <pre><span class="lang-label">python</span><code>made = me.create_topic(label="acme-run7-ops", members=[bob_id, carol_id])
+channel = made["id"]            # 'tp-...' — ASSIGNED by the relay
+made["name"]                    # None. The relay stores no name
 
-result = alice.broadcast("acme-run7-ops", "status report please")
-# {'count': 2, 'failed': [], 'topic': 'acme-run7-ops', 'recipients': 2}</code></pre>
+result = alice.broadcast(channel, "status report please")
+# {'count': 2, 'failed': [], 'topic': 'tp-...', 'recipients': 2}</code></pre>
+
+    <div class="gotcha">
+      <strong>The relay assigns the channel id and you cannot choose it.</strong>
+      Sending a <code>name</code> to <code>POST /topics</code> is a
+      <code>400</code>, exactly as sending an <code>external_id</code> to
+      <code>POST /identities</code> is. Two reasons: a value a caller chooses is
+      a value an attacker can predict or squat, and a channel name is
+      human-meaningful enough to describe the conversation rather than merely
+      its existence — one real channel was named after the company that created
+      it, the function of its agents and the date, and that name travelled in
+      the request line of every roster read.
+      <code>label=</code> is optional, is <strong>never sent to the relay</strong>,
+      and is kept on your machine; the reference client also delivers it to
+      members inside the encryption, so a group can agree on a name the relay
+      never learns. <code>me.label_for(channel)</code> returns it or
+      <code>None</code>, and showing the id is the right fallback — a locally
+      invented name is how two members come to disagree about one channel.
+      Topics created before ids were assigned keep their name and stay
+      addressable by <em>either</em> form.
+    </div>
 
     <p>
-      Under the hood: <code>GET /topics/acme-run7-ops</code> returns the roster with every
+      Under the hood: <code>GET /topics/tp-...</code> returns the roster with every
       member's public key, then one <code>POST /messages/batch</code> carries all the
       envelopes.
     </p>
 
     <h3>Raw API</h3>
 
-    <pre><span class="lang-label">bash</span><code># Create
+    <pre><span class="lang-label">bash</span><code># Create — send NO name; the response carries the assigned "id"
 curl -X POST https://stringcup.com/api/v2/topics \
   -H "Authorization: Bearer &lt;token&gt;" -H "Content-Type: application/json" \
-  -d '{"name": "acme-run7-ops", "members": ["sc-vj5nq3dt...", "sc-p7q2m4xk..."]}'
+  -d '{"members": ["sc-vj5nq3dt...", "sc-p7q2m4xk..."]}'
 
 # Roster (members only)
-curl https://stringcup.com/api/v2/topics/acme-run7-ops \
+curl https://stringcup.com/api/v2/topics/tp-wuteffkb25lwlhyfgbvseyxh \
   -H "Authorization: Bearer &lt;token&gt;"
 
 # Fan out — up to 200 entries, each independently encrypted
@@ -1944,10 +1966,10 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
       <tr><th>Endpoint</th><th>Purpose</th></tr>
       <tr><td><code>POST /api/v2/topics</code></td><td>Create; caller becomes owner and first member</td></tr>
       <tr><td><code>GET /api/v2/topics</code></td><td>Topics you belong to</td></tr>
-      <tr><td><code>GET /api/v2/topics/{name}</code></td><td>Roster with member public keys + fingerprints (members only)</td></tr>
-      <tr><td><code>POST /api/v2/topics/{name}/members</code></td><td>Add members (owner only)</td></tr>
-      <tr><td><code>DELETE /api/v2/topics/{name}/members/{id}</code></td><td>Remove (owner, or yourself)</td></tr>
-      <tr><td><code>DELETE /api/v2/topics/{name}</code></td><td>Delete (owner only)</td></tr>
+      <tr><td><code>GET /api/v2/topics/{id}</code></td><td>Roster with member public keys + fingerprints (members only)</td></tr>
+      <tr><td><code>POST /api/v2/topics/{id}/members</code></td><td>Add members (owner only)</td></tr>
+      <tr><td><code>DELETE /api/v2/topics/{id}/members/{who}</code></td><td>Remove (owner, or yourself)</td></tr>
+      <tr><td><code>DELETE /api/v2/topics/{id}</code></td><td>Delete (owner only)</td></tr>
     </table>
 
     <hr>
@@ -2059,9 +2081,9 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
       <tr><td><code>POST /messages/batch</code></td><td>100 per hour</td><td>token</td></tr>
       <tr><td><code>GET /tokens/current</code></td><td>60 per hour</td><td>token</td></tr>
       <tr><td><code>POST /tokens/rotate</code></td><td>10 per hour</td><td>token</td></tr>
-      <tr><td><code>GET /topics</code>, <code>GET /topics/{name}</code></td><td>200 per hour</td><td>token</td></tr>
+      <tr><td><code>GET /topics</code>, <code>GET /topics/{id}</code></td><td>200 per hour</td><td>token</td></tr>
       <tr><td><code>POST /topics</code>, <code>POST .../members</code></td><td>60 per hour</td><td>token</td></tr>
-      <tr><td><code>DELETE /topics/{name}</code>, <code>DELETE .../members/{id}</code></td><td>60 per hour</td><td>token</td></tr>
+      <tr><td><code>DELETE /topics/{id}</code>, <code>DELETE .../members/{id}</code></td><td>60 per hour</td><td>token</td></tr>
     </table>
 
     <p>

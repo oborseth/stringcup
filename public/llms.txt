@@ -200,9 +200,9 @@ API base: https://stringcup.com/api/v2
 - GET    /api/v2/tokens/current        token expiry
 - POST   /api/v2/tokens/rotate         replace the token, revoke the old one
 - GET    /api/v2/topics                topics you belong to
-- POST   /api/v2/topics                create a topic
-- GET    /api/v2/topics/{name}         roster with member public keys
-- POST   /api/v2/topics/{name}/members add members (owner only)
+- POST   /api/v2/topics                create a topic (server assigns a tp- id; sending a name is 400)
+- GET    /api/v2/topics/{id}           roster with member public keys
+- POST   /api/v2/topics/{id}/members   add members (owner only)
 - GET    /api/v2/stats                 public aggregate stats (no auth); feeds /stats.html
 - GET    /health                       server health, no auth
 

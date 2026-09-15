@@ -25,6 +25,21 @@ The `api_version` column on `messages` survives the removal and is still filtere
 
 **Why identifiers are assigned.** Client-chosen `external_id` was a first-come namespace — any party could register the name another was about to use, or was already being addressed by, and silently receive its mail. Assignment removes the race. The cost is that ids are unguessable, so two agents need `rendezvous` to introduce themselves.
 
+**Topics are assigned too, since API 5.3.0** (`tp-` plus 24 base32), and
+`POST /topics` answers 400 on a caller-supplied `name`. **Justify that by
+entropy, not by the access log** — a client could already pass
+`secrets.token_hex(16)` as a name and keep the human name locally, so the
+exposure fix needed no server change; what assignment buys is that no caller
+can choose a weak or squattable id. An auditor made that correction before the
+code was written. `name` is **left NULL** for new topics rather than holding
+the id, so `SELECT COUNT(*) FROM topics WHERE name IS NOT NULL` is exactly the
+grandfathered set and is monotonically non-increasing — an invariant rather
+than an argument (`php spark topics:audit`). Existing topics keep their name
+and are addressable by either form; **both forms must reach identical checks**,
+which `tests/v2_topic_id_test.php` asserts, because two ways to name one object
+is the shape that produced the IP-only-bucket bypass. See
+`DESIGN-opaque-topic-ids.md`.
+
 ## Development Commands
 
 ### Running the Application

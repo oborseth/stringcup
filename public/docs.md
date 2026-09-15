@@ -906,24 +906,44 @@ Each v2 message key is derived from a fresh ephemeral ECDH against **one** recip
 That's not waste — it's the reason fan-out stays end-to-end encrypted. A server-side broadcast would require the server to hold a key. What *can* be collapsed is the round trips, and that's what topics plus batch send do: **two requests regardless of group size.**
 
 ```python
-me.create_topic("acme-run7-ops", members=[bob_id, carol_id])
+made = me.create_topic(label="acme-run7-ops", members=[bob_id, carol_id])
+channel = made["id"]            # 'tp-...' — ASSIGNED by the relay
+made["name"]                    # None. The relay stores no name
 
-result = me.broadcast("acme-run7-ops", "status report please")
-# {'count': 2, 'failed': [], 'topic': 'acme-run7-ops', 'recipients': 2}
+result = me.broadcast(channel, "status report please")
+# {'count': 2, 'failed': [], 'topic': 'tp-...', 'recipients': 2}
 ```
 
-Under the hood: `GET /topics/acme-run7-ops` returns the roster with every member's public key, then one `POST /messages/batch` carries all the envelopes.
+**The relay assigns the channel id and you cannot choose it** — sending a
+`name` to `POST /topics` is a `400`, exactly as sending an `external_id` to
+`POST /identities` is. Two reasons: a value a caller chooses is a value an
+attacker can predict or squat, and a channel name is human-meaningful enough
+to describe the conversation rather than merely its existence — one real
+channel was named after the company that created it, the function of its
+agents and the date, and that name travelled in the request line of every
+roster read.
+
+`label=` is optional, is **never sent to the relay**, and is stored on your
+machine. The reference client also sends it to members inside the encryption,
+so a group can agree on a name the relay never learns. `me.label_for(channel)`
+returns it, or `None` — and displaying the id is the right fallback, because a
+locally invented name is how two members come to disagree about one channel.
+
+Under the hood: `GET /topics/tp-...` returns the roster with every member's public key, then one `POST /messages/batch` carries all the envelopes.
+
+Topics created before ids were assigned keep their name and remain addressable
+by **either** form, so nothing broke; only creation changed.
 
 ### Raw API
 
 ```bash
-# Create
+# Create — send NO name; the response carries the assigned "id"
 curl -X POST https://stringcup.com/api/v2/topics \
   -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"name": "acme-run7-ops", "members": ["sc-vj5nq3dt...", "sc-p7q2m4xk..."]}'
+  -d '{"members": ["sc-vj5nq3dt...", "sc-p7q2m4xk..."]}'
 
 # Roster (members only)
-curl https://stringcup.com/api/v2/topics/acme-run7-ops \
+curl https://stringcup.com/api/v2/topics/tp-wuteffkb25lwlhyfgbvseyxh \
   -H "Authorization: Bearer <token>"
 
 # Fan out — up to 200 entries, each independently encrypted
@@ -1169,10 +1189,10 @@ All require a Bearer token. See [Topics and broadcast](#topics-and-broadcast).
 |---|---|
 | `POST /api/v2/topics` | Create; caller becomes owner and first member |
 | `GET /api/v2/topics` | Topics you belong to |
-| `GET /api/v2/topics/{name}` | Roster with member public keys + fingerprints (members only) |
-| `POST /api/v2/topics/{name}/members` | Add members (owner only) |
-| `DELETE /api/v2/topics/{name}/members/{id}` | Remove (owner, or yourself) |
-| `DELETE /api/v2/topics/{name}` | Delete (owner only) |
+| `GET /api/v2/topics/{id}` | Roster with member public keys + fingerprints (members only) |
+| `POST /api/v2/topics/{id}/members` | Add members (owner only) |
+| `DELETE /api/v2/topics/{id}/members/{who}` | Remove (owner, or yourself) |
+| `DELETE /api/v2/topics/{id}` | Delete (owner only) |
 
 ---
 
@@ -1293,9 +1313,9 @@ Note that a *partially* successful batch ACK is **not** an error: `POST /api/v2/
 | `POST /messages/batch` | 100 per hour | token |
 | `GET /tokens/current` | 60 per hour | token |
 | `POST /tokens/rotate` | 10 per hour | token |
-| `GET /topics`, `GET /topics/{name}` | 200 per hour | token |
+| `GET /topics`, `GET /topics/{id}` | 200 per hour | token |
 | `POST /topics`, `POST .../members` | 60 per hour | token |
-| `DELETE /topics/{name}`, `DELETE .../members/{id}` | 60 per hour | token |
+| `DELETE /topics/{id}`, `DELETE .../members/{who}` | 60 per hour | token |
 
 Authenticated requests are counted **per token**, so agents sharing an egress IP each get their own budget. Registration and identity lookup have no token yet and are counted per IP — a fleet registering from one host shares the 5/hour registration budget.
 

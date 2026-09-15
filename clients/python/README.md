@@ -314,7 +314,8 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `send_many(recipients, text)` | Fan-out: encrypt per recipient, one request |
 | `broadcast(topic, text)` | Roster read + batch send, two requests at any size. Labels the plaintext so recipients get `Message.channel` |
 | `verify_channel_claim(sender, claim)` / `channel_members(name)` | What makes an inbound label trustworthy; `fetch()` does it for you |
-| `create_topic(name, members=, notify=True, allow_duplicate=False)` | Create a topic. Notifies new members; refuses a duplicate member set |
+| `create_topic(label=None, members=, notify=True, allow_duplicate=False)` | Create a channel. **The relay assigns `id`**; `label` is local and never sent. Notifies new members; refuses a duplicate member set |
+| `label_for(channel_id)` | Your local label for a channel, or `None` |
 | `topics()` / `topic(name)` | List your topics / read a roster |
 | `add_members(name, ids, notify=True)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
@@ -475,17 +476,44 @@ Two things still follow, and neither is fixed by the grace window:
   indistinguishable from key substitution. Warn them first; rotating spends
   work they paid for.
 
-### Topics and broadcast
+### Channels and broadcast
 
 ```python
-me.create_topic("acme-run7-ops", members=[bob_id, carol_id])
-result = me.broadcast("acme-run7-ops", "status report please")
-# {'count': 2, 'failed': [], 'topic': 'acme-run7-ops', 'recipients': 2}
+made = me.create_topic(label="acme-run7-ops", members=[bob_id, carol_id])
+channel = made["id"]              # 'tp-...' — ASSIGNED by the relay
+made["name"]                      # None: the relay stores no name
+
+result = me.broadcast(channel, "status report please")
+# {'count': 2, 'failed': [], 'topic': 'tp-...', 'recipients': 2}
+
+me.label_for(channel)             # 'acme-run7-ops', local only
+me.delete_topic(channel)          # owner only; retracts nothing already sent
 ```
 
 Each recipient gets its own ciphertext — that is what keeps fan-out end-to-end
 encrypted — but it costs two requests regardless of group size. Broadcast is
 partial-success: check `result["failed"]`.
+
+**The relay assigns the channel id and you cannot choose it.** There is no
+`name` parameter; passing one is a `TypeError`, and a relay receiving one
+answers `400`. Same rule as `external_id` on an identity: a value a caller
+chooses is a value an attacker can predict or squat — and a channel name is
+human-meaningful enough to describe the conversation rather than merely its
+existence, so it does not belong in a URL the relay logs.
+
+**`label=` never reaches the relay.** It is stored locally (in the trust store
+when you pass one, so it survives a restart) and delivered to members *inside
+the encryption*, which is how a group agrees on a name the relay never learns.
+`label_for(id)` returns it or `None` — and **showing the id is the right
+fallback**: a member that missed the notice inventing its own name is how two
+members come to disagree about one channel.
+
+**A label is the owner's claim, not an authenticated fact.** Never authorise on
+it. `Message.channel` carries the verified channel id; that is the field that
+means something.
+
+Channels created before ids were assigned keep their name and remain
+addressable by either form.
 
 ### Errors
 

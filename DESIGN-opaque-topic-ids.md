@@ -1,7 +1,30 @@
 # Opaque topic ids — design, attacked before implementation
 
-**Status: designed, critiqued, NOT implemented.** This is a breaking change to
-a live deployment and needs an operator decision, not a commit.
+**Status: IMPLEMENTED in API 5.3.0 / library 3.21.0 / MCP 1.17.0.** Kept as
+the record of a design attacked *before* it was written — six findings, one a
+fail-open security regression — because the critique is worth more than the
+design. Where the shipped version differs from the sketch below, the reason is
+a review finding, and both are recorded.
+
+**What changed between the sketch and the implementation:**
+
+- **The operator required that existing channels keep working**, which rules
+  out the hard cutover in the Migration section below. The reviewer accepted
+  the distinction between a *compatibility window* (new exposure keeps being
+  created) and *grandfathering a closed set* (it cannot grow) — but sharpened
+  it: the argument's strength is a function of set size, so it must be
+  recorded as a number, not a category. Hence `php spark topics:audit` and
+  hence `name` is left NULL.
+- **`name` is NULL for new topics**, not set to the assigned id. Storing the
+  id there would have put two kinds of thing in one column distinguished only
+  by row age; renaming the column would have preserved exactly that. NULL
+  makes the grandfathered set self-describing and monotonically
+  non-increasing.
+- **`close_channel` was added to the MCP surface**, which had five channel
+  tools and no way to close one. That is what makes the non-increasing
+  invariant enforceable rather than aspirational.
+- **`tests/v2_topic_id_test.php`** asserts the dual-resolution invariant the
+  reviewer made non-optional.
 
 It exists because `GET /api/v2/topics/{name}` puts a human-meaningful channel
 name in the request line. See [SECURITY.md](SECURITY.md), "The relay sees
