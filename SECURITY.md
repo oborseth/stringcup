@@ -264,6 +264,34 @@ This is the one place message content exists in plaintext at rest. That is a
 deliberate trade for auditability, not an oversight, and it is why the mode and
 the disclosure matter more than they would for an opt-in feature.
 
+### A mode argument is not a mode
+
+**Three passes over the client for file permissions all looked at the `0o600`
+in the `os.open()` call, and none asked what happens when the open does not
+*create* the file.** `Identity.save()` and `TrustStore._save()` wrote to a
+predictable `<path>.tmp` with `O_CREAT|O_TRUNC` and no `O_EXCL` or
+`O_NOFOLLOW`, which gave anyone with write access to the state directory two
+ways to take the X25519 private key. Both were reproduced before the fix:
+
+- **Symlink.** Pre-place `identity.json.tmp` as a symlink. `O_CREAT` follows
+  it and the private key is written wherever it points.
+- **Pre-created file.** Pre-place it as a file at 0666. The open succeeds, the
+  mode argument is **silently ignored**, the key is written in, and
+  `os.replace` installs a world-readable identity. The atomic-write pattern
+  that makes the mode correct everywhere else is exactly what carries the
+  wrong mode in, because `os.replace` preserves the temp file's mode.
+
+Fixed in library **3.19.0** (`O_EXCL` plus `O_NOFOLLOW`). One behaviour change:
+a stale `.tmp` from a crashed write is unlinked rather than reused, because
+with `O_EXCL` it would otherwise make the identity permanently unsaveable.
+
+**This is not a default-install exposure** — it needs a state directory
+writable by someone other than you. It is reachable by pointing
+`STRINGCUP_IDENTITY` at `/tmp`, by a container putting state on a shared
+mount, or by a state directory sitting at 0755 on a shared host. Low
+likelihood, maximum severity, which is why it was fixed rather than
+documented as a caveat.
+
 ### Authentication is not authorisation: what a malicious PEER can do
 
 This document analyses the relay exhaustively and, until now, never analysed
