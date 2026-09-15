@@ -33,6 +33,43 @@ from stringcup import (  # noqa: E402
 BASE = sys.argv[1] if len(sys.argv) > 1 else "https://stringcup.com/api/v2"
 PASSED = 0
 
+#: Where the server keeps its rate-limit counters, when we are ON the server.
+RATELIMIT_CACHE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "writable", "cache", "ratelimit",
+)
+
+
+def reset_rate_limits():
+    """
+    Clear the server's rate-limit counters, when running on the server itself.
+
+    THIS SUITE REGISTERS SIX IDENTITIES AGAINST A 5/HOUR BUCKET, so without
+    this it cannot pass — and it only ever did because the rate limiter was
+    broken (the read-modify-write race, fixed after an audit). The PHP suite
+    hit the identical wall for the identical reason and grew the identical
+    helper; this one was missed because it is not in `tests/run_all.sh`.
+
+    Registration is 5/hour deliberately: it is the one unauthenticated write,
+    and raising it would weaken the only barrier to identity farming. A suite
+    that legitimately needs more has to reset between sections rather than ask
+    for a higher limit.
+
+    Silently does nothing when the directory is unreachable — running from
+    another host — so the 429 happens honestly rather than failing for a
+    reason nobody can diagnose from the output.
+    """
+    if not os.path.isdir(RATELIMIT_CACHE):
+        return False
+    try:
+        for name in os.listdir(RATELIMIT_CACHE):
+            path = os.path.join(RATELIMIT_CACHE, name)
+            if os.path.isfile(path):
+                os.unlink(path)
+        return True
+    except OSError:
+        return False
+
 
 def step(m):
     print(f"\n[STEP] {m}")
@@ -185,6 +222,7 @@ try:
     same(b.my_fingerprint, TrustStore(store_path).get(bid), "Pins persist across reload")
 
     step("3d. Real key rotation is detected")
+    reset_rate_limits()
     rot = Client.register(base_url=BASE)
     rot_id = rot.id
     watcher = Client(a.identity, base_url=BASE, trust_store=TrustStore(os.path.join(work, "w2.json")))
@@ -226,6 +264,7 @@ try:
           "Every member carries a public key — one call is enough to encrypt for all")
 
     step("4c. Membership is private to members")
+    reset_rate_limits()
     outsider = Client.register(base_url=BASE)
     try:
         outsider.topic(topic)
@@ -361,6 +400,7 @@ try:
     same(b.id, back["peer_id"], "await_peer returns only once actually paired")
 
     step("6c. await_peer raises rather than returning None")
+    reset_rate_limits()
     lone = Client.register(base_url=BASE)
     solo = lone.open_rendezvous()
     try:
@@ -409,7 +449,16 @@ try:
     same(1, len(rows), "One record written")
     same("out", rows[0]["direction"], "Direction recorded")
     same("logged message", rows[0]["text"], "Body recorded")
-    check(rows[0]["message_id"] and rows[0]["peer"] == b.id, "Peer and message id recorded")
+    # `sent_seq` outbound, `inbox_seq` inbound -- NOT `message_id` for both.
+    # The two are unrelated numbering spaces and one name for both implied
+    # they were comparable, which is the confusion the rename removed (2.4.0).
+    # This assertion still named the old key, so it had been unrunnable since.
+    check(rows[0]["sent_seq"] and rows[0]["peer"] == b.id,
+          "Peer and outbound sequence recorded")
+    check("message_id" not in rows[0] and "inbox_seq" not in rows[0],
+          "An outbound record carries neither the retired name nor the inbound one")
+    # And the file holding every message in plaintext is created 0600.
+    same(0o600, os.stat(tpath).st_mode & 0o777, "Transcript created 0600")
 
     a.rendezvous_release(rv)
     ok("Claim released")

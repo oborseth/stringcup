@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -1071,17 +1072,92 @@ def test_key_rotation_is_coarse_forward_secrecy():
           or "backup" in doc,
           "...and that a surviving backup defeats the guarantee")
 
-    # It must refuse while mail is pending: rotating would make ciphertext
-    # encrypted to the old key permanently unreadable.
+    check("RETIRED_KEY_GRACE_SECONDS" in doc or "retained" in doc,
+          "...and that the old key is retained for decryption, not destroyed now")
+
+    # THE OLD KEY MUST BE RETAINED BEFORE IT IS OVERWRITTEN.
+    #
+    # This step previously asserted the opposite -- that rotation REFUSES
+    # while mail is pending -- which is what the first implementation did
+    # instead of retaining anything. That shipped, and it silently and
+    # permanently destroyed mail in flight and mail from every peer holding a
+    # cached public key, while the relay told the sender 201 stored. The
+    # refusal was never sufficient: a TOCTOU between the fetch and the relay
+    # update, and no help at all against the cached-key case, which is
+    # unbounded because nothing invalidates a peer's cache.
+    #
+    # So the assertion is inverted deliberately. A future commit restoring the
+    # refusal, or dropping the retention, fails here.
     source = open(os.path.join(HERE, "stringcup.py")).read()
     body = source.split("def rotate_identity_key(")[1].split("\n    def ")[0]
-    check("pending.count" in body and "ValidationError" in body,
-          "It refuses to rotate while mail is pending, rather than destroying it")
+    check("raise ValidationError" not in body,
+          "It no longer REFUSES on pending mail -- retention replaced the refusal")
+    retire = body.find("self.identity.retire_current_key()")
+    overwrite = body.find("self.identity.private_key_b64 =")
+    check(retire != -1 and overwrite != -1 and retire < overwrite,
+          "The old key is retired BEFORE being overwritten, or there is "
+          "nothing left to retain")
+    check("retired_key_expires_in_days" in body,
+          "The caller is told when forward secrecy actually arrives")
+
+    # Retained keys are for DECRYPTION ONLY. If one ever reached the send path
+    # or public_key_b64, rotation would be undone silently.
+    ident = stringcup.Identity.generate()
+    ident.retire_current_key()
+    old_pub = ident.public_key_b64
+    ident.private_key_b64 = stringcup.Identity.generate().private_key_b64
+    check(ident.public_key_b64 != old_pub,
+          "public_key_b64 tracks the current key only, never a retired one")
+    check(len(ident.decryption_keys()) == 2,
+          "...while decryption_keys() offers both")
+    ident.retired_keys[0]["retired_at"] = (
+        time.time() - stringcup.RETIRED_KEY_GRACE_SECONDS - 1
+    )
+    check(len(ident.decryption_keys()) == 1,
+          "An expired retired key is dropped -- the destruction IS the forward secrecy")
+    ident.retired_keys = [{"private_key": "x"}]
+    check(ident.prune_retired_keys() == [],
+          "An entry with no usable timestamp is dropped, not kept forever")
+
     relay_first = body.find("self.update_identity(")
     local_write = body.find("self.identity.save(")
     check(relay_first != -1 and local_write != -1 and relay_first < local_write,
           "The relay is updated BEFORE the local file, so a failure leaves a "
           "working identity instead of a stranded one")
+
+
+def test_receive_many_keeps_diagnostics():
+    step("21b. receive_many must not discard what the warning names")
+
+    # A page can be non-empty and carry NO messages: mail this identity cannot
+    # decrypt goes to Page.undecryptable rather than being delivered. The wait
+    # loop read that as "nothing arrived", polled to the deadline and returned
+    # a FRESHLY CONSTRUCTED empty Page -- so count and undecryptable were
+    # dropped, while the stderr warning told the operator to go and read
+    # Page.undecryptable. Through receive_many, the method the docs require in
+    # bold for any conversation, that field was always [].
+    #
+    # Measured on one inbox in one second before the fix:
+    #   fetch()        -> count=1 undecryptable=[1]
+    #   receive_many() -> count=0 undecryptable=[]
+    client = stringcup.Client.__new__(stringcup.Client)
+    calls = []
+
+    def fake_fetch(limit=10, since_id=None, wait=0, verify_channels=True):
+        calls.append(wait)
+        return stringcup.Page(
+            messages=[], count=1, has_more=False, next_since_id=None,
+            undecryptable=[41], long_poll="waited",
+        )
+
+    client.fetch = fake_fetch
+    page = client.receive_many(limit=10, timeout=0.3)
+
+    check(calls, "it really polled, so this is the timeout path")
+    check(page.count == 1,
+          "A timeout reports the real count, not a fabricated zero")
+    check(page.undecryptable == [41],
+          "...and the undecryptable ids the warning points at survive")
 
 
 def test_sync_barrier():
@@ -1251,6 +1327,7 @@ def main():
     test_pairing_secret()
     test_pairing_pin_lifecycle()
     test_key_rotation_is_coarse_forward_secrecy()
+    test_receive_many_keeps_diagnostics()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()

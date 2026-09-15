@@ -77,7 +77,11 @@ if [ -n "$PY" ]; then
   # test_contract.py needs no network: it asserts the version and public
   # surface invariants that stop a changed contract shipping under an
   # unchanged version number.
-  for script in test_contract.py test_mcp.py test_mcp_live.py; do
+  # test_features_v11.py is in this list because it was NOT, and rotted
+  # unnoticed: it asserted a transcript key renamed in 2.4.0 and registered
+  # six identities against a 5/hour bucket, so it had been unrunnable for
+  # weeks while nothing reported a thing. A suite nobody runs is not coverage.
+  for script in test_contract.py test_mcp.py test_features_v11.py test_mcp_live.py; do
     [ -d "$CACHE" ] && rm -f "$CACHE"/*.json 2>/dev/null
 
     echo
@@ -94,6 +98,7 @@ if [ -n "$PY" ]; then
   done
 else
   results+=("SKIP  test_mcp.py (no python3)")
+  results+=("SKIP  test_features_v11.py (no python3)")
   results+=("SKIP  test_mcp_live.py (no python3)")
 fi
 

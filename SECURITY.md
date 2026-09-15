@@ -67,6 +67,17 @@ the measurements, so a reader can re-run them rather than trust the summary.
   was incorrect and was retracted after being tested; and the
   highest-severity availability defect was **missed by the audit entirely** —
   found only because a message count disagreed with a message length.
+- **A remediation introduced a worse defect than the gap it closed, and it
+  shipped.** Key rotation was recommended as cheap coarse forward secrecy,
+  accepted, built and released — and it destroyed mail the relay had already
+  told the sender was stored, permanently and silently, for an unbounded
+  period. The reviewer withdrew the recommendation the next day on re-reading
+  the shipped code; nobody caught it in review. This is the most consequential
+  of the reviewers' errors precisely because the other three were wrong
+  *claims* and this one was running code. Fixed in library 3.16.0 by retaining
+  the key for a bounded window, but the sequence is the lesson: **a fix
+  deserves the same reproduction discipline as a finding.** It did not get one
+  here, because it arrived as advice rather than as a bug.
 - Passing review means no *known* defect. It does not mean secure.
 
 The honest summary: **read carefully, by capable reviewers, with the gaps
@@ -393,17 +404,47 @@ exposure it really closes is **ciphertext that escaped the relay before the
 ACK**: body-logging access logs, database snapshots, host images. That is a
 real class, and it is the one this project has hit twice.
 
-**The coarse version, which is built: rotate the static key and destroy the
-old one.** `Client.rotate_identity_key(save_to=...)`. Once the old private key
-is genuinely gone, any ciphertext captured before the rotation is permanently
-undecryptable. Per rotation rather than per message, and it costs none of the
-three properties above — the key stays shared, persistent between rotations,
-and re-readable.
+**The coarse version, which is built: rotate the static key, retain it briefly
+for decryption, then destroy it.** `Client.rotate_identity_key(save_to=...)`.
+Ciphertext captured before the rotation becomes permanently undecryptable when
+the retained key is destroyed — 30 days later, not at the moment of rotation.
+Per rotation rather than per message.
+
+**The first implementation destroyed the old key immediately, and that was a
+defect, not a design.** It is the most consequential error in this project's
+review history because it shipped as running code rather than as an
+overstated claim, and it was introduced *by* a remediation. Rotation
+permanently destroyed mail in flight, and — worse and unbounded — mail from
+every peer still holding a cached public key, which nothing invalidates. The
+relay accepted that mail, charged it to the recipient's quota and told the
+sender `201 stored`. The sender got no signal at all. It contradicted the one
+guarantee the rest of this system is built on: *only an acknowledgement
+deletes*.
+
+The reasoning that produced it is the part worth carrying: **forward secrecy
+is the deliberate destruction of a decryption key, and any message in flight
+when you destroy it dies.** A coarser granularity does not escape that
+contradiction — it widens the window and hides it, because peer key caching
+stretches it well past any moment a human would call "during the rotation".
+
+So the retained key is the fix, and **its destruction, not the rotation, is
+what delivers the forward secrecy.** Forward secrecy is delayed by the grace
+window. That is the correct trade when the alternative is silent data loss.
 
 Its weaknesses, stated rather than buried:
 
 - **The window is the rotation period.** Nothing between rotations is
   protected.
+- **Forward secrecy does not begin until the retained key expires.** For 30
+  days after a rotation, an attacker who takes the identity file gets
+  everything the old key could read. `RETIRED_KEY_GRACE_SECONDS` is the dial,
+  and shortening it trades readable mail for earlier secrecy.
+- **The 30 days is an argument, not a proof.** It matches
+  `ApiTokenModel::INACTIVITY_TTL_DAYS`, so a peer that has not reached the
+  relay in that time has no working token either — but nothing invalidates a
+  peer's cached view of your key, so a peer that polls constantly and never
+  refreshes can exceed it and lose mail. Closing that needs client-side cache
+  invalidation driven by `key_updated_at`. **It is not built.**
 - **It depends on the old key actually being destroyed.** Any surviving backup
   of a previous `identity.json` reinstates it — the same
   persist-versus-destroy contradiction, one size down, but at a granularity a
@@ -411,10 +452,11 @@ Its weaknesses, stated rather than buried:
 - **It spends your peers' verification.** Anyone who pinned you sees
   `KeyPinMismatch`, which is indistinguishable from substitution from their
   side. Tell them out of band first.
-- **Peers cache your key indefinitely** and will keep encrypting to the dead
-  one until they call `peer_public_key(..., refresh=True)`. Those messages
-  arrive undecryptable — visible to you in `Page.undecryptable`, invisible to
-  the sender.
+- **Peers cache your key indefinitely** and keep encrypting to the old one
+  until they call `peer_public_key(..., refresh=True)`. Inside the grace
+  window that mail still arrives; past it, it arrives undecryptable — visible
+  to you in `Page.undecryptable`, invisible to the sender, which is the worse
+  half. Tell peers out of band that you rotated.
 
 Real forward secrecy belongs in the same release as self-certifying
 identifiers and sender signatures: all three are the same architectural

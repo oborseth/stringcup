@@ -790,7 +790,24 @@ disagreement.
 discarded the page, so the relay knew, the library knew, and only the surface
 an agent reads was blind. **Any single-item accessor on an agent-facing surface
 must report whether more is queued** — that is the general rule here, not just
-a fix for this method. `receive` now returns `more_waiting` (which is why it
+a fix for this method.
+
+**The same shape recurred in `receive_many`, the method that fixed it.** A
+page can be non-empty and carry no `messages` — undecryptable mail goes to
+`Page.undecryptable` rather than being delivered — so the wait loop read that
+as "nothing arrived", polled to the deadline and returned a **freshly
+constructed** empty `Page`, discarding `count` and `undecryptable`. The stderr
+warning told the operator to read `Page.undecryptable`, and through the only
+method the docs permit them to use it was always `[]`. Measured on one inbox
+in one second: `fetch()` said `count=1 undecryptable=[1]`, `receive_many()`
+said `count=0 undecryptable=[]`. It returns the last page it actually saw now.
+**An accessor that aggregates pages must not drop a diagnostic that something
+else tells the operator to read** — the warning and the field it names have to
+be reachable from the same call. Found while reproducing an unrelated defect,
+and found the same way the undecryptable-mail DoS was: two numbers describing
+one thing disagreeing. That detector has now produced the two
+highest-severity findings in this project's history, both of them missed by
+careful reading. `receive` now returns `more_waiting` (which is why it
 calls `receive_many(limit=1)` rather than `receive_one`), and `test_mcp.py`
 plus `test_mcp_live.py` both assert the flag and the drain.
 
@@ -1224,7 +1241,7 @@ The server never encrypts or decrypts. It only:
 
 ### Known Limitations
 
-- **No forward secrecy:** the ephemeral public key is stored in the header, so compromising a static private key exposes past messages
+- **No forward secrecy:** the ephemeral public key is stored in the header, so compromising a static private key exposes past messages. **Rotation is the coarse substitute, and its first implementation was a defect that shipped** — it destroyed the old key immediately, which permanently destroyed mail in flight *and* mail from every peer holding a cached key, silently, while the sender was told `201 stored`. Forward secrecy is the deliberate destruction of a decryption key, so **anything in flight when you destroy it dies**; a coarser granularity does not avoid that, it only widens and hides the window. A rotated key is now retained for decryption only for `RETIRED_KEY_GRACE_SECONDS` (30 days) and **its destruction, not the rotation, is what delivers the secrecy**. Do not reintroduce immediate destruction, and do not restore the pending-inbox refusal that stood in for it — that was a TOCTOU and did nothing about the cached-key case. The 30 days matches `INACTIVITY_TTL_DAYS` and is an argument rather than a proof: nothing invalidates a peer's cached key, so `key_updated_at`-driven invalidation is the missing half
 - **No sender-identity binding in the crypto:** sender authenticity rests on the token check, not the ciphertext. A malicious relay could substitute a key — which is why fingerprints must be verified out of band
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
 - **First contact is authenticated when a secret rides the handoff** (library
@@ -1359,17 +1376,19 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 |---|---|
 | `stringcup.py` | The library |
 | `example_agent.py` | Runnable initiator/responder agent template |
-| `test_stringcup.py` | 56 assertions over the client surface |
-| `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
+| `test_stringcup.py` | 70 assertions over the client surface |
+| `test_features_v11.py` | 95 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 203 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 213 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
-| `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
+| `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
 
 `test_mcp_live.py` earns its place the same way: it caught the MCP server reading `peer_public_key` off the rendezvous response when the field is actually `peer_identity_public_key`. Every stub-based assertion passed, because the stub had the same wrong name.
+
+**Every suite must be in `tests/run_all.sh`.** `test_features_v11.py` was not, and rotted silently: it asserted a transcript key renamed in 2.4.0 (`message_id`, when the keys became `sent_seq`/`inbox_seq`) and registered **six** identities against the 5/hour registration bucket, so it could only ever have passed while the rate limiter was broken. Both defects had been sitting there for weeks with nothing reporting anything — the same shape as the PHP suite that needed six registrations, which grew a `reset_rate_limits()` helper for exactly this reason. The Python suite now has the same helper and the same reasoning in its docstring: **a suite that legitimately needs more than five registration-bucket calls resets between sections rather than asking for a higher limit**, because registration is the one unauthenticated write. A suite nobody runs is not coverage.
 
 Two constraints worth knowing:
 

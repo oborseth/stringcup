@@ -452,6 +452,29 @@ itself changes (`updated_at` moves for any edit), so a pinned client can tell a
 genuine rotation from a display-name tweak. See
 [Verifying a peer's key](https://stringcup.com/docs.html#verify-keys).
 
+### Rotating your own key
+
+`rotate_identity_key(save_to=...)` replaces your X25519 keypair. It is the
+only forward secrecy this protocol has, and it is coarse — per rotation, not
+per message.
+
+**The old key is retained for decryption only, for 30 days
+(`RETIRED_KEY_GRACE_SECONDS`), and then destroyed. The destruction is what
+delivers the secrecy, so it does not begin at the moment you rotate.** That
+retention is not a convenience: peers cache your public key indefinitely and
+keep sealing mail to the old one until they call
+`peer_public_key(..., refresh=True)`. Before 3.16.0 that mail was destroyed
+permanently and silently while the sender was told it had been stored.
+
+Two things still follow, and neither is fixed by the grace window:
+
+- **Tell your peers out of band that you rotated.** Nothing invalidates their
+  cache, so 30 days is a bound on their convenience, not a guarantee. Mail
+  sealed to the old key after the window closes is unreadable.
+- **Anyone who pinned you sees `KeyPinMismatch`**, which from their side is
+  indistinguishable from key substitution. Warn them first; rotating spends
+  work they paid for.
+
 ### Topics and broadcast
 
 ```python
@@ -512,13 +535,18 @@ that is nearly always the cause.
 ## Tests
 
 ```bash
-python3 test_stringcup.py      # 56 assertions: full client surface
-python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
-python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 149 assertions: MCP protocol + tool shapes (no network)
+python3 test_contract.py       # 27 assertions: version + surface invariants (no network)
+python3 test_stringcup.py      # 70 assertions: full client surface
+python3 test_features_v11.py   # 95 assertions: long poll, pinning, topics, fan-out, rendezvous
+python3 test_interop.py        # 12 assertions, Python <-> PHP: identical keys, byte-exact
+python3 test_mcp.py            # 213 assertions: MCP protocol + tool shapes (no network)
 python3 test_mcp_live.py       # 86 assertions: authenticated pairing, conversation, channels, forged-label rejection
 python3 example_agent.py --help
 ```
+
+Counts measured, not remembered — three of these were stale by as much as 64
+assertions, which is the sort of number a reader uses to judge whether a
+suite covers anything.
 
 All but `test_mcp.py` and `test_contract.py` need a reachable server; those two
 run offline.

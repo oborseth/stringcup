@@ -126,6 +126,8 @@ EXPECTED_FEATURES = {
     "audited_refusals": (3, 13, 0),
     "key_rotation": (3, 14, 0),
     "transcript_mode_warning": (3, 15, 0),
+    "retired_key_grace": (3, 16, 0),
+    "aggregated_diagnostics": (3, 16, 0),
 }
 
 

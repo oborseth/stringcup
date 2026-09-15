@@ -13,6 +13,106 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.16.0 — rotation was destroying mail the sender was told was stored
+
+**A remediation introduced a defect worse than anything it fixed.** 3.14.0
+added `rotate_identity_key()` as coarse forward secrecy, on an auditor's
+recommendation and with their argument that rotation "costs none of the three
+properties". The auditor withdrew that the following day, having re-read the
+shipped code, and they were right to: rotation overwrote the old private key
+in memory and on disk with **no retention of any kind**, so
+
+- mail in flight at the moment of rotation was permanently unreadable, and
+- **every peer holding a cached public key kept sealing mail to a private half
+  that no longer existed**, for an *unbounded* period — nothing invalidates a
+  peer's cache, and `peer_public_key` is documented as safe to cache forever.
+
+The relay accepted that mail, counted it against the recipient's quota, and
+told the sender `201 stored`. The sender got no signal at all. Reproduced end
+to end against the live relay before fixing: peer caches the key, recipient
+drains and rotates, peer sends, relay returns `sent_seq=1`, recipient decrypts
+zero.
+
+This is the guarantee the rest of the project treats as load-bearing — *only
+an acknowledgement deletes*. `RetentionSweeper` carries a header forbidding
+age-based expiry because it would "silently destroy mail the sender had been
+told was stored". Rotation did exactly that by a different mechanism.
+
+The underlying reason the original argument failed, which is worth keeping:
+**forward secrecy is the deliberate destruction of a decryption key, and any
+message in flight when you destroy it dies.** Coarser granularity does not
+avoid that contradiction; it makes the window *larger* and less visible,
+because peer key caching stretches it far past any moment a human would call
+"during the rotation". The pending-inbox refusal 3.14.0 shipped as protection
+was never sufficient either — a TOCTOU between the fetch and the relay update,
+and no help whatsoever against the cached-key case.
+
+**The fix is retention with an expiry, and the expiry is the forward secrecy.**
+A rotated-out key is kept in the identity file for decryption only, for
+`RETIRED_KEY_GRACE_SECONDS` (30 days), then destroyed. `decrypt()` accepts a
+list of candidate keys and tries each; a wrong key fails AES-GCM
+authentication, so this is a decryption attempt repeated, not a weakened
+check. Retired keys never reach the encryption path or `public_key_b64`.
+Pruning runs on load *and* on save, so long- and short-lived processes both
+expire keys without a caller remembering to, and an entry with an unreadable
+timestamp is dropped rather than kept forever — erring towards destruction is
+the safe direction for key material.
+
+The pending-inbox refusal is **removed** rather than kept as reassurance that
+never held; rotating with mail pending now warns on stderr instead.
+`rotate_identity_key()` returns `retired_key_expires_in_days`, and
+`forward_secrecy_note` now says plainly that forward secrecy arrives when the
+key is destroyed and **not** at the moment of rotation.
+
+30 days is `ApiTokenModel::INACTIVITY_TTL_DAYS`: a peer that has not spoken to
+the relay in 30 days has no working token either, so it is the longest a
+*functioning* peer can plausibly hold a stale cache. **That is an argument,
+not a proof**, and the docs say so — a peer that polls often and never
+refreshes its view of your key can still exceed it. Closing that needs
+client-side cache invalidation driven by `key_updated_at`, which is not built.
+
+An identity file that never rotated is byte-identical to what earlier versions
+wrote, and a file written before 3.16.0 loads unchanged.
+
+### And a second defect, found while reproducing the first
+
+`receive_many()` — the method the docs require in bold for any multi-turn
+conversation — **discarded the diagnostics on timeout.** A page can be
+non-empty and carry no `messages`: undecryptable mail is recorded in
+`Page.undecryptable` rather than delivered, so `messages` is empty while
+`count` is not. The loop read that as "nothing arrived", polled to the
+deadline, and returned a *freshly constructed* empty `Page`. So `count` and
+`undecryptable` were dropped — and the stderr warning told the operator to
+read `Page.undecryptable`, which was always `[]` through the only method they
+are told to use. Measured on one inbox in one second: `fetch()` reported
+`count=1 undecryptable=[1]`, `receive_many()` reported `count=0
+undecryptable=[]`.
+
+It now returns the last page it actually saw. The rule this earns, stated
+generally because this is the second time the shape has appeared: **an
+accessor that aggregates pages must not drop a diagnostic that something else
+tells the operator to read.** Sibling of "any single-item accessor must report
+whether more is queued", and found the same way the undecryptable-mail DoS was
+— two numbers describing one thing disagreeing.
+
+### Tests
+
+`test_mcp.py`'s rotation step asserted the **old**, defective contract — "it
+refuses to rotate while mail is pending" — so the fix had to invert it. It now
+asserts the retention, the ordering (retire *before* overwrite, or there is
+nothing left to retain), that retired keys never reach `public_key_b64`, and
+that an expired or undatable entry is dropped. Both new tests were checked
+against the pre-fix code and both fail there, because this project has shipped
+three inert fixes and an assertion that cannot fail is one of them.
+
+**`test_features_v11.py` was not in `tests/run_all.sh`, and had rotted.** It
+asserted a transcript key renamed in 2.4.0 and registered six identities
+against the 5/hour registration bucket, so it could only ever have passed
+while the rate limiter was broken. Both were invisible because nothing ran it.
+It now has the `reset_rate_limits()` helper the PHP suite grew for the
+identical reason, its assertions match the shipped contract, and **it is in
+`run_all.sh`** — nine suites, 95 assertions there.
+
 ## Library 3.15.0 — the 0600 fix could not repair the files that needed it
 
 **The upgrade population kept the defect.** Library 3.12.0 changed the

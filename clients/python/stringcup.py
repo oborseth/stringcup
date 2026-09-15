@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.15.0"
+__version__ = "3.16.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 15, 0)
+version_info = (3, 16, 0)
 
 __all__ = [
     "Client",
@@ -192,6 +192,9 @@ FEATURES = {
     "key_rotation": (3, 14, 0),           # coarse forward secrecy by rotation
     # 3.15.0
     "transcript_mode_warning": (3, 15, 0),  # a loose transcript mode is reported
+    # 3.16.0
+    "retired_key_grace": (3, 16, 0),        # rotation stops destroying mail in flight
+    "aggregated_diagnostics": (3, 16, 0),   # receive_many keeps undecryptable/count
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -202,6 +205,36 @@ ALGO = "x25519+ecies+aes256gcm"
 HKDF_SALT = b"stringcup-v2-msg"
 IV_BYTES = 12
 KEY_BYTES = 32
+
+#: How long a rotated-out private key is kept for DECRYPTION ONLY.
+#:
+#: Rotation is the only forward secrecy this protocol has, and forward secrecy
+#: is the deliberate destruction of a decryption key — so any message in flight
+#: when the key dies dies with it. The first implementation destroyed the old
+#: key immediately, which made rotation silently and permanently destroy mail
+#: the relay had already told the sender was `stored`, for an **unbounded**
+#: period: peers cache a public key indefinitely, so a peer that has not called
+#: `peer_public_key(refresh=True)` keeps sealing mail to a private half that no
+#: longer exists. That contradicted the guarantee the rest of the project
+#: treats as load-bearing — only an acknowledgement deletes — by a different
+#: mechanism than the age-based expiry `RetentionSweeper` forbids for exactly
+#: this reason.
+#:
+#: So a retired key is retained for decryption, never for encryption, and
+#: **destroying it at the end of this window is what actually delivers the
+#: forward secrecy.** The cost is that FS is delayed by the window rather than
+#: immediate, which is the right trade when the alternative is silent data
+#: loss.
+#:
+#: 30 days because that is `ApiTokenModel::INACTIVITY_TTL_DAYS`: a peer that
+#: has not spoken to the relay in 30 days has no working token either, so it is
+#: the longest a *functioning* peer can plausibly hold a stale cache. **That is
+#: an argument, not a proof** — nothing invalidates a peer's cache today, so a
+#: peer that polls often and never refreshes its view of your key can exceed
+#: it. Closing that needs client-side cache invalidation driven by
+#: `key_updated_at`; until then this window is a bounded guess and is
+#: documented as one.
+RETIRED_KEY_GRACE_SECONDS = 30 * 24 * 60 * 60
 
 # Server-side ceilings (see PROTOCOL.md B.3.1).
 #: First line of a broadcast's *plaintext*, naming the channel it was sent to.
@@ -931,6 +964,11 @@ class Identity:
     private_key_b64: str
     api_token: str
 
+    #: Keys rotated out and kept for decryption only, newest first. Each entry
+    #: is `{"private_key": b64, "retired_at": unix_seconds}`. See
+    #: `RETIRED_KEY_GRACE_SECONDS` for why these exist and why they expire.
+    retired_keys: List[dict] = field(default_factory=list)
+
     @property
     def private_key(self) -> X25519PrivateKey:
         return X25519PrivateKey.from_private_bytes(
@@ -943,6 +981,59 @@ class Identity:
             Encoding.Raw, PublicFormat.Raw
         )
         return base64.b64encode(raw).decode()
+
+    def decryption_keys(self) -> List[X25519PrivateKey]:
+        """
+        Every key that may still decrypt inbound mail: current, then retired.
+
+        Order matters only for speed — the current key is overwhelmingly the
+        common case, so it is tried first. Retired keys are **decryption only**
+        and never appear on the encryption path or in `public_key_b64`.
+        """
+        keys = [self.private_key]
+        for entry in self.prune_retired_keys():
+            try:
+                keys.append(
+                    X25519PrivateKey.from_private_bytes(
+                        base64.b64decode(entry["private_key"])
+                    )
+                )
+            except (KeyError, ValueError, TypeError):
+                # A malformed retained entry must not break receiving mail
+                # that the current key can read perfectly well.
+                continue
+        return keys
+
+    def prune_retired_keys(self, now: Optional[float] = None) -> List[dict]:
+        """
+        Drop retired keys past `RETIRED_KEY_GRACE_SECONDS`, in place.
+
+        **This is the step that delivers the forward secrecy**, so it is not
+        housekeeping: until a retired key is gone, ciphertext captured before
+        the rotation is still readable by whoever holds this file. It runs on
+        load and on save, so a long-lived process and a short one both expire
+        keys without a caller remembering to.
+        """
+        cutoff = (time.time() if now is None else now) - RETIRED_KEY_GRACE_SECONDS
+        kept = []
+        for entry in self.retired_keys:
+            try:
+                if float(entry["retired_at"]) >= cutoff:
+                    kept.append(entry)
+            except (KeyError, TypeError, ValueError):
+                # Undatable, so unexpirable, so not retained. Erring towards
+                # destruction is the safe direction for key material.
+                continue
+        self.retired_keys = kept
+        return kept
+
+    def retire_current_key(self, now: Optional[float] = None) -> None:
+        """Move the current private key onto the retired list, newest first."""
+        self.retired_keys.insert(0, {
+            "private_key": self.private_key_b64,
+            "retired_at": time.time() if now is None else now,
+        })
+        self.prune_retired_keys(now)
 
     def save(self, path: str) -> None:
         """Write atomically with 0600 — the file holds a private key."""
@@ -957,15 +1048,21 @@ class Identity:
         if directory:
             os.makedirs(directory, mode=0o700, exist_ok=True)
 
+        # Expire on the way out, so the window is enforced by every write
+        # rather than only by a reload.
+        self.prune_retired_keys()
+
         tmp = f"{path}.tmp"
-        payload = json.dumps(
-            {
-                "external_id": self.external_id,
-                "private_key": self.private_key_b64,
-                "api_token": self.api_token,
-            },
-            indent=2,
-        )
+        record = {
+            "external_id": self.external_id,
+            "private_key": self.private_key_b64,
+            "api_token": self.api_token,
+        }
+        # Omitted entirely when empty, so a file written by a client that
+        # never rotated is byte-identical to what earlier versions wrote.
+        if self.retired_keys:
+            record["retired_keys"] = self.retired_keys
+        payload = json.dumps(record, indent=2)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             with os.fdopen(fd, "w") as fh:
@@ -979,11 +1076,16 @@ class Identity:
     def load(cls, path: str) -> "Identity":
         with open(path) as fh:
             data = json.load(fh)
-        return cls(
+        identity = cls(
             external_id=data["external_id"],
             private_key_b64=data["private_key"],
             api_token=data["api_token"],
+            # Absent in files written before 3.16.0, and absent in any file
+            # whose identity never rotated.
+            retired_keys=list(data.get("retired_keys") or []),
         )
+        identity.prune_retired_keys()
+        return identity
 
     @classmethod
     def generate(cls) -> "Identity":
@@ -1056,8 +1158,21 @@ def encrypt(sender_id: str, recipient_id: str, recipient_pub_b64: str, plaintext
     }
 
 
-def decrypt(private_key: X25519PrivateKey, my_id: str, raw: dict) -> str:
-    """Decrypt one raw inbox message. Only the static private key is needed."""
+def decrypt(private_key, my_id: str, raw: dict) -> str:
+    """
+    Decrypt one raw inbox message. Only the static private key is needed.
+
+    `private_key` may be a single `X25519PrivateKey` or a **list** of them,
+    which is how a rotated identity reads mail still sealed to a key it has
+    retired (see `RETIRED_KEY_GRACE_SECONDS`). Each is tried in turn and the
+    error reported is the one from the *current* key, because a caller
+    debugging an HKDF mismatch does not want a diagnostic about a key that is
+    on its way out.
+
+    There is nothing to trust here: a wrong key fails AES-GCM authentication,
+    so trying several is a decryption attempt repeated, not a weakening of the
+    check. It cannot make a forged message decrypt.
+    """
     header = raw.get("header") or {}
     algo = header.get("algo")
     if algo != ALGO:
@@ -1072,16 +1187,24 @@ def decrypt(private_key: X25519PrivateKey, my_id: str, raw: dict) -> str:
     except (KeyError, ValueError) as exc:
         raise DecryptionError(f"malformed message envelope: {exc}") from exc
 
-    msg_key = _derive_key(private_key.exchange(eph_pub), raw["sender_id"], my_id)
+    keys = private_key if isinstance(private_key, list) else [private_key]
+    if not keys:
+        raise DecryptionError("no private key available to decrypt with")
 
-    try:
-        return AESGCM(msg_key).decrypt(iv, ct, None).decode()
-    except Exception as exc:
-        raise DecryptionError(
-            "AES-GCM authentication failed. The usual cause is an HKDF info "
-            f"mismatch: this client derived over "
-            f"{raw['sender_id']!r}->{my_id!r}."
-        ) from exc
+    first_failure = None
+    for key in keys:
+        msg_key = _derive_key(key.exchange(eph_pub), raw["sender_id"], my_id)
+        try:
+            return AESGCM(msg_key).decrypt(iv, ct, None).decode()
+        except Exception as exc:
+            if first_failure is None:
+                first_failure = exc
+
+    raise DecryptionError(
+        "AES-GCM authentication failed under %d candidate key(s). The usual "
+        "cause is an HKDF info mismatch: this client derived over "
+        "%r->%r." % (len(keys), raw["sender_id"], my_id)
+    ) from first_failure
 
 
 # --------------------------------------------------------------------------
@@ -1330,21 +1453,38 @@ class Client:
           and is indistinguishable from substitution from their side. Tell them
           out of band, before rotating. See SECURITY.md on why rotation spends
           your peers' verification.
-        - **In-flight mail encrypted to the old key becomes undecryptable.**
-          Drain the inbox first; this refuses if anything is pending.
+        - **In-flight mail stays readable for `RETIRED_KEY_GRACE_SECONDS`.**
+          The old private key is retained for **decryption only** and then
+          destroyed, and that destruction is what delivers the forward
+          secrecy. Mail sealed to the old key after the window closes is
+          permanently unreadable, so the window is a bound on how long a peer
+          may keep using a cached key — not a promise that it cannot happen.
 
         Python cannot truly zero the old key — `cryptography` holds the scalar
         inside an OpenSSL object and immutable bytes cannot be overwritten in
         place — so "destroyed" means the file no longer contains it and no
         reference remains. That is a real limitation, not a formality.
         """
+        # This USED to refuse on any pending mail, because destroying the old
+        # key immediately made that mail permanently unreadable. The refusal
+        # was never sufficient — it was a TOCTOU (fetch at T0, relay update at
+        # T1, anything arriving between them sealed to a key gone at T2) and it
+        # did nothing at all about the unbounded case, a peer sealing to a
+        # cached key days later. Retention fixes both, so the refusal is gone
+        # rather than kept as reassurance that never held.
+        #
+        # Pending mail is still reported, because draining first is cheaper
+        # than relying on the grace window and an operator should know.
         pending = self.fetch(limit=1, wait=0)
         if pending.count:
-            raise ValidationError(
-                "%d message(s) still pending: rotating now would make mail "
-                "encrypted to the old key permanently unreadable. Drain and "
-                "acknowledge the inbox first." % pending.count
+            sys.stderr.write(
+                "[stringcup] rotating with %d message(s) pending. They stay "
+                "readable: the retired key is kept for %d days. Mail sealed "
+                "to the old key after that is unreadable, so acknowledge your "
+                "inbox and tell peers to refresh your key.\n"
+                % (pending.count, RETIRED_KEY_GRACE_SECONDS // 86400)
             )
+            sys.stderr.flush()
 
         new_private = X25519PrivateKey.generate()
         new_public = base64.b64encode(
@@ -1356,6 +1496,10 @@ class Client:
         # Relay first: if this fails, the local key is unchanged and the
         # identity still works. Writing locally first would strand the agent.
         body = self.update_identity(public_key_b64=new_public)
+
+        # Retain BEFORE overwriting, or the key is gone and there is nothing
+        # to retain. Decryption only — it never returns to the send path.
+        self.identity.retire_current_key()
 
         self.identity.private_key_b64 = base64.b64encode(
             new_private.private_bytes(
@@ -1371,11 +1515,17 @@ class Client:
 
         body["previous_fingerprint"] = old_fingerprint
         body["fingerprint"] = fingerprint(new_public)
+        body["retired_key_expires_in_days"] = RETIRED_KEY_GRACE_SECONDS // 86400
         body["forward_secrecy_note"] = (
-            "Ciphertext captured before this rotation is now undecryptable, "
-            "PROVIDED no backup of the previous identity file survives. Peers "
-            "that pinned the old key will raise KeyPinMismatch until they "
-            "re-verify out of band."
+            "Forward secrecy arrives when the retired key is destroyed, in %d "
+            "days — NOT now. Until then the previous key is retained in this "
+            "identity file for decryption, so mail already in flight and mail "
+            "from peers holding a cached key still arrives. Ciphertext "
+            "captured before this rotation becomes undecryptable when that "
+            "window closes, PROVIDED no backup of the identity file survives. "
+            "Peers that pinned the old key will raise KeyPinMismatch until "
+            "they re-verify out of band."
+            % (RETIRED_KEY_GRACE_SECONDS // 86400)
         )
         return body
 
@@ -2031,7 +2181,7 @@ class Client:
         undecryptable: List[int] = []
         for raw in body.get("messages", []):
             try:
-                text = decrypt(self.identity.private_key, self.id, raw)
+                text = decrypt(self.identity.decryption_keys(), self.id, raw)
             except DecryptionError:
                 # Recorded rather than dropped. See Page.undecryptable.
                 try:
@@ -2225,16 +2375,38 @@ class Client:
         Returns a `Page` with no messages on timeout, not None, so the caller
         can iterate unconditionally. `ack=False` leaves everything for
         redelivery.
+
+        **A timeout still reports what was in the inbox.** A page can be
+        non-empty and yet carry no `messages`: mail this identity cannot
+        decrypt is recorded in `Page.undecryptable` rather than delivered, so
+        `messages` is empty while `count` is not. This loop used to treat that
+        as "nothing arrived", keep polling until the deadline, and then return
+        a **fresh empty Page** — so `count` and `undecryptable` were
+        discarded, and the stderr warning pointed the operator at
+        `Page.undecryptable`, which was always `[]` through the method the
+        docs require them to use. `fetch()` reported `count=1
+        undecryptable=[1]` for the same inbox in the same second.
+
+        That is the second defect in this project found by two numbers
+        describing one thing disagreeing, and the rule it earns is general:
+        **an accessor that aggregates pages must not drop a diagnostic that
+        something else tells the operator to read.** The warning and the field
+        it names have to be reachable from the same call.
         """
         deadline = time.monotonic() + timeout
         limit = max(1, min(int(limit), MAX_PAGE))
 
+        # The last page seen, so a timeout can report undecryptable mail and a
+        # real count instead of a fabricated zero.
+        last = Page(messages=[], count=0, has_more=False, next_since_id=None)
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return Page(messages=[], count=0, has_more=False, next_since_id=None)
+                return last
 
             page = self.fetch(limit=limit, wait=int(min(MAX_WAIT, max(0, remaining))))
+            last = page
 
             if page.messages:
                 if ack:
@@ -2243,7 +2415,7 @@ class Client:
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return Page(messages=[], count=0, has_more=False, next_since_id=None)
+                return last
 
             # A full hold pool answers instantly; without this the loop would
             # spin at request rate instead of waiting.
