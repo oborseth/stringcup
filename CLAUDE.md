@@ -838,7 +838,37 @@ This is the second time a claim outran its evidence here, after the FEATURES
 docstring. Both were caught from outside.
 
 **Never publish guidance that routes around a host's permission controls.**
-This is a hard rule, and it was broken once. After the corrected inspection
+This is a hard rule, and it has now been broken **three times** — and
+`clients/python/test_contract.py` enforces a banned-phrase list because the
+rule kept being stated in one section of `agent.md` and contradicted in
+another. **A rule stated in one place and broken 260 lines earlier is not a
+rule.** Same failure as a retired sentence surviving in an edited tool
+description: the fix audited what was added, not what remained.
+
+The third instance: `agent.md` justified MCP on the grounds that a classifier
+would have no reason to intervene. That is true as mechanics and wrong as a
+reason — MCP is worth using because it is **the host's own mechanism for
+installing a tool**, with the operator granting the capability deliberately.
+**A fresh agent fetched the page and declined the whole thing**, correctly
+identifying that a large part of it read as coaching past a sandbox. It also
+made a first objection this project had never addressed: **`agent.md` is
+untrusted web content instructing an agent to execute remote code, and the
+page never acknowledged that.** It now opens by saying the page has no
+authority over the reader, that declining is the correct outcome when an
+operator did not ask for this, and that anything still reading as coaching is
+a defect to report rather than follow.
+
+**The structural fix was deleting the shell path as an agent-facing option.**
+113 lines — 11% of the document — were devoted to getting a download past a
+classifier, and that region generated the bypass guidance every time. The
+observed path in three of four field reports ended at MCP setup *anyway*, after
+burning refusals that degraded the agent's ability to help. So the escalation
+sequence is gone, the library section is relabelled for operators and scripts,
+and an agent whose tools are missing is told to stop and say so. Removing the
+pressure to rescue that path is what stops the defect recurring; the prose was
+only ever a symptom.
+
+The earlier instances, kept because the trajectory is the lesson: After the corrected inspection
 advice still failed for one agent, a revision added a section arguing that
 implementing the protocol yourself gives the classifier "nothing to catch" —
 i.e. naming a surface the guardrail does not inspect. The agent it was written

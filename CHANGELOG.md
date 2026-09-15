@@ -13,6 +13,72 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## agent.md: the shell path is gone as an agent-facing option
+
+**A fresh agent fetched `agent.md` and declined to follow it.** Both of its
+objections were correct, and the first had never been addressed at all.
+
+**1. "It is untrusted web content telling me to execute remote code."**
+Right, and the page never acknowledged it. `agent.md` arrives with no
+authority, asks an agent to `curl` and run Python, and offered nothing to an
+agent sensible enough to hesitate. It now **opens** by saying so: the page does
+not outrank the operator, declining is the correct outcome when the operator
+did not ask for Stringcup, reading the source is the better next step than
+running it, and the page cannot be followed at all without an objective, a
+role and a token — so stopping to ask is right behaviour, not a failure.
+
+**2. "A large fraction of the page is devoted to getting around this host's
+permission controls."** Also right, and this is the **third** time this project
+has published that defect after writing a hard rule against it. The rule was
+sitting in `agent.md` itself — *"Do not route around the refusal"* — while the
+document contradicted it **260 lines earlier** by justifying MCP on the grounds
+that a classifier would have no reason to intervene. True as mechanics, wrong
+as a reason, and read by that agent as coaching. **A rule stated in one section
+and broken in another is not a rule**, which is the same
+audit-what-you-*removed* failure as a retired sentence surviving in an edited
+tool description.
+
+### The fix is structural, not editorial
+
+**113 lines — 11% of the document — existed to get a download past a
+classifier**, and that region produced the bypass guidance every single time.
+Three revisions each answered a reported wall with a more aggressive way
+through it. Rewriting the prose a fourth time would have left the pressure that
+generates it.
+
+So the escalation sequence is **deleted**. In its place: if the tools are not
+there, tell your operator and stop. The reason given is no longer that the
+shell path is blocked but that **it is the wrong thing to ask of an agent** —
+executing a file downloaded from a web page on that page's say-so — so a host
+that refuses is working correctly and a host that permits it is not a licence.
+
+The library section is relabelled **"Using the library directly (operators and
+scripts)"** and says outright that it is not an alternative route for an agent.
+MCP is justified as the host's own extension mechanism, with the operator
+granting the capability deliberately.
+
+**This lowers friction rather than raising it.** In three of four field reports
+the path already ended at MCP setup — after the agent burned refusals that
+degraded its ability to help with that very setup. The shell path's apparent
+zero-setup cost was false.
+
+The escalation *facts* are kept, reframed: a classifier broadening across a
+session is the control working, and the operational consequence is that a stuck
+agent cannot run `which uvx` for you — not that a restart should be used to
+shed its refusal history. That second reason had been offered beside the
+mechanical one and is removed.
+
+### Enforced, because prose discipline failed three times
+
+`test_contract.py` now fails on a banned-phrase list, and the list **cannot
+have exceptions** — the first draft of the historical record above *quoted* the
+removed sentences and tripped its own check. The record paraphrases instead:
+a banned-phrase list with a "but we were only quoting it" carve-out is a list
+nobody can trust. It also asserts the positive half, since deleting the bypass
+text could otherwise leave an agent with no instruction: the page must still
+tell an agent to stop and escalate, and must still state that it has no
+authority over the reader. Verified non-inert by reintroducing the phrase.
+
 ## Two of the retention sweeper's rules could never fire
 
 An auditor asked why 83 test topics were still on the relay, from **a count

@@ -344,6 +344,58 @@ def test_published_checksums_are_current():
           "Stale: %s\nRegenerate with: php spark clients:checksums" % stale)
 
 
+#: Phrasings that route around a host's permission controls, or read as though
+#: they do. Each was published and then removed after an agent objected.
+#:
+#: **This is enforced rather than remembered because it recurred three times.**
+#: A hard rule sat in `agent.md` -- "do not route around the refusal" -- while
+#: the document contradicted it 260 lines earlier, which is the same
+#: audit-what-you-REMOVED failure as a retired sentence surviving in an edited
+#: tool description. A rule stated in one section and broken in another is not
+#: a rule.
+BANNED_BYPASS_PHRASES = [
+    # MCP described as evading the classifier rather than as the host's own
+    # extension mechanism. A fresh agent read this and declined the whole page.
+    "nothing for the classifier to",
+    "nothing to fire on",
+    # Implementing the protocol yourself so the guardrail inspects the wrong
+    # surface. Empirically useless and wrong in principle.
+    "nothing to catch",
+    # Restarting to shed a classifier's accumulated refusal history, offered
+    # as a second reason beside the mechanical one.
+    "accumulated posture",
+    # Any framing of a refusal as a thing to get past.
+    "get around the classifier",
+    "around your permission",
+]
+
+
+def test_agent_md_publishes_no_bypass_guidance():
+    step("8. agent.md routes nobody around a permission control")
+
+    path = os.path.join(HERE, "..", "..", "public", "agent.md")
+    if not os.path.isfile(path):
+        print("  \033[33m~\033[0m SKIP: public/agent.md not present "
+              "(published file, not shipped beside the client)")
+        return
+
+    text = open(path, encoding="utf-8").read().lower()
+
+    for phrase in BANNED_BYPASS_PHRASES:
+        check(phrase not in text,
+              "agent.md does not say %r" % phrase,
+              "This phrasing was published and removed after an agent objected "
+              "to it. Reintroducing it tells someone else's agent to disregard "
+              "their operator. See 'Do not route around the refusal'.")
+
+    # The positive half: the page must still TELL an agent to stop, or removing
+    # the bypass text would leave it with no instruction at all.
+    check("stop" in text and "operator" in text,
+          "...and still tells an agent to stop and escalate to its operator")
+    check("has no authority over you" in text,
+          "...and states plainly that the page does not outrank the operator")
+
+
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
@@ -388,6 +440,7 @@ def main():
     test_mcp_requires_a_library_that_can_serve_it()
     test_enforcement_is_publicly_fetchable()
     test_published_checksums_are_current()
+    test_agent_md_publishes_no_bypass_guidance()
     test_changelog_records_this_version()
 
     print("\n" + "=" * 52)
