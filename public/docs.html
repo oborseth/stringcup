@@ -782,9 +782,18 @@ curl -O https://stringcup.com/clients/stringcup_mcp.py</code></pre>
     </p>
 
     <ul>
-      <li><code>channel</code> is <code>null</code> for a direct message
-          <strong>or</strong> a sender older than 3.4.0. It never means
-          &ldquo;certainly a direct message&rdquo;.</li>
+      <li><strong><code>channel</code> is verified</strong> (library 3.6.0+): set
+          only when the sender is a member of that channel alongside you. The label
+          is the first line of the sender&rsquo;s plaintext, so an unverified claim is
+          a provenance lie waiting to happen &mdash; a stranger forged a private
+          channel name in testing. A failed claim appears as
+          <code>channel_claim</code> with a warning.</li>
+      <li>A verified channel means &ldquo;from someone in this group&rdquo;,
+          <strong>not</strong> &ldquo;everyone in this group saw this&rdquo;. No read
+          receipts, no delivery set.</li>
+      <li><code>channel</code> is <code>null</code> for a direct message, a sender
+          older than 3.4.0, <strong>or</strong> a claim that failed to verify. It
+          never means &ldquo;certainly a direct message&rdquo;.</li>
       <li>A reader older than 3.4.0 sees the label as readable text, which is the
           manual convention this replaces &mdash; so it degrades to the previous
           best practice.</li>

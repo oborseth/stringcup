@@ -73,10 +73,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.5.0"
+__version__ = "3.6.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 5, 0)
+version_info = (3, 6, 0)
 
 __all__ = [
     "Client",
@@ -161,6 +161,8 @@ FEATURES = {
     # 3.5.0
     "membership_notice": (3, 5, 0),       # new members are told they were added
     "duplicate_channel_guard": (3, 5, 0), # refuse a channel duplicating one you own
+    # 3.6.0
+    "verified_channel_labels": (3, 6, 0), # Message.channel is checked, not trusted
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -573,10 +575,18 @@ class Message:
     created_at: str
     header: dict = field(repr=False, default_factory=dict)
 
-    #: The channel this arrived on, if it was a broadcast carrying a label.
-    #: None for a direct message, and None for a broadcast from a client too
-    #: old to add one — so treat it as "unknown", not as "definitely a DM".
+    #: The channel this arrived on, **verified**: a label was present AND the
+    #: sender is a member of that channel alongside you. None for a direct
+    #: message, for a sender too old to add a label, and for a label that
+    #: failed to verify — so treat None as "unknown", not "definitely a DM".
     channel: Optional[str] = None
+
+    #: The channel the sender *claimed*, when that claim did not verify.
+    #: **Attacker controlled.** The label is just the first line of the
+    #: plaintext, so anyone able to send you a direct message can claim any
+    #: channel name, including one it is not in. Never route on this; it
+    #: exists so a caller can see that a forgery was attempted.
+    channel_claim: Optional[str] = None
 
     def __str__(self) -> str:
         return f"[{self.id}] {self.sender_id}: {self.text}"
@@ -815,6 +825,11 @@ class Client:
         self.transcript = transcript
 
         self._peer_keys: Dict[str, str] = {}
+
+        # name -> (monotonic_time, member_ids | None). Verifying an inbound
+        # channel label needs the roster; without a cache that is one extra
+        # request per received message.
+        self._roster_cache: Dict[str, tuple] = {}
         #: Rate-limit budget per endpoint bucket. The server's limits differ by
         #: more than an order of magnitude between endpoints, so one shared
         #: figure throttles the wrong calls.
@@ -1193,6 +1208,7 @@ class Client:
         limit: int = 50,
         since_id: Optional[int] = None,
         wait: int = 0,
+        verify_channels: bool = True,
     ) -> Page:
         """
         Fetch one page and decrypt it. Does NOT acknowledge.
@@ -1223,7 +1239,19 @@ class Client:
                 text = decrypt(self.identity.private_key, self.id, raw)
             except DecryptionError:
                 continue
-            channel, text = split_channel_label(text)
+            claim, text = split_channel_label(text)
+
+            # A claimed label is verified before it is presented as the
+            # channel. An unverified claim is kept separately rather than
+            # dropped, so a caller can see a forgery was attempted.
+            channel = None
+            unverified = None
+            if claim is not None:
+                if verify_channels and self.verify_channel_claim(raw["sender_id"], claim):
+                    channel = claim
+                else:
+                    unverified = claim
+
             messages.append(
                 Message(
                     id=int(raw["id"]),
@@ -1233,6 +1261,7 @@ class Client:
                     created_at=raw.get("created_at", ""),
                     header=raw.get("header", {}),
                     channel=channel,
+                    channel_claim=unverified,
                 )
             )
             self._log_transcript("in", raw["sender_id"], int(raw["id"]), text)
@@ -1791,6 +1820,55 @@ class Client:
             self._peer_keys[member["id"]] = key
 
         return body
+
+    def channel_members(self, name: str, max_age: float = 300.0) -> Optional[set]:
+        """
+        Cached member-id set for a channel, or None if it cannot be read.
+
+        Cached because verifying an inbound label would otherwise cost a
+        roster read per message. A roster is readable only by members, so a
+        name you are not in returns None and a label claiming it can never
+        verify.
+        """
+        now = time.monotonic()
+        hit = self._roster_cache.get(name)
+        if hit is not None and (now - hit[0]) < max_age:
+            return hit[1]
+
+        try:
+            roster = self.topic(name, verify_pins=False)
+        except StringcupError:
+            self._roster_cache[name] = (now, None)
+            return None
+
+        ids = {m["id"] for m in roster.get("members", [])}
+        self._roster_cache[name] = (now, ids)
+        return ids
+
+    def verify_channel_claim(self, sender_id: str, claim: str) -> bool:
+        """
+        Is `claim` a channel that both you and `sender_id` belong to?
+
+        **This is what stops a channel label being a free provenance lie.**
+        The label is the first line of attacker-chosen plaintext, so without
+        this check any peer able to send you a direct message could make its
+        message appear to arrive on a channel you trust -- including one it is
+        not a member of. Demonstrated against this implementation before the
+        check existed: a stranger set the label to a private ops channel and
+        the recipient reported the message as arriving on it.
+
+        What True proves, exactly: **the sender is a member of that channel
+        and so are you.** It does NOT prove the message was broadcast to the
+        channel -- a genuine member can still label a direct message -- so
+        read a verified channel as "from someone in this group", never as
+        "everyone in this group saw this". There is no delivery set to check
+        against.
+        """
+        members = self.channel_members(claim)
+        if members is None:
+            return False
+
+        return sender_id in members and self.id in members
 
     def add_members(self, name: str, ids: Iterable[str], notify: bool = True) -> dict:
         """

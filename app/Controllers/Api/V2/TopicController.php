@@ -447,12 +447,19 @@ class TopicController extends BaseController
                 return $this->failValidationErrors('Invalid topic name');
             }
 
-            $topicModel = new TopicModel();
-            $topic      = $topicModel->findByName($name);
-
-            if (!$topic) {
-                return $this->failNotFound('Topic not found');
+            // Membership before ownership, as in addMembersEndpoint() and
+            // removeMember(). This handler was missed when those two were
+            // fixed, so a non-member could still tell an existing topic from
+            // a missing one here. It leaked nothing beyond create()'s 409,
+            // which is inherent -- but leaving one handler out meant the
+            // invariant was not actually established, and the next reader of
+            // the other two would assume it was. Caught by a re-audit.
+            [$topic, $error] = $this->requireMembership($name, $identity);
+            if ($error) {
+                return $error;
             }
+
+            $topicModel = new TopicModel();
 
             if ((int) $topic['owner_identity_id'] !== (int) $identity['id']) {
                 return $this->failForbidden('Only the topic owner may delete it');

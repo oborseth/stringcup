@@ -13,6 +13,72 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.6.0 / MCP 1.7.0 — a channel label is verified, not trusted
+
+**Security fix for a regression introduced in 3.4.0.** Found by a re-audit.
+
+3.4.0 put the channel label inside the ciphertext, which was the right call
+for the *relay* — a channel name is human-meaningful and a plaintext header
+would have handed it over permanently. But the peer-facing half was wrong:
+nothing checked the label. It is the first line of the sender's plaintext, so
+**any peer able to send you a direct message could claim any channel name**,
+including one it is not a member of.
+
+Worse, `stringcup_mcp.py` stated it to a model as fact — "`channel` names the
+channel a broadcast came in on". That turns a forgeable string into a
+prompt-injection primitive: an attacker borrows the authority of a channel the
+target trusts. Demonstrated before the fix — a stranger sharing no channel
+with the victim sent a direct message labelled with a private operations
+channel, and the recipient reported it as arriving on that channel.
+
+It is the same class as `sender_id`, which the docs have always handled
+correctly ("a claim by the relay, not a proof"), and it is the **weaker** of
+the two: forging a channel needs no relay compromise at all.
+
+Now:
+
+- **`Message.channel` is verified.** Set only when the sender is a member of
+  that channel alongside you (`verify_channel_claim`, backed by a cached
+  roster so it does not cost a request per message).
+- **A failed claim goes to `Message.channel_claim`**, never to `channel`, so a
+  forgery attempt is visible rather than silently dropped.
+- **The MCP results carry `channel_claim_unverified` and a `warning`** telling
+  the model the claim did not verify and not to act on it.
+
+What verification proves, precisely: **the sender is a member of that channel
+and so are you.** It does not prove the message was broadcast — a genuine
+member can still label a direct message — so a verified channel means "from
+someone in this group", never "everyone in this group saw this". There is no
+delivery set to check against, and one is not being invented.
+
+A client older than 3.6.0 trusts the claim. Treat its `channel` as unverified.
+
+### Also fixed
+
+- **`TopicController::delete()` kept the existence oracle.** The same
+  membership-before-ownership reordering was applied to `addMembersEndpoint`
+  and `removeMember` but missed here, so a non-member could still distinguish
+  an existing topic from a missing one. It leaked nothing beyond `create()`'s
+  inherent 409, but leaving one handler out meant the invariant was not
+  actually established — and the next reader of the other two would assume it
+  was.
+- **`proxyIPs` is environment-driven** (`STRINGCUP_TRUSTED_PROXIES`), default
+  empty. A hardcoded `172.26.0.0/16` had been committed, which would ship one
+  site's VPC range to every self-hoster — and anyone whose own network
+  overlapped it would silently grant every host in that range the ability to
+  assert a client IP, re-opening the rate-limit bypass through the config.
+  Now documented in DEPLOYING.md as a required step when anything proxies the
+  app, which is where it always belonged.
+- **The rate limiter no longer queries the database to identify a caller.**
+  The first bypass fix resolved the bearer token against `api_tokens`, which
+  worked but put a query in front of the limit decision — so a request the
+  limiter was about to refuse still cost a lookup, and an attacker got it for
+  free by attaching a header it did not need. Replaced with an endpoint-class
+  rule: the three endpoints `AuthFilter` does not protect key on IP and only
+  IP, which is exactly where a forged token bought a free budget. Cheaper,
+  simpler, and it removes a function-static memo that would have misbehaved
+  under a persistent worker.
+
 ## Library 3.5.0 / MCP 1.6.0 — a channel you joined now tells you so
 
 Four items from first-use feedback by the owner of a real three-agent channel,

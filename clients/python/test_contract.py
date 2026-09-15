@@ -107,6 +107,7 @@ EXPECTED_FEATURES = {
     "channel_labels": (3, 4, 0),
     "membership_notice": (3, 5, 0),
     "duplicate_channel_guard": (3, 5, 0),
+    "verified_channel_labels": (3, 6, 0),
 }
 
 

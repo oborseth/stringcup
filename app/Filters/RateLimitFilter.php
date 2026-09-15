@@ -80,7 +80,7 @@ class RateLimitFilter implements FilterInterface
         list($maxRequests, $windowSeconds) = $this->limits[$limitKey] ?? $this->limits['default'];
 
         // Get identifier (authenticated token or IP address)
-        $identifier = $this->getIdentifier($request);
+        $identifier = $this->getIdentifier($request, $limitKey);
 
         // Read, decide and record under ONE lock. Splitting them let N
         // concurrent requests each read the same window, each conclude it was
@@ -233,82 +233,63 @@ class RateLimitFilter implements FilterInterface
      * @param RequestInterface $request
      * @return string
      */
-    protected function getIdentifier(RequestInterface $request): string
+    /**
+     * Which limit buckets must key on IP, never on a caller-supplied token.
+     *
+     * These are the endpoints AuthFilter does not protect, so nothing
+     * downstream will ever reject a bogus credential on them. `default` is
+     * included because an unrecognised path is more likely to be
+     * unauthenticated than not, and guessing wrong in that direction is the
+     * safe one.
+     */
+    protected const IP_ONLY_BUCKETS = [
+        'api/v2/identities_post' => true,   // registration: cannot have a token
+        'api/v2/identities_get'  => true,   // public lookup
+        'api/v2/stats_get'       => true,   // public dashboard
+        'default'                => true,
+    ];
+
+    /**
+     * The bucket this caller counts against.
+     *
+     * On an endpoint AuthFilter does not protect, this is the IP and only the
+     * IP. It used to be any bearer string the caller supplied, unvalidated,
+     * so `Authorization: Bearer <random>` minted a fresh counter per request
+     * and the 5/hour registration cap became unlimited identity creation.
+     *
+     * The first fix resolved the token against the database. That worked but
+     * put a query in front of the limit decision, so a request the limiter
+     * was about to refuse still cost a lookup -- the limiter could no longer
+     * shed load it had already decided to reject, and an attacker got that
+     * query for free by attaching a header it did not need. Pointed out by a
+     * re-audit.
+     *
+     * Keying on the endpoint class instead costs nothing and closes the same
+     * hole: the three unauthenticated endpoints are exactly where a forged
+     * token bought a free budget. On a protected endpoint an unresolvable
+     * token still gets its own bucket, and that is harmless -- AuthFilter
+     * answers 401, so the caller can do nothing with it, and the leftover
+     * counter file is reclaimed by RetentionSweeper.
+     */
+    protected function getIdentifier(RequestInterface $request, string $limitKey = 'default'): string
     {
         // Set by AuthFilter on the rare paths where it has already run.
         if (isset($request->identity) && !empty($request->identity['external_id'])) {
             return 'user:' . $request->identity['external_id'];
         }
 
-        $authHeader = $request->getHeaderLine('Authorization');
-        if ($authHeader && stripos($authHeader, 'Bearer ') === 0) {
-            $plainToken = trim(substr($authHeader, 7));
-
-            // The token must be REAL before it may name a bucket. This check
-            // is the whole point of the method.
-            //
-            // It used to bucket on any bearer string without validating it,
-            // which made every limit on an unauthenticated endpoint free:
-            // `Authorization: Bearer <random>` minted a brand-new counter per
-            // request, so the 5/hour registration cap became unlimited
-            // identity creation, and identities_get (100/hr) and stats_get
-            // (600/hr) went the same way. Registration ignores the header
-            // entirely, so there was nothing downstream to reject it either.
-            // Demonstrated against the live relay: four requests with one junk
-            // token counted 99, 98, 97, 96; four with fresh junk tokens
-            // counted 99, 99, 99, 99. Found by an external code audit.
-            //
-            // An unresolvable token falls through to the IP bucket, so a
-            // forged header can no longer buy a fresh budget -- at worst it
-            // shares the attacker's own IP bucket. A bare indexed existence
-            // check, deliberately: expiry and last_used_at belong to
-            // AuthFilter, and duplicating them here would put two answers to
-            // "is this token valid" in the codebase.
-            if ($plainToken !== '' && $this->tokenExists($plainToken)) {
-                // Hashed so no credential material reaches the cache filename.
-                return 'token:' . substr(hash('sha256', $plainToken), 0, 32);
+        if (!isset(self::IP_ONLY_BUCKETS[$limitKey])) {
+            $authHeader = $request->getHeaderLine('Authorization');
+            if ($authHeader && stripos($authHeader, 'Bearer ') === 0) {
+                $plainToken = trim(substr($authHeader, 7));
+                if ($plainToken !== '') {
+                    // Hashed so no credential material reaches the filename.
+                    return 'token:' . substr(hash('sha256', $plainToken), 0, 32);
+                }
             }
         }
 
-        // Unauthenticated endpoints (registration, lookup), and anyone
-        // presenting a token that does not resolve.
         return 'ip:' . $request->getIPAddress();
-    }
-
-    /**
-     * Does this bearer token correspond to a stored token at all?
-     *
-     * Existence only. A revoked-or-expired token still resolves here and so
-     * still gets its own bucket, which is correct: AuthFilter will reject the
-     * request, and the caller demonstrably holds a real credential, so it is
-     * not the anonymous case the IP bucket exists for.
-     */
-    protected function tokenExists(string $plainToken): bool
-    {
-        static $memo = [];
-
-        // Via the model, so there is one definition of how a token is hashed.
-        $hash = \App\Models\ApiTokenModel::hashToken($plainToken);
-        $key  = bin2hex(substr($hash, 0, 8));
-
-        // Memoised per request: before() and after() both run, and the filter
-        // instance is shared between them.
-        if (array_key_exists($key, $memo)) {
-            return $memo[$key];
-        }
-
-        try {
-            $found = db_connect()
-                ->table('api_tokens')
-                ->where('token_hash', $hash)
-                ->countAllResults() > 0;
-        } catch (\Throwable $e) {
-            // A limiter that fails closed would take the API down with the
-            // database. Treat it as anonymous and keep enforcing per IP.
-            $found = false;
-        }
-
-        return $memo[$key] = $found;
     }
 
     /**

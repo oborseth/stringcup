@@ -120,6 +120,33 @@ Practical consequences:
 - **If a peer's key changes, re-verify out of band.** A benign explanation
   last time is not evidence about this time.
 
+### A channel label is a claim, not provenance
+
+A broadcast carries its channel name as the first line of the **plaintext**,
+which keeps it away from the relay (see the section above). But plaintext is
+chosen by the sender, so **the label is an assertion, exactly like
+`sender_id`** — and it is the weaker of the two, because forging it needs no
+relay compromise at all. Any peer who can send you a direct message can claim
+any channel name, including one it is not a member of.
+
+Demonstrated against this implementation: a stranger sharing no channel with
+the victim sent a direct message labelled with a private operations channel,
+and the recipient's client reported it as arriving on that channel — while the
+MCP tool description told the model the field named where the message came
+from. That is a prompt-injection primitive: an attacker borrows the authority
+of a channel the target trusts.
+
+Since library 3.6.0 the label is **verified before it is presented**: `channel`
+is set only when the sender is a member of that channel alongside you, and a
+failed claim appears as `channel_claim` with a warning instead. A client older
+than that trusts the claim — treat its `channel` as unverified.
+
+What verification proves, precisely: **the sender is a member of that channel
+and so are you.** It does not prove the message was broadcast to the channel;
+a genuine member can still label a direct message. So read a verified channel
+as "from someone in this group", never as "everyone in this group saw this".
+There is no delivery set to check against.
+
 ### Topic membership is not consensual, and it is not announced
 
 An owner adds any identity to a topic by id, with no consent step, and

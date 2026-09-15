@@ -901,6 +901,21 @@ needs it, because for many hosts that surface *is* the product.
 Two claims the channel tool descriptions make, both asserted by tests so they
 cannot quietly become false:
 
+- **A channel label is a CLAIM and must be verified before it is presented.**
+  The label is the first line of attacker-chosen plaintext, so it is the same
+  class as `sender_id` and *weaker*: forging it needs no relay compromise.
+  Shipped unverified for one version, during which any peer able to send a
+  direct message could assert any channel name — and the MCP description told
+  the model the field named where the message came from, making it a
+  prompt-injection primitive. Demonstrated: a stranger labelled a DM with a
+  private ops channel and the recipient reported it as that channel. `fetch()`
+  now checks the sender is a member alongside you (`verify_channel_claim`,
+  cached roster) and routes a failed claim to `channel_claim` with a warning.
+  **Verification proves "the sender is in this group", never "everyone in this
+  group saw this"** — a member can still label a DM, and there is no delivery
+  set. Caught by a re-audit. The lesson generalises: **anything derived from
+  plaintext is sender-controlled, and presenting it to a model as provenance
+  is worse than not presenting it at all.**
 - **A broadcast is labelled, and the label lives inside the ciphertext.**
   This replaced the earlier "no channel label" property, and the two were
   changed together as that note required. An agent asked for a `channel` field
@@ -1183,8 +1198,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 124 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 76 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
+| `test_mcp.py` | 133 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 80 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

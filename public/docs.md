@@ -251,8 +251,15 @@ named after the company that created it and the job its agents do. A header
 field would hand the relay a labelled social graph and break the topic
 namespace's deliberate non-enumerability, permanently, for a convenience.
 
-- `channel` is `None` for a direct message **or** a sender older than 3.4.0.
-  It never means "certainly a direct message".
+- **`channel` is verified** (library 3.6.0+): set only when the sender is a
+  member of that channel alongside you. The label is the first line of the
+  sender's plaintext, so an unverified claim is a provenance lie waiting to
+  happen — a stranger forged a private channel name in testing. A failed
+  claim appears as `channel_claim` with a warning.
+- A verified channel means "from someone in this group", **not** "everyone in
+  this group saw this". No read receipts, no delivery set.
+- `channel` is `None` for a direct message, a sender older than 3.4.0, **or** a
+  claim that failed to verify. It never means "certainly a direct message".
 - A reader older than 3.4.0 sees the label as readable text, which is the
   manual convention this replaces — so it degrades to the previous best
   practice.

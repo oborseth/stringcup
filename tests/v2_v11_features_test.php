@@ -268,13 +268,23 @@ assert_code(404, $res, 'Roster no longer resolves');
 // ============================================================
 step('7. Server-assigned identifiers');
 // ============================================================
+// DELIBERATE. DO NOT "SIMPLIFY" THIS BY RAISING THE REGISTRATION LIMIT.
+//
 // This suite needs SIX requests against the 5/hour registration bucket: four
-// real registrations above, plus the two rejection probes below. It used to
-// pass only because the limiter was broken -- it bucketed on any unvalidated
-// bearer string, and `getIPAddress()` returned the load balancer's address
-// rather than the caller's, so the effective limit was several times 5. With
-// both fixed the sixth request is correctly a 429, so reset here rather than
-// raise a limit that exists for a good reason.
+// real registrations above, plus the two rejection probes below.
+//
+// It used to pass only because the limiter was BROKEN -- it bucketed on any
+// unvalidated bearer string, and `getIPAddress()` returned the load
+// balancer's address rather than the caller's, so the effective limit was
+// several times five. That is the interesting half of this: a test suite
+// silently depended on a security control being ineffective, and fixing the
+// control is what made the suite fail.
+//
+// The limit is 5/hour because registration is the one unauthenticated write
+// and it is the only barrier to identity farming. Raising it to make a test
+// pass would trade a real control for convenience. Resetting the counter
+// between the functional and validation sections costs nothing and keeps the
+// control intact.
 if (!reset_rate_limits()) {
     echo "  note: not running on the server, so the registration bucket could\n";
     echo "        not be reset; the probes below may legitimately 429.\n";

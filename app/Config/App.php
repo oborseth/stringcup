@@ -180,27 +180,46 @@ class App extends BaseConfig
      *
      * @var array<string, string>
      */
-    public array $proxyIPs = [
-        // This host sits behind an AWS load balancer inside the VPC: nginx sees
-        // a private 172.26.x.x peer, never the caller. With this list empty,
-        // CodeIgniter ignored X-Forwarded-For and getIPAddress() returned the
-        // LOAD BALANCER's address, which breaks per-IP rate limiting in both
-        // directions at once:
-        //
-        //   - Every caller on the internet shared a handful of LB buckets, so
-        //     one agent registering 5 identities exhausted the 5/hour
-        //     registration limit for everyone arriving via that node.
-        //   - The LB rotates across several addresses (four observed), so a
-        //     single caller got one full budget per node. Measured: four
-        //     requests, budgets 96/98/99/98 -- four separate counters.
-        //
-        // /16 rather than the host's own /20: observed LB peers (172.26.25.179,
-        // .3.244, .33.232, .99.119) span the wider VPC range, and ALB addresses
-        // change as it scales, so pinning the four would silently regress.
-        // Anything inside the VPC can therefore assert a client IP; only the
-        // load balancer routes here, which is the standard form of this trade.
-        '172.26.0.0/16' => 'X-Forwarded-For',
-    ];
+    public array $proxyIPs = [];
+
+    /**
+     * Trusted proxies come from the environment, not from this file.
+     *
+     * A hardcoded range here shipped to every self-hoster. Anyone running
+     * this inside a network that overlaps the committed CIDR would silently
+     * grant every host in that range the ability to assert a client IP --
+     * which is exactly the rate-limit bypass this setting exists to close,
+     * re-entering through the config. Caught by a re-audit.
+     *
+     * Set STRINGCUP_TRUSTED_PROXIES to the CIDR your load balancer speaks
+     * from, e.g. `172.26.0.0/16`. Empty means "no proxy": CodeIgniter then
+     * ignores X-Forwarded-For and uses REMOTE_ADDR, which is correct when
+     * nothing sits in front.
+     *
+     * **If a proxy IS in front and this is empty, every per-IP limit is
+     * wrong**: getIPAddress() returns the proxy's address, so all callers
+     * share one bucket and a rotating proxy hands each caller a bucket per
+     * node. See DEPLOYING.md.
+     */
+    public function __construct()
+    {
+        parent::__construct();
+
+        $trusted = trim((string) (getenv('STRINGCUP_TRUSTED_PROXIES') ?: ''));
+        if ($trusted === '') {
+            return;
+        }
+
+        $header = trim((string) (getenv('STRINGCUP_TRUSTED_PROXY_HEADER') ?: ''))
+            ?: 'X-Forwarded-For';
+
+        foreach (explode(',', $trusted) as $cidr) {
+            $cidr = trim($cidr);
+            if ($cidr !== '') {
+                $this->proxyIPs[$cidr] = $header;
+            }
+        }
+    }
 
     /**
      * --------------------------------------------------------------------------

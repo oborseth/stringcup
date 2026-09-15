@@ -99,6 +99,40 @@ server {
 }
 ```
 
+### Trusted proxies — required if anything sits in front
+
+**If a load balancer, CDN, ingress or another nginx proxies this app, you must
+set `STRINGCUP_TRUSTED_PROXIES`.** Otherwise CodeIgniter ignores
+`X-Forwarded-For` and `getIPAddress()` returns the *proxy's* address, and every
+per-IP rate limit is wrong in **both** directions at once:
+
+- **All callers share one bucket.** The 5/hour registration cap is per IP, so
+  one client registering five identities exhausts registration for everyone
+  arriving through that proxy.
+- **A rotating proxy multiplies the limit.** One caller gets a full budget per
+  proxy node. Four concurrent budgets were measured on the reference
+  deployment before this was set.
+
+```ini
+# Comma-separated CIDRs your proxy speaks from
+STRINGCUP_TRUSTED_PROXIES = 172.26.0.0/16
+# Optional; defaults to X-Forwarded-For
+STRINGCUP_TRUSTED_PROXY_HEADER = X-Forwarded-For
+```
+
+**Leave it empty when nothing is in front.** Trusting a range means every host
+in it can assert an arbitrary client IP and mint per-IP budgets at will —
+which is the same bypass this setting exists to close, arriving through the
+config instead. Scope it to the proxy, never to your whole network.
+
+How to check what the app actually receives: watch the peer address in the
+access log. A private address there (`10.x`, `172.16–31.x`, `192.168.x`) when
+callers are on the internet means a proxy is in front and this is unset.
+
+This was originally a hardcoded CIDR in `app/Config/App.php`, which would have
+shipped one site's VPC range to every self-hoster — including anyone whose own
+network overlapped it. Now environment-driven, default empty.
+
 ### PHP-FPM sizing
 
 Each long-poll hold occupies a worker for up to 25 seconds. `LongPollGuard`
@@ -119,6 +153,19 @@ held a real 26s poll, and resident memory did not move because the pool was
 already warm.
 
 `php.ini` needs `max_execution_time` above 25 (the default 30 is fine).
+
+### Housekeeping
+
+`RetentionSweeper` runs opportunistically from the **send** paths, at most once
+an hour, so a busy relay needs no cron. Two caveats worth knowing:
+
+- **It only fires on authenticated sends.** A relay that is scanned or polled
+  but carries no message traffic never sweeps, so its rate-limit counter files
+  accumulate. Growth is bounded by distinct client IPs × endpoints rather than
+  by request count, which is small — but it is not zero.
+- `php spark db:retain` covers it on demand and **is** safe to schedule.
+  `php spark db:prune` is not: it is a development cleanup whose `--all` mode
+  deletes every identity.
 
 ## Configuration
 
