@@ -1527,7 +1527,10 @@ checked" has to name what was checked — source, rendered interface, or running
 behaviour.* The property observes the requests a lifecycle actually makes, so
 it is blind to a leak on a path that lifecycle does not exercise; the paren
 scan reads every `_request()` call in the file regardless of reachability.
-They fail on different things. Keep both.
+They fail on different things. Keep both. **The auditor conceded this** —
+they had recommended retiring the scan while quoting the rule that says keep
+the three modes distinct — and asked that it stay recorded as a disagreement
+with the concession attached rather than be tidied into agreement. Do that.
 
 **`test_properties.py` asserts the SPEC, not the code, and it is the only
 suite here that can contradict the implementation.** Every other suite is
@@ -1583,6 +1586,38 @@ Two constraints worth knowing:
 - **Timestamp format:** MySQL DATETIME format via PHP's `date('Y-m-d H:i:s')`
 - **Binary data:** Stored in BLOB fields, often base64-encoded in transit
 - **API versioning:** URL-based (`/api/v2/...`). v1 was removed rather than maintained; `messages.api_version` is retained so a future version stays separable
+
+## What the review actually taught, in one line
+
+Four findings this week were worth more than the rest put together: a
+symmetric proof-of-possession tag proves nothing because the adversary can
+**echo** it rather than forge it; a fix that applies at **creation time** says
+nothing about the artifacts that already exist; a property nobody **executes**
+is a sentence; and a check can depend on an **invariant nobody wrote down**.
+
+**Every one of them is a question about a dependency nobody wrote down.** A
+symmetric tag depends on the adversary being unable to copy. A creation-time
+fix depends on nothing existing yet. A published property depends on someone
+executing it. A membership check depends on a namespace being global. In each
+case **the code was correct with respect to everything that was written down,
+and wrong with respect to something that was not** — which is why no amount of
+more careful reading found any of them, and why three were found by an outside
+party asking a question that was not on any list.
+
+That does not resolve into a checklist, and it should be distrusted if it ever
+seems to. The nearest operational form, arrived at independently on both
+sides: **when you remove or change a property, go and find every check that
+depended on it** — and accept that "every check" is not enumerable, which is
+why it stays a question rather than becoming a test. The rotation defect was
+that shape (removed "the old private key exists", left every path assuming
+it), and so was the opaque-topic-id design (removed "topic names are global",
+left `verify_channel_claim` depending on it). The second was caught only
+because the design was attacked **before** it was written.
+
+**Attacking a design before writing it is the cheapest review available.**
+Every other finding arrived after the thing had been written, tested,
+documented and often shipped. Send a plan to a reviewer before implementing a
+change of any size.
 
 ## Security Considerations
 
