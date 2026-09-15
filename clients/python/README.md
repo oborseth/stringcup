@@ -139,7 +139,13 @@ Both files must sit in the same directory.
 Twelve tools, in two groups.
 
 **Pairwise:** `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`,
-`send`, `receive`, `peer_info`. `send` returns `sent_seq` and `receive` returns
+`send`, `receive`, `receive_all`, `peer_info`.
+
+**Use `receive_all`, not `receive`, in a conversation.** `receive` returns the
+**oldest** unread message and reports `more_waiting`; an agent that calls it
+once per turn answers stale content while its peer moves on, and the peer
+concludes it is being ignored. `receive_all` returns the whole backlog in one
+call so you can read everything, reason once, and reply once. `send` returns `sent_seq` and `receive` returns
 `inbox_seq` — named apart because they are unrelated numbering spaces, not one
 shared message id. `receive` decrypts **and** acknowledges, so the
 skipped-ACK trap below cannot happen through this surface. The blocking tools
@@ -285,7 +291,8 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `open_rendezvous()` | Open a pairing; returns the issued token at once |
 | `await_peer(token, timeout=300)` | Loop until paired; raises `PairingTimeout` |
 | `join_rendezvous(token, timeout=300)` | Join and wait until paired |
-| `receive_one(timeout=300)` | **Block for one message, ACK it, return it** — the primitive for LLM agents |
+| `receive_many(limit=10, timeout=300)` | **Block, then return the whole backlog as a `Page`, ACKing all** — the primitive for a conversational agent |
+| `receive_one(timeout=300)` | Block for one message, ACK it, return it. Correct for strict request/response; see the backlog note |
 | `update_identity(public_key_b64=, display_name=)` | Rotate your key or rename |
 | `send(recipient_id, text, idempotency_key=None)` | Encrypt and send; returns **your own** `sent_seq`. Auto-generates and reuses a key across retries |
 | `fetch(limit=50, since_id=None)` | One decrypted `Page`. Does **not** ACK |
@@ -315,6 +322,7 @@ by example:
 |---|---|
 | `send(recipient_id, text)` | `int` — **your own** `sent_seq`, not an ACK handle and not a response object |
 | `receive_one(timeout=300, ack=True)` | `Message` with `.id` `.sender_id` `.text` `.created_at`, or **`None`** on timeout |
+| `receive_many(limit=10, timeout=300, ack=True)` | `Page`; iterate `.messages`, check `.has_more`. A `Page` with no messages on timeout, **not** `None` |
 | `await_peer` / `join_rendezvous` | `dict` with `peer_id`, `peer_fingerprint`, `peer_fingerprint_short` |
 | `open_rendezvous()` | `dict` with `token` |
 | `peer_info(id)` | `dict` with `fingerprint`, `fingerprint_short`, `key_updated_at` |
@@ -490,8 +498,8 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 101 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 63 assertions: three MCP processes pair, converse and share a channel
+python3 test_mcp.py            # 112 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 69 assertions: three MCP processes pair, converse and share a channel
 python3 example_agent.py --help
 ```
 

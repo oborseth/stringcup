@@ -61,10 +61,11 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.1.0")
-stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors")
+stringcup.require_version("3.2.0")
+stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
+                           "receive_many", "backlog_visible")
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -267,9 +268,13 @@ def tool_send(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     ack = arguments.get("ack", True)
-    msg = me.receive_one(timeout=_hold(arguments), ack=bool(ack))
 
-    if msg is None:
+    # receive_many(limit=1) rather than receive_one, purely so `has_more`
+    # survives. receive_one discards the page and therefore cannot tell the
+    # model that anything is queued behind what it just handed over.
+    page = me.receive_many(limit=1, timeout=_hold(arguments), ack=bool(ack))
+
+    if not page.messages:
         return {
             "received": False,
             "next": (
@@ -278,7 +283,8 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
             ),
         }
 
-    return {
+    msg = page.messages[0]
+    result = {
         "received": True,
         # The recipient's own numbering, unrelated to the sender's sent_seq.
         # Informational here: receive has already acknowledged it.
@@ -287,7 +293,54 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "text": msg.text,
         "created_at": msg.created_at,
         "acknowledged": bool(ack),
+        # Load-bearing. Without it a model answers this message while its peer
+        # has moved on, and the conversation desynchronises with nothing on
+        # either side indicating why. Reported from a real conversation.
+        "more_waiting": bool(page.has_more),
     }
+    if page.has_more:
+        result["next"] = (
+            "MORE MESSAGES ARE QUEUED. You are holding the OLDEST unread message. "
+            "Do not reply yet — call receive_all to read the rest, then answer once. "
+            "Replying now answers a question your peer has already moved past."
+        )
+    return result
+
+
+def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    ack = arguments.get("ack", True)
+    limit = int(arguments.get("limit") or 10)
+    page = me.receive_many(limit=limit, timeout=_hold(arguments), ack=bool(ack))
+
+    if not page.messages:
+        return {
+            "received": False,
+            "count": 0,
+            "messages": [],
+            "next": (
+                "Nothing arrived within the hold. An ordinary outcome, not an error — "
+                "call again."
+            ),
+        }
+
+    result = {
+        "received": True,
+        "count": page.count,
+        "messages": [
+            {"inbox_seq": m.id, "from": m.sender_id, "text": m.text,
+             "created_at": m.created_at}
+            for m in page.messages
+        ],
+        "acknowledged": bool(ack),
+        "more_waiting": bool(page.has_more),
+    }
+    if page.has_more:
+        result["next"] = (
+            "Still more queued beyond this batch — call receive_all again before "
+            "replying, or raise limit."
+        )
+    return result
 
 
 def tool_peer_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -500,7 +553,13 @@ TOOLS: List[Dict[str, Any]] = [
             "`inbox_seq` on the result is your own inbox numbering, unrelated to the "
             "`sent_seq` a send returns, and informational only since the message is "
             "already acknowledged. Nothing you receive ever expires, so there is no "
-            "deadline for reading."
+            "deadline for reading.\n\n"
+            "THIS RETURNS THE OLDEST UNREAD MESSAGE, NOT THE NEWEST. If "
+            "`more_waiting` is true, messages are queued behind it and you are "
+            "reading stale content: call receive_all before replying, or use "
+            "receive_all from the start. A peer that sends several messages while "
+            "you think will otherwise get answers to questions it has already moved "
+            "past, and will reasonably conclude you are ignoring it."
         ),
         "inputSchema": {
             "type": "object",
@@ -526,6 +585,54 @@ TOOLS: List[Dict[str, Any]] = [
             },
         },
         "handler": tool_receive,
+    },
+    {
+        "name": "receive_all",
+        "title": "Read the whole backlog",
+        "description": (
+            "Wait for messages, then return EVERY queued message at once, oldest "
+            "first, decrypting and acknowledging all of them. "
+            "**Prefer this to receive in a conversation.** receive hands over one "
+            "message per call, so an agent that calls it once per turn answers the "
+            "oldest unread message while its peer has moved several messages on \u2014 "
+            "every reply lands on stale content and the peer concludes it is being "
+            "ignored. Reading the whole backlog first, then reasoning once, then "
+            "replying once, avoids that entirely.\n\n"
+            "Returns {\"received\": false, \"count\": 0} if nothing arrived within "
+            "the hold \u2014 an ordinary outcome; call again. If `more_waiting` is true "
+            "the backlog is deeper than `limit`, so call again or raise it before "
+            "replying."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum messages to return in one call. Default 10, "
+                        "maximum 200. Check `more_waiting` to see whether the "
+                        "backlog was deeper than this."
+                    ),
+                },
+                "hold": {
+                    "type": "number",
+                    "description": (
+                        "Seconds to wait for the first message before returning. "
+                        "Default 55, maximum 300. Once one message is available "
+                        "this returns immediately with everything queued; it does "
+                        "not keep waiting to fill `limit`."
+                    ),
+                },
+                "ack": {
+                    "type": "boolean",
+                    "description": (
+                        "Acknowledge (and so delete) the messages. Default true. "
+                        "Pass false only to peek; they will be redelivered."
+                    ),
+                },
+            },
+        },
+        "handler": tool_receive_all,
     },
     {
         "name": "peer_info",

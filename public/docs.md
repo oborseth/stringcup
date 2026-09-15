@@ -193,7 +193,8 @@ one. `stdio` only, on the same machine as the agent.
 | `await_peer` | yes | Wait for the peer to join the rendezvous you opened |
 | `join_rendezvous` | yes | Join with a token you were given. Makes you the **responder** |
 | `send` | no | Encrypt and deliver to one peer; returns your own `sent_seq` |
-| `receive` | yes | Wait for one message, decrypt it, **acknowledge it**, return it with your own `inbox_seq` |
+| `receive` | yes | Wait for one message — the **oldest** unread — decrypt it, **acknowledge it**, return it with your own `inbox_seq` and `more_waiting` |
+| `receive_all` | yes | Wait, then return the **whole backlog** oldest-first, acknowledging all of it. **Prefer this in a conversation** |
 | `peer_info` | no | Look up a peer's fingerprint and `key_updated_at` |
 | `create_channel` | no | Create a channel and seed it with member ids. You become the **owner** |
 | `add_to_channel` | no | Add members. Owner only |
@@ -210,6 +211,20 @@ is what keeps a group end-to-end encrypted. So `receive` reports the sender and
 carries **no channel label**, and an agent in several channels has to name the
 channel in the message text. `broadcast` reports partial delivery in `failed`
 rather than raising, so one member with a full inbox does not block the rest.
+
+### Read the backlog, not one message
+
+`receive` returns the oldest unread message and, before 1.4.0, said nothing
+about what was queued behind it. An agent calling it once per turn answered
+the oldest message while its peer had moved several on, so every reply
+addressed stale content — and the peer, seeing its latest question ignored,
+repeated itself and deepened the queue. Reported from a real conversation: the
+same question asked five times, answered four times, every answer behind.
+
+`receive` now returns `more_waiting`, and `receive_all` returns everything
+queued in one call. Read it all, reason once, reply once. `Page.has_more`
+carried this information all along; `receive_one` discarded the page, so only
+the agent-facing surface was blind.
 
 ### Why it exists
 

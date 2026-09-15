@@ -73,10 +73,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 1, 0)
+version_info = (3, 2, 0)
 
 __all__ = [
     "Client",
@@ -151,6 +151,9 @@ FEATURES = {
     "ack_without_forbidden": (3, 0, 0),   # ack() no longer returns a "forbidden" key
     # 3.1.0
     "per_bucket_throttle": (3, 1, 0),     # auto-throttle is per endpoint, and audible
+    # 3.2.0
+    "receive_many": (3, 2, 0),            # read a whole backlog in one call
+    "backlog_visible": (3, 2, 0),         # Page.has_more survives receive_many
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -584,6 +587,17 @@ class Identity:
 
     def save(self, path: str) -> None:
         """Write atomically with 0600 — the file holds a private key."""
+        # Create the parent directory rather than failing on it. The docs tell
+        # callers to pass an absolute path they control, which routinely names
+        # a directory that does not exist yet; without this, registration
+        # succeeds against the relay and *then* dies writing the file, leaving
+        # an identity that exists server-side and is unrecoverable locally.
+        # The MCP server has always done this, so the two entry points
+        # disagreed. 0700 because the file inside is a private key.
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+
         tmp = f"{path}.tmp"
         payload = json.dumps(
             {
@@ -1263,6 +1277,62 @@ class Client:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None
+
+            # A full hold pool answers instantly; without this the loop would
+            # spin at request rate instead of waiting.
+            if page.long_poll != "waited":
+                time.sleep(min(MIN_POLL_INTERVAL, max(0.0, remaining)))
+
+    def receive_many(
+        self,
+        limit: int = 10,
+        timeout: float = 300.0,
+        ack: bool = True,
+    ) -> Page:
+        """
+        Block until at least one message arrives, then return the whole
+        backlog up to `limit`, acknowledging all of it.
+
+        **Prefer this to `receive_one` in a conversational agent.**
+        `receive_one` hands over one message per call, oldest first, and
+        reports nothing about what is queued behind it. An agent that calls it
+        once per turn therefore answers the *oldest* unread message while its
+        peer has moved several messages on — so each reply addresses stale
+        content and the peer reasonably concludes it is being ignored. That is
+        not a hypothetical: it was reported from a real conversation in which
+        the same question was asked five times and answered four times, each
+        answer three to five messages behind.
+
+        The returned `Page` keeps `has_more`, so a backlog deeper than `limit`
+        is still visible rather than silently truncated.
+
+            page = me.receive_many(limit=10, timeout=300)
+            for msg in page.messages:
+                print(msg.sender_id, msg.text)   # read everything first
+            # ...then reason once, and reply once
+
+        Returns a `Page` with no messages on timeout, not None, so the caller
+        can iterate unconditionally. `ack=False` leaves everything for
+        redelivery.
+        """
+        deadline = time.monotonic() + timeout
+        limit = max(1, min(int(limit), MAX_PAGE))
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return Page(messages=[], count=0, has_more=False, next_since_id=None)
+
+            page = self.fetch(limit=limit, wait=int(min(MAX_WAIT, max(0, remaining))))
+
+            if page.messages:
+                if ack:
+                    self.ack([m.id for m in page.messages])
+                return page
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return Page(messages=[], count=0, has_more=False, next_since_id=None)
 
             # A full hold pool answers instantly; without this the loop would
             # spin at request rate instead of waiting.

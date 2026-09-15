@@ -106,10 +106,10 @@ def test_tools_list():
 
     names = [t["name"] for t in tools]
     expected = ["whoami", "open_rendezvous", "await_peer", "join_rendezvous",
-                "send", "receive", "peer_info",
+                "send", "receive", "receive_all", "peer_info",
                 "create_channel", "add_to_channel", "list_channels",
                 "channel_info", "broadcast"]
-    check(names == expected, "All twelve tools listed in order: %s" % ", ".join(names))
+    check(names == expected, "All thirteen tools listed in order: %s" % ", ".join(names))
     check(all("handler" not in t for t in tools),
           "The Python handler is not leaked into the wire schema")
     check(all(t.get("description") for t in tools), "Every tool has a description")
@@ -203,6 +203,8 @@ class FakeClient:
         self.broadcasts = []
         self.created = None
         self.added = None
+        self.next_messages = None
+        self.last_limit = None
 
     def open_rendezvous(self):
         return {"token": "rv-" + "b" * 32, "token_issued": True}
@@ -226,6 +228,26 @@ class FakeClient:
     def receive_one(self, timeout=300.0, ack=True):
         self.acked = ack
         return self.next_message
+
+    def receive_many(self, limit=10, timeout=300.0, ack=True):
+        """
+        What the MCP `receive` and `receive_all` tools actually call.
+
+        `receive` uses limit=1 so that `has_more` survives; `receive_one`
+        discards the page, which is why a queued backlog was invisible to the
+        model.
+        """
+        self.acked = ack
+        self.last_limit = limit
+        msgs = list(self.next_messages if self.next_messages is not None
+                    else ([self.next_message] if self.next_message else []))
+        taken = msgs[:limit]
+        return stringcup.Page(
+            messages=taken,
+            count=len(taken),
+            has_more=len(msgs) > limit,
+            next_since_id=taken[-1].id if taken else None,
+        )
 
     def peer_info(self, peer_id):
         return {
@@ -459,8 +481,55 @@ def test_peer_info():
           "key_updated_at exposed so rotation is visible")
 
 
+def test_backlog_is_visible():
+    step("16. a queued backlog is visible to the model")
+
+    # The reported failure: receive hands over one message per call, oldest
+    # first, and said nothing about what was queued behind it. An agent
+    # calling it once per turn answered the oldest unread message while its
+    # peer had moved on, so every reply addressed stale content and the peer
+    # concluded it was being ignored. Nothing in the result could have told
+    # it otherwise.
+    fake = FakeClient()
+    fake.next_messages = [
+        stringcup.Message(id=n, sender_id="sc-" + "c" * 24, recipient_id=fake.id,
+                          text="question %d" % n, created_at="2026-09-15 00:00:0%d" % n)
+        for n in range(1, 6)
+    ]
+    with_fake(fake)
+
+    payload = call("receive", {"hold": 1})["structuredContent"]
+    check(fake.last_limit == 1, "receive still takes exactly one message")
+    check(payload["text"] == "question 1", "It is the OLDEST message, as documented")
+    check(payload["more_waiting"] is True,
+          "more_waiting flags the four queued behind it")
+    check("receive_all" in payload.get("next", ""),
+          "And the result names the tool that fixes it")
+
+    payload = call("receive_all", {"hold": 1})["structuredContent"]
+    check(payload["count"] == 5, "receive_all returns the whole backlog at once")
+    check([m["text"] for m in payload["messages"]]
+          == ["question %d" % n for n in range(1, 6)],
+          "Oldest first, so the newest message is the last one read")
+    check(payload["more_waiting"] is False, "Nothing left behind")
+
+    # A backlog deeper than the limit must stay visible rather than look drained.
+    payload = call("receive_all", {"limit": 2, "hold": 1})["structuredContent"]
+    check(payload["count"] == 2 and payload["more_waiting"] is True,
+          "A backlog deeper than limit still reports more_waiting")
+    check("again" in payload.get("next", "") or "raise limit" in payload.get("next", ""),
+          "...and says to call again before replying")
+
+    # An empty inbox must not claim a backlog.
+    fake.next_messages = []
+    payload = call("receive", {"hold": 1})["structuredContent"]
+    check(payload["received"] is False, "Empty inbox is still a not-yet")
+    check("more_waiting" not in payload or payload["more_waiting"] is False,
+          "An empty inbox never claims messages are waiting")
+
+
 def test_channels():
-    step("16. channels")
+    step("17. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -511,7 +580,7 @@ def test_channels():
 
 
 def test_no_remote_transport():
-    step("17. There is no remote transport")
+    step("18. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -539,6 +608,7 @@ def main():
     test_relay_errors_reach_the_model()
     test_unexpected_exception_is_contained()
     test_peer_info()
+    test_backlog_is_visible()
     test_channels()
     test_no_remote_transport()
 

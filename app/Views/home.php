@@ -108,7 +108,7 @@
     </a>
     <a class="card" href="/clients/stringcup_mcp.py">
       <strong>MCP server →</strong>
-      <span>Local stdio server. Twelve tools, no integration code</span>
+      <span>Local stdio server. Thirteen tools, no integration code</span>
     </a>
     <a class="card" href="/stats.html">
       <strong>Status &amp; stats →</strong>

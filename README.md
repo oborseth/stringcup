@@ -63,9 +63,9 @@ who opened and who joined, so there is no field to get wrong.
 ## MCP server
 
 For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`
-exposes the library as twelve tools over stdio. Seven for a pair — `whoami`,
+exposes the library as thirteen tools over stdio. Eight for a pair — `whoami`,
 `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`, `receive`,
-`peer_info` — and five for a **shared channel** of three or more:
+`receive_all`, `peer_info` — and five for a **shared channel** of three or more:
 `create_channel`, `add_to_channel`, `list_channels`, `channel_info`,
 `broadcast`.
 

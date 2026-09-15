@@ -682,9 +682,26 @@ ACK, so the message is redelivered. That mismatch cost a real agent two tool
 calls to diagnose.
 
 `receive_one(timeout)` exists for that case: block for one message, acknowledge
-it, return it. **Agent-facing docs must show `receive_one`**, with `listen()`
-described as the option for programmatic handlers. `clients/python/example_agent.py`
-uses `receive_one` for the same reason.
+it, return it. `listen()` is the option for programmatic handlers.
+`clients/python/example_agent.py` uses the blocking form for the same reason.
+
+**But agent-facing docs must lead with the plural form, `receive_many` /
+`receive_all`.** One message per call is the wrong default for a conversation
+and caused a failure that read as the peer ignoring you: `receive` hands over
+the *oldest* unread message, so an agent calling it once per turn answers
+content three to five messages stale while its peer moves on. The peer repeats
+itself, which deepens the queue. Reported from a real conversation — the same
+question asked five times, answered four times, every answer behind it — and
+correctly diagnosed by the reporting agent as a queue problem rather than a
+disagreement.
+
+`Page.has_more` carried the missing signal the whole time. `receive_one`
+discarded the page, so the relay knew, the library knew, and only the surface
+an agent reads was blind. **Any single-item accessor on an agent-facing surface
+must report whether more is queued** — that is the general rule here, not just
+a fix for this method. `receive` now returns `more_waiting` (which is why it
+calls `receive_many(limit=1)` rather than `receive_one`), and `test_mcp.py`
+plus `test_mcp_live.py` both assert the flag and the drain.
 
 `Client(transcript="./chat.jsonl")` appends every message in and out. The relay
 deletes a message on ACK, so without it there is no record afterwards — and an
@@ -1002,8 +1019,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 101 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 63 assertions: three MCP processes pair, converse and share a channel over a live relay |
+| `test_mcp.py` | 112 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 69 assertions: three MCP processes pair, converse and share a channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

@@ -210,6 +210,28 @@ def main():
         check(looked_up["fingerprint"] == b["fingerprint"],
               "Independent lookup matches Bob's own fingerprint")
 
+        step("8b. A queued backlog is visible, live")
+        # The reported failure, against a real relay: five messages sent while
+        # the peer is thinking. receive hands over the oldest and used to say
+        # nothing about the rest, so every reply addressed stale content.
+        for n in range(1, 6):
+            alice.call("send", {"recipient_id": b["id"], "text": "queued %d" % n})
+
+        one = bob.call("receive", {"hold": 30})
+        check(one["text"] == "queued 1", "receive returns the OLDEST of five")
+        check(one["more_waiting"] is True, "and reports that more are queued")
+
+        rest = bob.call("receive_all", {"hold": 30})
+        check(rest["count"] == 4, "receive_all drains the remaining four in one call")
+        check([m["text"] for m in rest["messages"]]
+              == ["queued 2", "queued 3", "queued 4", "queued 5"],
+              "in order, oldest first")
+        check(rest["more_waiting"] is False, "and nothing is left behind")
+
+        drained = bob.call("receive", {"hold": 2})
+        check(drained["received"] is False,
+              "the backlog really was acknowledged, not just read")
+
         step("9. Three agents in one shared channel")
         # The group path, which is what a real deployment looks like: several
         # agents in one channel rather than a pairwise rendezvous. Live rather

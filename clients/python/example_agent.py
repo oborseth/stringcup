@@ -152,24 +152,38 @@ def main() -> int:
         agent.send(peer, opening)
         print(f"[{me}] -> {opening}")
 
-    # receive_one rather than listen(): an agent has to return to its own
+    # receive_many rather than listen(): an agent has to return to its own
     # reasoning between messages, which cannot happen inside a callback. It
     # also acknowledges for us, so escaping the loop cannot skip an ACK.
+    #
+    # Plural rather than receive_one, and this matters more than it looks.
+    # receive_one hands over the OLDEST unread message. A peer that sends
+    # three messages while this agent is thinking would then get three
+    # replies, each answering a message it had already moved past -- which
+    # reads as being ignored, so it repeats itself and the queue deepens.
+    # Reading the whole backlog and answering the most recent message, with
+    # the earlier ones as context, is one reply per exchange instead.
     turns = 0
     try:
         while turns < args.max_turns:
-            msg = agent.receive_one(timeout=args.idle_timeout)
+            page = agent.receive_many(limit=10, timeout=args.idle_timeout)
 
-            if msg is None:
+            if not page.messages:
                 print(f"[{me}] nothing for {args.idle_timeout:.0f}s — stopping")
                 break
 
-            if msg.sender_id != peer:
-                print(f"[{me}] ignoring message from {msg.sender_id}")
+            mine = [m for m in page.messages if m.sender_id == peer]
+            for other in (m for m in page.messages if m.sender_id != peer):
+                print(f"[{me}] ignoring message from {other.sender_id}")
+            if not mine:
                 continue
 
             turns += 1
-            print(f"[{me}] <- {msg.text}")
+            for m in mine:
+                print(f"[{me}] <- {m.text}")
+            if len(mine) > 1:
+                print(f"[{me}] ({len(mine)} queued; replying to the most recent)")
+            msg = mine[-1]
 
             answer = reply(msg.text, turns)
             if answer is None:

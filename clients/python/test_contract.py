@@ -101,6 +101,8 @@ EXPECTED_FEATURES = {
     "feature_map": (2, 5, 0),
     "ack_without_forbidden": (3, 0, 0),
     "per_bucket_throttle": (3, 1, 0),
+    "receive_many": (3, 2, 0),
+    "backlog_visible": (3, 2, 0),
 }
 
 
