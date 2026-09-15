@@ -944,7 +944,14 @@ cannot quietly become false:
   cached roster) and routes a failed claim to `channel_claim` with a warning.
   **Verification proves "the sender is in this group", never "everyone in this
   group saw this"** — a member can still label a DM, and there is no delivery
-  set. Caught by a re-audit. The lesson generalises: **anything derived from
+  set. **And it closes *peer* forgery, not *relay* forgery: the roster is
+  relay-served.** That is the boundary that matters, not the 300s roster
+  cache; an auditor's reframing. So **`Message.channel` must never be an
+  authorization input and channel removal must never be described as
+  revocation** — if nothing authorizes on it, the staleness window cannot
+  matter, and if anything does, the window is the least of the problem.
+  Negatives expire in 15s rather than 300s, and the client busts its own cache
+  when it changes membership itself. Caught by a re-audit. The lesson generalises: **anything derived from
   plaintext is sender-controlled, and presenting it to a model as provenance
   is worse than not presenting it at all.**
 - **A broadcast is labelled, and the label lives inside the ciphertext.**
@@ -1179,7 +1186,36 @@ The server never encrypts or decrypts. It only:
   key made both sides raise `VerificationFailed`; the same substitution
   without a secret paired silently with `verified: false`.
 
-  Four properties to preserve. **The secret must never reach the relay** — a
+  **The v1 tag was REFLECTABLE and shipped broken for one version.** It was
+  `HMAC(secret, sorted(both keys))` — fully symmetric, so both sides computed
+  the identical value and each compared the received tag against its *own*. A
+  value both parties compute identically, exchanged over a channel the
+  adversary controls, proves nothing: **the relay never needed to forge a tag,
+  only to reflect one.** It decrypts a side's tag (substitution bought that),
+  mints a message with `sender_id` set to the peer — forgeable, as this file
+  already records — carrying that side's own tag encrypted to its real key,
+  and the comparison succeeds. Both sides reported `verified: true` under a
+  full MITM. Reproduced end to end before the fix.
+
+  Three things to carry forward, and the third is the general one:
+
+  - **A tag names the role of whoever computed it** (`PAIRING_TAG_CONTEXT`,
+    `other_pairing_role`). Each side sends its own role's tag and compares the
+    peer's against the *other* role's — never its own. Receiving one's own tag
+    back is detected explicitly, because nothing legitimate produces it. Both
+    ids, both keys and the rendezvous token are bound, length-prefixed.
+  - **Machine generation is structural.** A caller-supplied secret is refused
+    like a client-chosen `external_id`. An auditor noted this is the *third*
+    time this project has learned that lesson, so it is a rule now, not a
+    warning.
+  - **The original argument asked whether the adversary could COMPUTE a
+    matching value, and never asked whether it needed to.** The test modelled
+    a passive substituter that *forwarded* tags; the adversary this feature
+    exists to stop is active on the message path, because it **is** the
+    message path. Any future proof-of-possession here must be tested against
+    an adversary that echoes, not merely one that tampers.
+
+  Four further properties to preserve. **The secret must never reach the relay** — a
   value the relay knows proves nothing about a key it served, and
   `test_mcp.py` asserts against the source that no `_request()` passes it.
   **A mismatch must stay terminal, not retryable** — retrying cannot fix
@@ -1254,7 +1290,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 154 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 163 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 

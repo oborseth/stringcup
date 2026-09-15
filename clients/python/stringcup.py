@@ -74,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.7.0"
+__version__ = "3.8.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 7, 0)
+version_info = (3, 8, 0)
 
 __all__ = [
     "Client",
@@ -105,6 +105,7 @@ __all__ = [
     "VerificationFailed",
     "new_pairing_secret",
     "verification_tag",
+    "other_pairing_role",
 ]
 
 #: Capability name -> the version that introduced it.
@@ -169,6 +170,8 @@ FEATURES = {
     "verified_channel_labels": (3, 6, 0), # Message.channel is checked, not trusted
     # 3.7.0
     "pairing_secret": (3, 7, 0),          # authenticate first contact off-relay
+    # 3.8.0
+    "directional_pairing_tag": (3, 8, 0),  # pairing tag is not reflectable
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -248,21 +251,126 @@ def new_pairing_secret() -> str:
     ).decode().rstrip("=")
 
 
-def verification_tag(secret: str, pub_a: str, pub_b: str) -> str:
-    """
-    `HMAC(secret, both public keys in sorted order)`.
+#: Domain separator, versioned because the v1 construction was BROKEN.
+#:
+#: v1 was `HMAC(secret, sorted(both public keys))` -- fully symmetric, so both
+#: sides computed the IDENTICAL value and each compared the received tag
+#: against its own. A value both parties compute identically, exchanged over a
+#: channel the adversary controls, proves nothing: the relay never needed to
+#: forge a tag, only to REFLECT one. Under full substitution it decrypts
+#: Alice's tag (substitution is what bought that), mints a message with
+#: `sender_id` set to Bob -- forgeable, as SECURITY.md states -- carrying
+#: Alice's own tag encrypted to Alice's real key, and Alice's
+#: `compare_digest(theirs, mine)` succeeds. Both sides reported verified with
+#: a full MITM in place. Reproduced end to end before this fix.
+#:
+#: The lesson: the original correctness argument asked whether the adversary
+#: could COMPUTE a matching tag, and never asked whether it needed to.
+PAIRING_TAG_CONTEXT = b"stringcup-pairing-v2"
 
-    Sorted so both sides derive the same value without agreeing who is who.
-    Each side hashes its **own real** public key together with the peer key it
-    was **served**, so the tags match only if neither key was substituted:
-    for the two sets to be equal when the identities differ, the served keys
-    must be the genuine ones.
-    """
-    raw_a = base64.b64decode(pub_a)
-    raw_b = base64.b64decode(pub_b)
-    joined = b"".join(sorted([raw_a, raw_b]))
+#: The two roles the relay derives. A tag names the role of its SENDER.
+PAIRING_ROLES = ("initiator", "responder")
 
-    return hmac.new(secret.encode(), joined, hashlib.sha256).hexdigest()
+
+def _decode_pairing_secret(secret: str) -> bytes:
+    """
+    Decode a minted pairing secret to its raw bytes, refusing anything else.
+
+    **Machine generation is structural here, not advisory.** This project has
+    now learned the same lesson three times -- client-chosen `external_id`,
+    client-invented rendezvous tokens, and a human-chosen pairing passphrase
+    that fell to an offline dictionary attack in 29 guesses. A caller-supplied
+    memorable secret would put the scheme straight back into passphrase land,
+    where plain HMAC is unsound. So it is refused the same way a caller-chosen
+    identifier is refused.
+
+    Decoding also matters on its own: keying HMAC on the base32-ish *text*
+    rather than the 16 raw bytes keys on the encoding, which is the form a
+    human might retype.
+    """
+    if not isinstance(secret, str) or not secret.startswith("ps-"):
+        raise ValidationError(
+            "a pairing secret must be one minted by new_pairing_secret(); "
+            "a chosen or memorable value is refused, because a low-entropy "
+            "secret makes this construction unsound"
+        )
+
+    body = secret[3:]
+    padding = "=" * (-len(body) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(body + padding)
+    except Exception:
+        raise ValidationError("pairing secret is not valid base64url")
+
+    if len(raw) != PAIRING_SECRET_BYTES:
+        raise ValidationError(
+            "pairing secret must carry %d bytes of entropy, got %d"
+            % (PAIRING_SECRET_BYTES, len(raw))
+        )
+
+    return raw
+
+
+def _length_prefixed(*parts: bytes) -> bytes:
+    """Unambiguous concatenation: each part carries its own length."""
+    return b"".join(len(p).to_bytes(2, "big") + p for p in parts)
+
+
+def verification_tag(
+    secret: str,
+    role: str,
+    ids: "tuple",
+    public_keys: "tuple",
+    token: str,
+) -> str:
+    """
+    The pairing tag for one DIRECTION of a pairing.
+
+    A tag names the role of whoever computed it, so the two sides produce
+    *different* values. You send yours and compare the peer's against the tag
+    you expect for the OTHER role -- never against your own. That is what
+    makes a reflected tag fail: it carries the wrong role.
+
+    Everything the pairing depends on is bound in:
+
+    - `role` -- breaks the symmetry that made reflection work.
+    - both **ids**, not only keys. `sorted(keys)` alone is ambiguous when the
+      two keys are equal, which this protocol contemplates because multiple
+      instances of one identity are supported. Degenerate, but free to close.
+    - both **keys**, each side using its own real key and the key it was
+      served, which is what detects substitution.
+    - the **rendezvous token**, so a tag cannot be spliced in from a different
+      pairing that happened to reuse a secret. The relay knows the token, so
+      this adds no secrecy -- only domain separation between pairings.
+
+    Length-prefixed, so no two different inputs can collide by concatenation.
+    """
+    if role not in PAIRING_ROLES:
+        raise ValidationError(
+            "role must be one of %s, got %r -- a pairing tag is meaningless "
+            "without a direction" % (PAIRING_ROLES, role)
+        )
+
+    raw_secret = _decode_pairing_secret(secret)
+
+    parts = [
+        PAIRING_TAG_CONTEXT,
+        role.encode(),
+        hashlib.sha256(token.encode()).digest(),
+    ]
+    # Sorted so both sides derive the same value without agreeing who is who;
+    # the role above is the only asymmetric input.
+    parts += sorted(i.encode() for i in ids)
+    parts += sorted(base64.b64decode(k) for k in public_keys)
+
+    return hmac.new(raw_secret, _length_prefixed(*parts), hashlib.sha256).hexdigest()
+
+
+def other_pairing_role(role: str) -> str:
+    """The role the peer holds, given yours."""
+    if role not in PAIRING_ROLES:
+        raise ValidationError("unknown pairing role %r" % role)
+    return PAIRING_ROLES[1] if role == PAIRING_ROLES[0] else PAIRING_ROLES[0]
 
 
 MAX_PAGE = 200
@@ -331,6 +439,7 @@ FEATURE_OF = {
     "VerificationFailed": "pairing_secret",
     "new_pairing_secret": "pairing_secret",
     "verification_tag": "pairing_secret",
+    "other_pairing_role": "directional_pairing_tag",
 }
 
 
@@ -1121,22 +1230,45 @@ class Client:
 
         return "\n".join(lines)
 
-    def _verify_pairing(self, info: dict, secret: str, timeout: float) -> dict:
+    def _verify_pairing(self, info: dict, secret: str, token: str,
+                        timeout: float) -> dict:
         """
-        Exchange and compare verification tags with the freshly paired peer.
+        Exchange and compare DIRECTIONAL verification tags with the peer.
 
-        Runs over the ordinary message path, so the relay needs no change. The
-        tag leaks nothing — the secret is 128 bits and HMAC is a PRF — and the
-        relay cannot forge one, so the worst it can do is cause a *detected*
-        failure, which is the safe direction.
+        Runs over the ordinary message path, so the relay needs no change.
+
+        **Each side sends the tag for its own role and compares the received
+        tag against the one it expects for the peer's role.** Never against
+        its own -- that was the v1 bug: the tag was symmetric, so an active
+        relay could reflect a side's own tag back to it, attributed to the
+        peer (`sender_id` is relay-forgeable), and verification passed with a
+        full MITM in place. Reproduced end to end. A reflected tag now carries
+        the wrong role and fails.
 
         Only the peer's verification message is acknowledged; anything else
         that arrives meanwhile is left untouched, so a real first message is
-        never swallowed here.
+        never swallowed.
         """
         peer_id = info["peer_id"]
         peer_pub = info["peer_identity_public_key"]
-        mine = verification_tag(secret, self.identity.public_key_b64, peer_pub)
+
+        role = info.get("role")
+        if role not in PAIRING_ROLES:
+            # The relay derives and reports the role. Without one there is no
+            # direction to bind, so refuse rather than fall back to a
+            # symmetric tag -- that fallback *is* the vulnerability.
+            raise VerificationFailed(
+                "the relay did not report a pairing role (%r), so this pairing "
+                "cannot be verified directionally. Refusing rather than falling "
+                "back to a reflectable tag." % (role,)
+            )
+
+        ids = (self.id, peer_id)
+        keys = (self.identity.public_key_b64, peer_pub)
+
+        mine = verification_tag(secret, role, ids, keys, token)
+        expected = verification_tag(
+            secret, other_pairing_role(role), ids, keys, token)
 
         self.send(peer_id, VERIFY_PREFIX + mine + "]")
 
@@ -1145,10 +1277,10 @@ class Client:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise VerificationFailed(
-                    "peer never sent its verification tag within %.0fs. It may be "
-                    "running a client older than 3.7.0, which does not know about "
-                    "the secret. Do not treat this pairing as authenticated."
-                    % timeout
+                    "peer never sent a verification tag within %.0fs. It may be "
+                    "running a client older than 3.8.0, whose tag construction was "
+                    "different and is deliberately not accepted. Do not treat this "
+                    "pairing as authenticated." % timeout
                 )
 
             page = self.fetch(limit=MAX_PAGE,
@@ -1162,13 +1294,27 @@ class Client:
                 self.ack([msg.id])
                 theirs = msg.text[len(VERIFY_PREFIX):].rstrip("]").strip()
 
-                if not hmac.compare_digest(theirs, mine):
+                if hmac.compare_digest(theirs, mine):
+                    # Our own tag, echoed back at us. Nothing legitimate does
+                    # this: the peer holds the other role and cannot produce
+                    # this value. This is the reflection attack, caught.
+                    raise VerificationFailed(
+                        "the peer returned OUR OWN verification tag. Nothing "
+                        "legitimate produces that -- the peer holds the other role "
+                        "and cannot compute this value. This is a reflection "
+                        "attempt by something on the message path. Treat the "
+                        "channel as compromised: do not send, and report it."
+                    )
+
+                if not hmac.compare_digest(theirs, expected):
                     raise VerificationFailed(
                         "the pairing secret did not authenticate this peer. The tag "
-                        "it computed over the two public keys does not match yours, "
-                        "which is what a relay serving one of you a substituted key "
-                        "produces. Treat this as key substitution: do not send, and "
-                        "report it to your operator."
+                        "it sent does not match the one expected for its role over "
+                        "these two keys. That is what key substitution looks like -- "
+                        "but a relay can also simply inject a wrong tag to deny you "
+                        "the pairing, so this means EITHER substitution OR a relay "
+                        "refusing to let you verify. Both require the same response: "
+                        "do not send, and report it to your operator."
                     )
 
                 info["verified"] = True
@@ -1205,7 +1351,8 @@ class Client:
             if info.get("peer_id"):
                 if secret:
                     return self._verify_pairing(
-                        info, secret, max(30.0, deadline - time.monotonic()))
+                        info, secret, token,
+                        max(30.0, deadline - time.monotonic()))
 
                 info["verified"] = False
                 return info
@@ -1225,7 +1372,7 @@ class Client:
         info = self.rendezvous(token=token, wait=0)
         if info.get("peer_id"):
             if secret:
-                return self._verify_pairing(info, secret, timeout)
+                return self._verify_pairing(info, secret, token, timeout)
 
             info["verified"] = False
             return info
@@ -1918,6 +2065,7 @@ class Client:
             payload["members"] = members
 
         body = self._request("POST", "/topics", payload)
+        self._forget_roster(name)
 
         if notify and members:
             unknown = set(body.get("unknown") or [])
@@ -2006,19 +2154,47 @@ class Client:
 
         return body
 
-    def channel_members(self, name: str, max_age: float = 300.0) -> Optional[set]:
+    #: How long a positive roster is reused. `topics_get` is 200/hour, so a
+    #: roster read per received message is unaffordable above ~200 msg/hour;
+    #: the cache is not optional. A member removed from a channel therefore
+    #: keeps a working label for up to this long.
+    #:
+    #: **That window is a rounding error next to the real boundary**, and an
+    #: auditor's reframing is the reason this note exists: the roster is
+    #: served by the RELAY. Channel verification closes *peer* forgery -- any
+    #: stranger who can send you a direct message asserting a channel -- and
+    #: does not close *relay* forgery at all. So:
+    #:
+    #: **`Message.channel` must never be an authorization input, and removal
+    #: from a channel must never be described as a revocation mechanism.** If
+    #: nothing authorizes on it, the staleness window cannot matter. If
+    #: anything does, the window is the least of the problem.
+    ROSTER_CACHE_SECONDS = 300.0
+
+    #: Negatives expire far sooner, on purpose. A roster that failed to read
+    #: is usually transient -- a rate limit, a network blip, a member added a
+    #: moment ago -- and caching that for the positive TTL would keep
+    #: rejecting legitimate labels long after the cause cleared.
+    ROSTER_NEGATIVE_CACHE_SECONDS = 15.0
+
+    def channel_members(self, name: str,
+                        max_age: Optional[float] = None) -> Optional[set]:
         """
         Cached member-id set for a channel, or None if it cannot be read.
 
-        Cached because verifying an inbound label would otherwise cost a
-        roster read per message. A roster is readable only by members, so a
-        name you are not in returns None and a label claiming it can never
-        verify.
+        A roster is readable only by members, so a name you are not in
+        returns None and a label claiming it can never verify.
         """
         now = time.monotonic()
         hit = self._roster_cache.get(name)
-        if hit is not None and (now - hit[0]) < max_age:
-            return hit[1]
+        if hit is not None:
+            age, cached = now - hit[0], hit[1]
+            ttl = max_age if max_age is not None else (
+                self.ROSTER_CACHE_SECONDS if cached is not None
+                else self.ROSTER_NEGATIVE_CACHE_SECONDS
+            )
+            if age < ttl:
+                return cached
 
         try:
             roster = self.topic(name, verify_pins=False)
@@ -2029,6 +2205,19 @@ class Client:
         ids = {m["id"] for m in roster.get("members", [])}
         self._roster_cache[name] = (now, ids)
         return ids
+
+    def _forget_roster(self, name: Optional[str] = None) -> None:
+        """
+        Drop cached rosters after this client changes membership itself.
+
+        Free correctness: when we are the one adding or removing a member we
+        know the roster moved, so there is no reason to serve a stale answer
+        for up to the TTL.
+        """
+        if name is None:
+            self._roster_cache.clear()
+        else:
+            self._roster_cache.pop(name, None)
 
     def verify_channel_claim(self, sender_id: str, claim: str) -> bool:
         """
@@ -2064,6 +2253,7 @@ class Client:
         """
         ids = list(ids)
         body = self._request("POST", f"/topics/{name}/members", {"ids": ids})
+        self._forget_roster(name)
 
         if notify and ids:
             unknown = set(body.get("unknown") or [])
@@ -2074,12 +2264,23 @@ class Client:
         return body
 
     def remove_member(self, name: str, member_id: str) -> dict:
-        """Remove a member. Owner may remove anyone; a member may remove itself."""
-        return self._request("DELETE", f"/topics/{name}/members/{member_id}")
+        """
+        Remove a member. Owner may remove anyone; a member may remove itself.
+
+        **This is not a revocation mechanism.** It stops future broadcasts
+        addressing them, and it makes their channel labels stop verifying once
+        the cached roster expires -- but the roster is relay-served, so nothing
+        here is enforceable against the relay. See `ROSTER_CACHE_SECONDS`.
+        """
+        body = self._request("DELETE", f"/topics/{name}/members/{member_id}")
+        self._forget_roster(name)
+        return body
 
     def delete_topic(self, name: str) -> dict:
         """Delete a topic. Owner only. Already-sent messages are unaffected."""
-        return self._request("DELETE", f"/topics/{name}")
+        body = self._request("DELETE", f"/topics/{name}")
+        self._forget_roster(name)
+        return body
 
     # -- transport ---------------------------------------------------------
 

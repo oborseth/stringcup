@@ -655,19 +655,70 @@ def test_pairing_secret():
           "A failed verification does not report a pairing")
     check("STOP" in payload["next"],
           "...and tells the model to stop rather than retry")
-    check("substituted" in payload["next"],
-          "...naming key substitution as the thing it looks like")
+    check("substitution" in payload["next"],
+          "...naming key substitution as one cause")
+    check("deny you" in payload["next"] or "refuse" in payload["next"],
+          "...and NOT claiming it is certainly an attack: a relay can also "
+          "inject a wrong tag to deny the pairing, which is fail-safe but "
+          "means 'failed' does not always mean 'under attack'")
 
-    # The library primitive itself: order-independent, secret-dependent.
+    # ---- the primitive, and the REFLECTION property it exists for ----
+    #
+    # v1 of this tag was symmetric: both sides computed the identical value
+    # and each compared the received tag against its OWN. An active relay
+    # therefore did not need to forge a tag, only to echo one back to its
+    # sender attributed to the peer -- `sender_id` is relay-forgeable -- and
+    # both sides reported verified under a full MITM. Reproduced end to end.
+    #
+    # The original argument asked whether the adversary could COMPUTE a
+    # matching tag and never asked whether it needed to.
     A = FakeClient.PUB
     Bk = "7+bZTYfHn+kyu4W0e61+g+LgBxD0mN28o+TQlBbFll0="
-    t1 = stringcup.verification_tag("ps-1", A, Bk)
-    check(t1 == stringcup.verification_tag("ps-1", Bk, A),
-          "verification_tag is order-independent, so neither side must be 'first'")
-    check(t1 != stringcup.verification_tag("ps-2", A, Bk),
-          "...and depends on the secret")
-    check(len(stringcup.new_pairing_secret()) > 20,
-          "A minted secret is long enough that there is nothing to guess")
+    sec = stringcup.new_pairing_secret()
+    ids = ("sc-" + "a" * 24, "sc-" + "c" * 24)
+    keys = (A, Bk)
+
+    t_init = stringcup.verification_tag(sec, "initiator", ids, keys, "rv-x")
+    t_resp = stringcup.verification_tag(sec, "responder", ids, keys, "rv-x")
+    check(t_init != t_resp,
+          "THE FIX: the two roles produce DIFFERENT tags, so a reflected tag "
+          "carries the wrong role and cannot match")
+
+    # Both sides must still agree on each other's value, or nothing verifies.
+    check(t_resp == stringcup.verification_tag(
+              sec, "responder", tuple(reversed(ids)), tuple(reversed(keys)), "rv-x"),
+          "...while remaining order-independent, so neither side must go first")
+
+    check(t_init != stringcup.verification_tag(sec, "initiator", ids, keys, "rv-OTHER"),
+          "The rendezvous token is bound, so a tag cannot be spliced from "
+          "another pairing that reused a secret")
+    check(t_init != stringcup.verification_tag(
+              sec, "initiator", ("sc-" + "z" * 24, ids[1]), keys, "rv-x"),
+          "Both ids are bound, which closes the equal-keys degenerate case")
+    check(t_init != stringcup.verification_tag(
+              stringcup.new_pairing_secret(), "initiator", ids, keys, "rv-x"),
+          "...and it still depends on the secret")
+
+    # Machine generation is structural, not advisory: the same lesson as
+    # client-chosen external_id and client-invented rendezvous tokens.
+    for bad in ("hunter2", "correct-horse-battery-staple", "ps-short", ""):
+        raised = False
+        try:
+            stringcup.verification_tag(sec if False else bad, "initiator", ids, keys, "rv-x")
+        except stringcup.ValidationError:
+            raised = True
+        check(raised, "A caller-supplied secret %r is REFUSED, not accepted" % bad)
+
+    raised = False
+    try:
+        stringcup.verification_tag(sec, "not-a-role", ids, keys, "rv-x")
+    except stringcup.ValidationError:
+        raised = True
+    check(raised, "A tag without a valid direction is refused rather than computed")
+
+    check(stringcup.other_pairing_role("initiator") == "responder"
+          and stringcup.other_pairing_role("responder") == "initiator",
+          "other_pairing_role gives the tag each side must EXPECT")
 
     # THE property the whole scheme rests on. If the secret ever reaches the
     # relay it is worth nothing -- the relay already knows the token, and a

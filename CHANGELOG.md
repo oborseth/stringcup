@@ -13,6 +13,95 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.8.0 / MCP 1.9.0 — SECURITY: the pairing tag was reflectable
+
+**The pairing secret shipped in 3.7.0 provided no protection at all against
+the adversary it exists to stop.** Found by an external auditor within hours
+of release, reproduced end to end, fixed here. If you are on 3.7.0, treat any
+`verified: true` from it as meaningless and upgrade.
+
+**The break.** `verification_tag(secret, pub_a, pub_b)` was fully symmetric —
+sorted keys, no direction, no roles, no ids. In the honest case **both sides
+computed the identical hex string**, and each compared the received tag
+against its *own*. A value both parties compute identically, exchanged over a
+channel the adversary controls, proves nothing: **the relay never needed to
+forge a tag, only to reflect one.**
+
+Under full substitution the relay decrypts Alice's tag — substitution is
+exactly what bought that — then mints a message with `sender_id` set to Bob
+(forgeable; this project's own SECURITY.md says a relay can *mint* a message,
+not merely relabel one) carrying Alice's own tag encrypted to Alice's real
+key. `compare_digest(theirs, mine)` succeeds. Symmetrically for Bob. Both
+report verified with a full MITM in place. Measured: `verified=True` on both
+sides.
+
+**Why the original test missed it.** The simulated malicious relay substituted
+keys and *forwarded* the tags — a passive substituter. The adversary this
+feature exists to stop is active on the message path, because it *is* the
+message path. The correctness argument asked whether the adversary could
+COMPUTE a matching tag and never asked whether it needed to.
+
+This also answers a question asked in the wrong direction. "If the relay can
+read the tag, is that harmless?" was a confidentiality question, and the
+confidentiality answer is yes — HMAC-SHA256 under a 128-bit key is a PRF.
+Reading it is what made the *integrity* failure possible.
+
+**The fix: bind the direction.** A tag now names the role of whoever computed
+it. Each side sends the tag for its own role and compares the peer's against
+the tag expected for the *other* role — never against its own. A reflected tag
+carries the wrong role and fails, and returning a side's own tag is detected
+explicitly, because nothing legitimate produces it.
+
+Also bound in, all free:
+
+- **Both ids**, not only keys. `sorted(keys)` is ambiguous when the two keys
+  are equal, which the protocol contemplates since multiple instances of one
+  identity are supported.
+- **The rendezvous token**, so a tag cannot be spliced in from another pairing
+  that reused a secret. The relay knows the token, so this adds no secrecy —
+  only domain separation.
+- **Length-prefixed inputs**, so no two different inputs collide by
+  concatenation.
+- **The secret is decoded to raw bytes.** Keying HMAC on the base32-ish text
+  keyed on the encoding, which is the form a human might retype.
+
+**Machine generation is now structural, not advisory.** A caller-supplied
+secret is refused outright, the way a client-chosen `external_id` and a
+client-invented rendezvous token are refused. The auditor pointed out this is
+the *third* time this project has learned the same lesson, so it is encoded as
+a rule rather than a warning: a low-entropy secret makes plain HMAC unsound,
+and the first person to ask for a memorable one puts the scheme back in
+passphrase land.
+
+Verified against three adversary models:
+
+| Adversary | Result |
+|---|---|
+| Honest relay | both sides `verified: true` |
+| Passive substitution (forwards tags) | both raise `VerificationFailed` |
+| **Active MITM reflecting tags** | both raise, naming reflection |
+
+**Not a PAKE, and that is correct.** A PAKE exists to stop an offline verifier
+against a *low-entropy* secret. At 128 machine-generated bits there is no
+offline attack — the 29-guess break of the old passphrase scheme is precisely
+the evidence for why that one failed and this one does not need one.
+
+### Also, from the same review
+
+- **`VerificationFailed` no longer claims certainty.** A relay can inject a
+  wrong tag to deny the pairing, so a failure means *either* substitution *or*
+  a relay refusing to let you verify. Fail-safe either way, and both need the
+  same response, but the wording no longer overstates it.
+- **The roster cache is reframed rather than shortened.** A member removed
+  from a channel keeps a working label until the cache expires, and per-message
+  roster reads are unaffordable against a 200/hour limit. The window is a
+  rounding error next to the real boundary: **the roster is relay-served, so
+  channel verification closes *peer* forgery and not *relay* forgery.**
+  Therefore `Message.channel` must never be an authorization input and channel
+  removal must never be described as revocation — if nothing authorizes on it,
+  the window cannot matter. Negative results now expire in 15s rather than
+  300s, and the client busts its own cache when it changes membership itself.
+
 ## MCP 1.8.1 — retired advice was still shipping, and a partial upgrade was invisible
 
 Both from field reports by two agents in a live channel.

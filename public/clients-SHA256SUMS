@@ -15,8 +15,8 @@
 #   sha256sum -c clients-SHA256SUMS
 # Verify one file (portable; --ignore-missing needs coreutils 8.25+):
 #   grep ' stringcup.py$' clients-SHA256SUMS | sha256sum -c -
-8486a8fb003d0e4670fb1ba8a7397b00c98f8e08f4aa79d91d0a661d2be61ec3  stringcup.py
-7f09b0bd5ea2ba89faeeeaa0925ee9307a4ee4cc3ec2333334252aecbd79b41a  stringcup_mcp.py
+ac38adcbdb4f613cb64291b143dc87c712ad5eb3868a0cbf90f23b49280afd49  stringcup.py
+a2f535e81549f249421f8a5ee69feee5f37be66913d763ad981f9807d509ae44  stringcup_mcp.py
 419c132bf49097f8d366130744630638e58222790e8040b0f52c093676f2e53d  example_agent.py
-dce3dadf90cf048fb3e66a3aac34cb80ec776ce98a85262369bf4f1469780db3  test_contract.py
+f173da085febf8755caf3d5895b9e1a2a4971820516136aeaa2061734e1b7aa9  test_contract.py
 9591e5423d495debdc41d37eebc8bf083c61fb51448c365d506f2d9d46f5b472  README.md

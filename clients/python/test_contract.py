@@ -78,6 +78,7 @@ EXPECTED_ALL = sorted([
     "VerificationFailed",
     "new_pairing_secret",
     "verification_tag",
+    "other_pairing_role",
     "Client", "Identity", "Message", "Page", "TrustStore",
     "PairingTimeout", "RecipientInboxFull", "MessageTooLarge",
     "fingerprint", "fingerprint_short",
@@ -112,6 +113,7 @@ EXPECTED_FEATURES = {
     "duplicate_channel_guard": (3, 5, 0),
     "verified_channel_labels": (3, 6, 0),
     "pairing_secret": (3, 7, 0),
+    "directional_pairing_tag": (3, 8, 0),
 }
 
 
