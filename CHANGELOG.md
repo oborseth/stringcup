@@ -46,6 +46,26 @@ Every one of those topics still has a member holding a token inside
 an operator decision, not housekeeping. `php spark topics:audit` now reports
 reclaimable versus still-held so that is checkable rather than asserted.
 
+### A prediction, due 2026-10-22
+
+**The 85 grandfathered topics are deliberately not being hand-cleaned**, and
+the reason is not tidiness. They are the only natural test the new reachability
+rule will get: it replaced two rules that were dead for the project's entire
+life, and nothing has ever exercised it against real data. Purging by hand
+would destroy the evidence that the fix works — using the same name-matching
+classifier `topics:audit` was just corrected for, via a command that deletes
+identities that peers hold pinned fingerprints against.
+
+Recorded in `CLAUDE.md` so it gets read: **`topics:audit` should report a
+non-zero reclaimable count before 2026-10-22, and "addressable by a human
+name" should fall from 85 to 2 around then.** If it does not, the rule does not
+fire against production data — a defect hand-cleaning would have hidden
+permanently.
+
+The auditor's framing: *a prediction written down in advance is the cheapest
+verification available*, and a number disagreeing with an expectation has been
+this project's best detector all week. So one was arranged on purpose.
+
 ### `topics:audit` prints the rule, not just a count
 
 The first version reported "83 recognisable test artefacts, 2 meaningful" from

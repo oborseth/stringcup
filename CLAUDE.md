@@ -407,6 +407,38 @@ now produced three of this project's findings. `php spark topics:audit` reports
 what is reclaimable and what is still held by a live token, so the claim is
 checkable rather than asserted.
 
+#### A WRITTEN-DOWN PREDICTION, DUE 2026-10-22
+
+**Do not hand-clean the 85 grandfathered topics.** They are the only natural
+test the new reachability rule is going to get: it replaced two rules that were
+dead for the project's entire life, and **nothing has ever exercised it against
+real data.** Purging by hand would destroy the evidence that the fix works —
+and would do it using the same name-matching classifier `topics:audit` was just
+corrected for, on a command (`db:prune`) that deletes **identities**, which
+peers hold pinned fingerprints against.
+
+So the prediction, recorded in advance because this project's best detector all
+week has been a number disagreeing with an expectation:
+
+> Every one of those 85 topics has a member whose token was last used around
+> **2026-09-15**. Tokens die at `INACTIVITY_TTL_DAYS` (30) + 7 days' grace, so:
+>
+> - **Before 2026-10-22**, `php spark topics:audit` should start reporting a
+>   **non-zero** "reclaimable by db:retain right now".
+> - **By roughly 2026-10-22**, "addressable by a human name" should have fallen
+>   from **85 to 2** — `porkbun-support-agents-20260915` and `steve-agents`,
+>   whose members are genuinely active.
+>
+> **If it has not fallen, the reachability rule does not fire against
+> production data and that is a defect** — one that hand-cleaning would have
+> hidden permanently. Check it; do not assume it.
+
+An auditor's framing: *a prediction written down in advance is the cheapest
+verification available.* The missed "purge before freezing" ordering costs only
+that the metric reads 85 instead of 2 for a few weeks — the exposure-relevant
+figure is 2 either way — so **do not take a destructive action to recover an
+ordering whose only benefit is a tidier graph.**
+
 ### The public dashboard
 
 `GET /api/v2/stats` (`StatsController`) feeds `public/stats.html`. Counters live
