@@ -275,12 +275,30 @@ def main():
         for peer, who in ((bob, "Bob"), (carol, "Carol")):
             got = peer.call("receive", {"hold": 30})
             check(got["received"] is True and got["text"] == "queue drained",
-                  "%s decrypted the broadcast" % who)
+                  "%s decrypted the broadcast, label stripped from the text" % who)
             check(got["from"] == a["id"], "%s sees it as from Alice" % who)
-            # The claim the broadcast tool description makes to the model.
-            check("channel" not in got and "topic" not in got,
-                  "%s got no channel label — fan-out really is N direct messages"
-                  % who)
+            # Since 3.4.0 the broadcast is labelled inside the ciphertext, so a
+            # recipient can tell it from a DM without the relay learning the
+            # channel name.
+            check(got["channel"] == channel,
+                  "%s sees which channel it came in on" % who)
+
+        step("9b. A direct message is distinguishable from a broadcast")
+        alice.call("send", {"recipient_id": b["id"], "text": "just to you"})
+        direct = bob.call("receive", {"hold": 30})
+        check(direct["text"] == "just to you", "Direct message arrives intact")
+        check(direct["channel"] is None,
+              "...and reports no channel, which is the distinction that was missing")
+
+        step("9c. The relay never learns the channel name")
+        # The reason the label is inside the ciphertext rather than in a header:
+        # a channel name is human-meaningful. One real channel is named for the
+        # company that made it and the job it does.
+        alice.call("broadcast", {"name": channel, "text": "second broadcast"})
+        got = bob.call("receive", {"hold": 30})
+        check(got["channel"] == channel, "Recipient still resolves the channel")
+        check(channel not in json.dumps(got.get("header", {})),
+              "...and the channel name is nowhere the relay could read it")
 
         step("10. A non-member cannot enumerate channels")
         # 404 rather than 403: a 403 would confirm the name exists and make the

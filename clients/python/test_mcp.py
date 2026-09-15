@@ -106,10 +106,10 @@ def test_tools_list():
 
     names = [t["name"] for t in tools]
     expected = ["whoami", "open_rendezvous", "await_peer", "join_rendezvous",
-                "send", "receive", "receive_all", "peer_info",
+                "send", "receive", "receive_all", "sync_barrier", "peer_info",
                 "create_channel", "add_to_channel", "list_channels",
                 "channel_info", "broadcast"]
-    check(names == expected, "All thirteen tools listed in order: %s" % ", ".join(names))
+    check(names == expected, "All fourteen tools listed in order: %s" % ", ".join(names))
     check(all("handler" not in t for t in tools),
           "The Python handler is not leaked into the wire schema")
     check(all(t.get("description") for t in tools), "Every tool has a description")
@@ -205,6 +205,7 @@ class FakeClient:
         self.added = None
         self.next_messages = None
         self.last_limit = None
+        self.barriered = None
 
     def open_rendezvous(self):
         return {"token": "rv-" + "b" * 32, "token_issued": True}
@@ -285,6 +286,12 @@ class FakeClient:
             {"id": "sc-" + "c" * 24, "identity_public_key": self.PUB,
              "fingerprint_short": stringcup.fingerprint_short(self.PUB)},
         ]}
+
+    def sync_barrier(self, peer, timeout=120.0):
+        self.barriered = peer
+        return {"drained": 4, "last_text": "most recent thing\nsecond line",
+                "last_line": "most recent thing", "last_seq": 42,
+                "synchronised": True}
 
     def broadcast(self, topic, text, include_self=False):
         self.broadcasts.append((topic, text))
@@ -528,8 +535,22 @@ def test_backlog_is_visible():
           "An empty inbox never claims messages are waiting")
 
 
+def test_sync_barrier():
+    step("17. sync_barrier")
+
+    fake = FakeClient()
+    with_fake(fake)
+    payload = call("sync_barrier", {"peer_id": "sc-" + "c" * 24})["structuredContent"]
+    check(fake.barriered == "sc-" + "c" * 24, "Reaches the library with the peer id")
+    check(payload["drained"] == 4, "Reports how much was drained")
+    check(payload["peer_last_line"] == "most recent thing",
+          "Returns the peer's most recent line, which is the verifiable part")
+    check("quoting" in payload["next"] or "quot" in payload["next"],
+          "Tells the model to send the quoted line back, not to argue")
+
+
 def test_channels():
-    step("17. channels")
+    step("18. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -568,19 +589,36 @@ def test_channels():
     check(fake.added == ("ops", ["sc-" + "d" * 24]), "add_to_channel reaches the library")
     check(payload["added"] == 1, "added counts the new members")
 
-    # The distinction the broadcast description exists to make: fan-out is N
-    # direct messages, so a recipient cannot tell a broadcast from a DM. If a
-    # channel field ever appears on receive, that description is wrong.
-    fake.next_message = stringcup.Message(
+    # Since 3.4.0 a broadcast IS labelled, inside the ciphertext. Both states
+    # are asserted, because `channel: null` is ambiguous by construction and
+    # the tool description says so: it means "direct message OR a sender too
+    # old to label", never "certainly a direct message".
+    fake.next_messages = [stringcup.Message(
         id=1, sender_id="sc-" + "c" * 24, recipient_id=fake.id,
-        text="hi", created_at="2026-09-14 00:00:00")
+        text="hi", created_at="2026-09-14 00:00:00")]
     payload = call("receive", {"hold": 1})["structuredContent"]
-    check("channel" not in payload and "topic" not in payload,
-          "receive carries no channel label, as the broadcast description states")
+    check(payload["channel"] is None,
+          "An unlabelled message reports channel None, not a guess")
+
+    fake.next_messages = [stringcup.Message(
+        id=2, sender_id="sc-" + "c" * 24, recipient_id=fake.id,
+        text="hi all", created_at="2026-09-14 00:00:00", channel="ops")]
+    payload = call("receive", {"hold": 1})["structuredContent"]
+    check(payload["channel"] == "ops",
+          "A labelled broadcast names its channel on receive")
+    payload = call("receive_all", {"hold": 1})["structuredContent"]
+    check(payload["messages"][0]["channel"] == "ops",
+          "...and on receive_all")
+
+    # The label must never reach the relay: it lives inside the ciphertext.
+    source = open(os.path.join(HERE, "stringcup.py")).read()
+    check("CHANNEL_LABEL_RE" in source and '"channel"' not in
+          source.split("def encrypt")[1].split("def decrypt")[0],
+          "encrypt() puts no channel field in the header the relay can read")
 
 
 def test_no_remote_transport():
-    step("18. There is no remote transport")
+    step("19. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -609,6 +647,7 @@ def main():
     test_unexpected_exception_is_contained()
     test_peer_info()
     test_backlog_is_visible()
+    test_sync_barrier()
     test_channels()
     test_no_remote_transport()
 

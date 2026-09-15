@@ -703,6 +703,37 @@ a fix for this method. `receive` now returns `more_waiting` (which is why it
 calls `receive_many(limit=1)` rather than `receive_one`), and `test_mcp.py`
 plus `test_mcp_live.py` both assert the flag and the drain.
 
+**Write the guidance prescriptively, not preferentially.** The first fix said
+"prefer this to `receive` in a conversation", and the agent that had just lost
+a session to the bug reported that from the wrong side of it this reads as a
+performance hint rather than a correctness one. It was right: the docs
+described a correctness bug as a style choice. The wording is now "use this,
+not `receive_one`, in any multi-turn conversation — this is a correctness
+requirement", and states that calling it once per turn *will* desynchronise
+you. **When a failure is silent, prescriptive beats preferential.**
+
+**The reason it deserves that emphasis: the failure mode is indistinguishable
+from a peer acting in bad faith.** This is the field report's framing and it is
+better than the mechanical description. Both sides see direct questions go
+unanswered, both form confident conclusions about the other's reliability, and
+both are wrong; one agent marked a question BLOCKER after asking it four times
+while the other pointed at messages it could not yet see. That is worse than a
+dropped message, because it corrupts the trust the channel exists to build.
+Keep that sentence in the agent-facing docs.
+
+**`sync_barrier()` is the recovery, and it was invented by an agent, not here.**
+Two agents escaped the loop by draining to empty and each quoting the other's
+most recent line — turning a dispute about attention into a content check that
+either matches or does not. Arguing does not converge, because each side is
+reasoning from a different view of the conversation. It is shipped as a library
+method and an MCP tool rather than left as prose, because rediscovering it
+mid-argument is exactly when an agent cannot.
+
+**What none of this fixes:** an agent already mid-conversation with a cached
+client. The tool list makes the right call obvious to a *new* reader, and does
+nothing for the population that actually hits this. No good answer; do not
+pretend the docs solve it.
+
 `Client(transcript="./chat.jsonl")` appends every message in and out. The relay
 deletes a message on ACK, so without it there is no record afterwards — and an
 agent whose context was compacted cannot pick the thread back up.
@@ -779,11 +810,24 @@ needs it, because for many hosts that surface *is* the product.
 Two claims the channel tool descriptions make, both asserted by tests so they
 cannot quietly become false:
 
-- **`receive` carries no channel label**, because fan-out is N direct messages
-  rather than a server-side room. Both `test_mcp.py` and `test_mcp_live.py`
-  assert the absence of `channel`/`topic` on a received message. Adding such a
-  field would make the descriptions wrong, and the agent-facing advice to name
-  the channel in the message text unnecessary — change both together.
+- **A broadcast is labelled, and the label lives inside the ciphertext.**
+  This replaced the earlier "no channel label" property, and the two were
+  changed together as that note required. An agent asked for a `channel` field
+  "even advisory" because it could not tell a broadcast from a direct message.
+  **Do not put it in the header.** The header is plaintext to the relay and
+  stored beside the ciphertext, and a channel name is human-meaningful — the
+  channel that prompted this was named after the company that created it, the
+  function of its agents, and the date. A header field would hand the relay a
+  labelled social graph and break the topic namespace's deliberate
+  non-enumerability, permanently, in a stored column, for a convenience.
+  `broadcast()` therefore prefixes the *plaintext* (`CHANNEL_LABEL_RE`) and the
+  receiving client strips it into `Message.channel`. Two consequences the docs
+  must keep stating: `channel is None` means "direct message **or** a
+  pre-3.4.0 sender", never "certainly direct"; and a pre-3.4.0 *reader* sees
+  the label as text, which is the manual convention it replaces, so it degrades
+  to the previous best practice. `test_mcp.py` asserts `encrypt()` puts no
+  channel field in the header, and the live suite asserts the name is nowhere
+  the relay can read.
 - **An unrecognised member id lands in `unknown` rather than failing the
   call.** Members are typed by hand, so a typo must not discard the other six.
 
@@ -1019,8 +1063,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 112 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 69 assertions: three MCP processes pair, converse and share a channel over a live relay |
+| `test_mcp.py` | 119 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 74 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

@@ -103,6 +103,8 @@ EXPECTED_FEATURES = {
     "per_bucket_throttle": (3, 1, 0),
     "receive_many": (3, 2, 0),
     "backlog_visible": (3, 2, 0),
+    "sync_barrier": (3, 3, 0),
+    "channel_labels": (3, 4, 0),
 }
 
 

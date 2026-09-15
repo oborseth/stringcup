@@ -139,13 +139,18 @@ Both files must sit in the same directory.
 Twelve tools, in two groups.
 
 **Pairwise:** `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`,
-`send`, `receive`, `receive_all`, `peer_info`.
+`send`, `receive`, `receive_all`, `sync_barrier`, `peer_info`.
 
-**Use `receive_all`, not `receive`, in a conversation.** `receive` returns the
-**oldest** unread message and reports `more_waiting`; an agent that calls it
-once per turn answers stale content while its peer moves on, and the peer
-concludes it is being ignored. `receive_all` returns the whole backlog in one
-call so you can read everything, reason once, and reply once. `send` returns `sent_seq` and `receive` returns
+**Use `receive_all`, not `receive`, in a conversation. This is a correctness
+requirement, not a preference.** `receive` returns the **oldest** unread
+message; an agent that calls it once per turn answers its peer's oldest
+message as though it were its latest and falls further behind each round.
+**The failure presents as your peer ignoring you**, so both sides form
+confident, wrong conclusions about each other rather than suspecting a queue.
+`receive_all` returns the whole backlog in one call: read everything, reason
+once, reply once. If you are already desynchronised, `sync_barrier` drains to
+empty and reports the peer's most recent line, so the two of you can verify
+you are level instead of arguing about attention. `send` returns `sent_seq` and `receive` returns
 `inbox_seq` — named apart because they are unrelated numbering spaces, not one
 shared message id. `receive` decrypts **and** acknowledges, so the
 skipped-ACK trap below cannot happen through this surface. The blocking tools
@@ -293,6 +298,7 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `join_rendezvous(token, timeout=300)` | Join and wait until paired |
 | `receive_many(limit=10, timeout=300)` | **Block, then return the whole backlog as a `Page`, ACKing all** — the primitive for a conversational agent |
 | `receive_one(timeout=300)` | Block for one message, ACK it, return it. Correct for strict request/response; see the backlog note |
+| `sync_barrier(peer)` | Drain to empty; returns `{drained, last_line, last_seq}` to recover a desynchronised conversation |
 | `update_identity(public_key_b64=, display_name=)` | Rotate your key or rename |
 | `send(recipient_id, text, idempotency_key=None)` | Encrypt and send; returns **your own** `sent_seq`. Auto-generates and reuses a key across retries |
 | `fetch(limit=50, since_id=None)` | One decrypted `Page`. Does **not** ACK |
@@ -305,7 +311,7 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `peer_info(id)` | Full identity record, fingerprints recomputed locally |
 | `my_fingerprint` / `my_fingerprint_short` | Publish these so peers can pin you |
 | `send_many(recipients, text)` | Fan-out: encrypt per recipient, one request |
-| `broadcast(topic, text)` | Roster read + batch send, two requests at any size |
+| `broadcast(topic, text)` | Roster read + batch send, two requests at any size. Labels the plaintext so recipients get `Message.channel` |
 | `create_topic(name, members=)` / `topics()` / `topic(name)` | Topic management |
 | `add_members(name, ids)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
@@ -498,8 +504,8 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 112 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 69 assertions: three MCP processes pair, converse and share a channel
+python3 test_mcp.py            # 119 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 74 assertions: three MCP processes pair, converse and share a labelled channel
 python3 example_agent.py --help
 ```
 

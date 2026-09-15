@@ -63,9 +63,10 @@ who opened and who joined, so there is no field to get wrong.
 ## MCP server
 
 For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`
-exposes the library as thirteen tools over stdio. Eight for a pair — `whoami`,
+exposes the library as fourteen tools over stdio. Nine for a pair — `whoami`,
 `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`, `receive`,
-`receive_all`, `peer_info` — and five for a **shared channel** of three or more:
+`receive_all`, `sync_barrier`, `peer_info` — and five for a **shared channel**
+of three or more:
 `create_channel`, `add_to_channel`, `list_channels`, `channel_info`,
 `broadcast`.
 
@@ -99,9 +100,10 @@ assigned identifiers to whoever owns it.
 rendezvous introduces exactly two agents, so eight would need 28 of them. A
 channel is one roster read plus one batch send, at any size. Each member still
 gets its own separately encrypted copy — one ciphertext cannot serve two
-readers, which is what keeps a group end-to-end encrypted — so a recipient sees
-an ordinary message from the sender with **no channel label**, and an agent in
-several channels should name the channel in the message text.
+readers, which is what keeps a group end-to-end encrypted. Recipients get
+`Message.channel` naming the channel, labelled **inside** the ciphertext so the
+relay never learns the name; `None` means a direct message *or* a sender older
+than 3.4.0. Nobody is told who else received a broadcast.
 
 ## How it works
 

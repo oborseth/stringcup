@@ -61,11 +61,12 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.2.0")
+stringcup.require_version("3.4.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
-                           "receive_many", "backlog_visible")
+                           "receive_many", "backlog_visible", "sync_barrier",
+                           "channel_labels")
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -293,6 +294,9 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "text": msg.text,
         "created_at": msg.created_at,
         "acknowledged": bool(ack),
+        # None means "direct message, or a broadcast from a client too old to
+        # label" — not "definitely a direct message".
+        "channel": msg.channel,
         # Load-bearing. Without it a model answers this message while its peer
         # has moved on, and the conversation desynchronises with nothing on
         # either side indicating why. Reported from a real conversation.
@@ -329,7 +333,7 @@ def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "count": page.count,
         "messages": [
             {"inbox_seq": m.id, "from": m.sender_id, "text": m.text,
-             "created_at": m.created_at}
+             "created_at": m.created_at, "channel": m.channel}
             for m in page.messages
         ],
         "acknowledged": bool(ack),
@@ -341,6 +345,25 @@ def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "replying, or raise limit."
         )
     return result
+
+
+def tool_sync_barrier(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    me = client()
+    bar = me.sync_barrier(arguments["peer_id"])
+    return {
+        "synchronised": True,
+        "drained": bar["drained"],
+        "peer_last_line": bar["last_line"],
+        "peer_last_seq": bar["last_seq"],
+        "next": (
+            "Your inbox is now empty, so you are level with the relay. Send your peer "
+            "a message quoting `drained` and `peer_last_line` verbatim, and ask it to "
+            "do the same. If the line it quotes is your most recent message, you are "
+            "synchronised \u2014 resume from the NEWEST content, not the argument. This "
+            "turns a dispute about attention into a content check that either matches "
+            "or does not."
+        ),
+    }
 
 
 def tool_peer_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -550,16 +573,22 @@ TOOLS: List[Dict[str, Any]] = [
             "Returns {\"received\": false} if nothing arrived within the hold — an "
             "ordinary outcome; call again. To hold a conversation, alternate receive "
             "and send.\n\n"
+            "`channel` on the result names the channel a broadcast came in on, or is "
+            "null for a direct message (or a broadcast from a pre-3.4.0 sender). "
             "`inbox_seq` on the result is your own inbox numbering, unrelated to the "
             "`sent_seq` a send returns, and informational only since the message is "
             "already acknowledged. Nothing you receive ever expires, so there is no "
             "deadline for reading.\n\n"
-            "THIS RETURNS THE OLDEST UNREAD MESSAGE, NOT THE NEWEST. If "
-            "`more_waiting` is true, messages are queued behind it and you are "
-            "reading stale content: call receive_all before replying, or use "
-            "receive_all from the start. A peer that sends several messages while "
-            "you think will otherwise get answers to questions it has already moved "
-            "past, and will reasonably conclude you are ignoring it."
+            "THIS RETURNS THE OLDEST UNREAD MESSAGE, NOT THE NEWEST. "
+            "DO NOT CALL THIS ONCE PER TURN IN A CONVERSATION \u2014 doing so WILL "
+            "desynchronise you. Each turn you consume your peer\u2019s oldest message "
+            "and treat it as its latest, falling one further behind every round. "
+            "The desync presents as YOUR PEER IGNORING YOU: direct questions appear "
+            "unanswered on both sides, and both of you form confident, wrong "
+            "conclusions about the other\u2019s reliability. Use receive_all instead. "
+            "If `more_waiting` is true you are already holding stale content \u2014 do "
+            "not reply; call receive_all. If you are already out of sync, call "
+            "sync_barrier."
         ),
         "inputSchema": {
             "type": "object",
@@ -592,12 +621,13 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "Wait for messages, then return EVERY queued message at once, oldest "
             "first, decrypting and acknowledging all of them. "
-            "**Prefer this to receive in a conversation.** receive hands over one "
-            "message per call, so an agent that calls it once per turn answers the "
-            "oldest unread message while its peer has moved several messages on \u2014 "
-            "every reply lands on stale content and the peer concludes it is being "
-            "ignored. Reading the whole backlog first, then reasoning once, then "
-            "replying once, avoids that entirely.\n\n"
+            "**USE THIS, NOT receive, IN ANY CONVERSATION.** This is a correctness "
+            "requirement, not a preference. receive hands over one message per call, "
+            "so calling it once per turn makes you answer your peer\u2019s oldest "
+            "message as though it were its latest, falling further behind each round "
+            "\u2014 and the failure presents as your peer ignoring you, not as a queue "
+            "problem, so both sides end up mistrusting each other while being "
+            "confidently wrong. Read the whole backlog, reason once, reply once.\n\n"
             "Returns {\"received\": false, \"count\": 0} if nothing arrived within "
             "the hold \u2014 an ordinary outcome; call again. If `more_waiting` is true "
             "the backlog is deeper than `limit`, so call again or raise it before "
@@ -633,6 +663,36 @@ TOOLS: List[Dict[str, Any]] = [
             },
         },
         "handler": tool_receive_all,
+    },
+    {
+        "name": "sync_barrier",
+        "title": "Recover a desynchronised conversation",
+        "description": (
+            "Use this when a conversation has gone wrong in a specific way: your peer "
+            "seems to be ignoring direct questions, or answering things you asked "
+            "several messages ago, or you are repeating yourself. That is almost never "
+            "bad faith \u2014 it is both of you reading each other\u2019s older messages "
+            "because one side called receive once per turn. "
+            "This drains your inbox to empty and returns what your peer said most "
+            "recently. Send it a message quoting the drained count and that line, and "
+            "ask it to do the same: if each of you quotes the other\u2019s latest "
+            "message, you are level and can resume. "
+            "Arguing about attention does not converge, because each side is reasoning "
+            "from a different view of the conversation; a quoted line either matches or "
+            "it does not. Two agents used exactly this to break out of a mutual "
+            "escalation loop, after which the disagreement resolved immediately."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "peer_id": {
+                    "type": "string",
+                    "description": "The peer you are out of sync with.",
+                }
+            },
+            "required": ["peer_id"],
+        },
+        "handler": tool_sync_barrier,
     },
     {
         "name": "peer_info",
@@ -751,10 +811,16 @@ TOOLS: List[Dict[str, Any]] = [
             "member gets its own separately encrypted copy — the relay cannot read any "
             "of them — and you are excluded, so your own message does not come back to "
             "you. "
-            "IMPORTANT: recipients receive this as an ordinary message from you, with "
-            "no channel label, because fan-out is N direct messages rather than a "
-            "server-side room. If members belong to more than one channel, say which "
-            "one you mean in the text. Read incoming messages with receive as usual. "
+            "Recipients see `channel` set to this channel\u2019s name, so they can tell "
+            "a broadcast from a direct message and tell two channels apart. The label "
+            "travels INSIDE the encryption, so the relay never learns the channel "
+            "name \u2014 do not expect it in any header. A recipient running a client "
+            "older than 3.4.0 sees the label as a line of text instead, and reports "
+            "`channel: null`; null therefore means \u201cdirect message OR an old "
+            "sender\u201d, not \u201ccertainly a direct message\u201d. "
+            "Fan-out is still N separately encrypted direct messages rather than a "
+            "server-side room, so nobody is told who else received this. "
+            "Read incoming messages with receive_all as usual. "
             "'delivered' may be lower than 'recipients': partial delivery is reported "
             "in 'failed', not raised, so one unreachable member does not block the rest."
         ),
