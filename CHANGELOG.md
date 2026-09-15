@@ -13,6 +13,73 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.18.0 — the first end-to-end property test found a defect on its first run
+
+`clients/python/test_properties.py` is new, and it exists because every other
+suite in this repo is written **from the implementation**: it asserts what the
+code does, so it can only ever confirm the implementation. That is why the
+rotation defect passed a review, a CHANGELOG entry *and* a test suite — the
+suite asserted "the old key is gone", which was precisely the behaviour that
+caused the bug. A test written from the diff cannot contradict the diff.
+
+The diagnosis is an auditor's, and it is the most useful thing to come out of
+the whole review: **PROTOCOL.md B.6 already states the promises, in prose, and
+nothing executes them.** Findings get reproduced, fixes get reviewed, and the
+spec gets read once and then quoted selectively — yet the spec is the only
+artefact that stated the correct answer before the bug existed. The rotation
+defect contradicted a sentence in this project's own published spec: *"the
+alternative, deleting old mail, would lose messages a sender was told had been
+stored."* We both had read it. Neither of us checked the fix against it.
+
+Two properties, derived from the sentences and deliberately ignoring how the
+code works:
+
+1. **Every message the relay accepts is retrievable in plaintext through the
+   highest-level interface the documentation tells a user to use — or the
+   caller is explicitly told it exists and why it cannot be read.**
+
+   The "or told" clause is not softening: mail sealed to a key you no longer
+   hold *should* be unreadable, and the correct behaviour is disclosure rather
+   than delivery. That clause is what makes the property assertable instead of
+   aspirational. Bound to the **outermost** surface on purpose — "readable"
+   alone is satisfied by the MCP re-drop defect, where the mail was there,
+   `fetch()` could see it, and the surface the user actually has reported
+   nothing.
+
+2. **No plaintext this system writes is readable by anyone but its owner** —
+   asserted by `os.walk` + `stat` over everything a real run creates, with no
+   allowlist, because the whole class of defect here is a file nobody
+   remembered writing.
+
+### What property 2 found, immediately
+
+`os.makedirs(directory, mode=0o700, exist_ok=True)` has a **second** defect
+beyond the `exist_ok` one reported yesterday, and it is worse:
+
+**`mode` applies only to the LEAF. Intermediate directories get
+`0o777 & ~umask`, i.e. 0755.** Verified: `makedirs("/tmp/a/b", mode=0o700)`
+leaves `/tmp/a` at 0755. And `session_transcript_path()` asks for
+`<identity dir>/transcripts`, which makes the identity directory an
+*intermediate* — so **the library created `~/.stringcup` itself at 0755, on a
+fresh install.** The one component holding the private key, the trust store
+and every transcript was the only one that did not get the mode.
+
+This was not an upgrade problem and no amount of reading the function would
+have shown it; it took stat-ing what a run produced. An auditor predicted that
+exact outcome for that exact test, which is the second time this week that
+looking at the filesystem beat reasoning about the code.
+
+`_private_dir()` now creates each component individually at 0700 (`os.mkdir`
+plus an explicit `chmod`, since `mkdir`'s mode is masked by the umask and a
+loose umask would otherwise leave 0700 unreachable). A component that already
+existed is still **reported and left alone** — same policy, same reasoning.
+`_looks_owned()` keeps the warning from naming `/tmp`, `/home` and other
+shared ancestors that are 0755 by design and are not the caller's to fix; a
+warning that fires on those trains the reader to ignore the channel, which is
+the failure the warning channel was just rewritten to avoid.
+
+Both properties now hold: 20 assertions. Eleven suites.
+
 ## API 5.2.0 — the per-sender quota changed behaviour and five documents did not
 
 An auditor's fresh pass over the tree went looking for **drift specifically

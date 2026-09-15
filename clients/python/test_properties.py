@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""
+END-TO-END PROPERTIES, asserted by observation rather than by reading code.
+
+Every other suite in this repo is written from the implementation: it asserts
+what the code does, so it can only ever confirm the implementation. That is
+why the rotation defect passed a review, a CHANGELOG entry AND a test suite --
+the suite asserted "the old key is gone", which was precisely the behaviour
+that caused the bug. A test written from the diff cannot contradict the diff.
+
+An auditor's diagnosis, and it is the most useful thing to come out of the
+review: PROTOCOL.md B.6 already states the promises, in prose, and nothing
+executes them. Findings get reproduced, fixes get reviewed, and the spec gets
+read once and then quoted selectively -- yet the spec is the only artefact
+that stated the correct answer before the bug existed.
+
+So these tests are derived from the SENTENCES, deliberately ignoring how the
+code works:
+
+  1. Every message the relay accepts is retrievable in plaintext through the
+     highest-level interface the documentation tells a user to use -- OR the
+     caller is explicitly told it exists and why it cannot be read.
+
+     The "or told" clause is not softening. Mail encrypted to a key you no
+     longer hold SHOULD be unreadable; the correct behaviour is disclosure,
+     not delivery. That clause is what makes the property assertable instead
+     of aspirational.
+
+     Bound to the OUTERMOST surface on purpose. "Readable" alone is satisfied
+     by the MCP re-drop defect: the mail was there and fetch() could see it,
+     while the surface the user actually has reported nothing.
+
+  2. No plaintext this system writes is readable by anyone but its owner.
+
+     Asserted by stat-ing every file and directory that appears during a real
+     run, not by reading the code. That is a short test and it would have
+     caught the 0644 transcript, the O_CREAT-only fix that could not repair
+     it, and the makedirs mode -- including the two that shipped as fixes for
+     each other. `ls` has out-performed cryptographic reasoning twice on this
+     codebase in two days; a test that runs `ls` is the empirical record of
+     what works here.
+
+Usage:  python3 test_properties.py [base_url]
+"""
+
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import stringcup  # noqa: E402
+from stringcup import Client, Identity  # noqa: E402
+
+BASE = sys.argv[1] if len(sys.argv) > 1 else "https://stringcup.com/api/v2"
+PASSED = 0
+FAILED = 0
+
+RATELIMIT_CACHE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "writable", "cache", "ratelimit",
+)
+
+
+def reset_rate_limits():
+    """Clear the server's counters when running on the server itself."""
+    if not os.path.isdir(RATELIMIT_CACHE):
+        return False
+    try:
+        for name in os.listdir(RATELIMIT_CACHE):
+            path = os.path.join(RATELIMIT_CACHE, name)
+            if os.path.isfile(path):
+                os.unlink(path)
+        return True
+    except OSError:
+        return False
+
+
+def step(m):
+    print("\n\033[1m[PROPERTY] %s\033[0m" % m)
+
+
+def ok(m):
+    global PASSED
+    PASSED += 1
+    print("  \033[32m✓\033[0m %s" % m)
+
+
+def bad(m, detail=""):
+    global FAILED
+    FAILED += 1
+    print("  \033[31m✗\033[0m %s" % m)
+    if detail:
+        print("      %s" % detail)
+
+
+def check(cond, m, detail=""):
+    ok(m) if cond else bad(m, detail)
+
+
+# ---------------------------------------------------------------------------
+# Property 1: accepted mail is retrievable, or the caller is told why not.
+# ---------------------------------------------------------------------------
+
+def property_accepted_mail_is_retrievable_or_disclosed(work):
+    step("1. Mail the relay ACCEPTS is retrievable through the documented "
+         "interface, or the caller is TOLD it exists and why it cannot be read")
+
+    reset_rate_limits()
+    a = Client.load_or_register(os.path.join(work, "a.json"), base_url=BASE,
+                                transcript=None)
+    b = Client.load_or_register(os.path.join(work, "b.json"), base_url=BASE,
+                                transcript=None)
+
+    # -- the ordinary case, through the interface the docs mandate -----------
+    sent = []
+    for i in range(3):
+        sent.append(a.send(b.id, "property message %d" % i))
+    ok("Relay accepted 3 messages (sent_seq %s)" % sent)
+
+    page = b.receive_many(limit=10, timeout=30)
+    got = [m.text for m in page.messages]
+    check(len(got) == 3,
+          "All 3 are retrievable via receive_many, the documented interface",
+          "got %d: %r" % (len(got), got))
+    check(all("property message %d" % i in got for i in range(3)),
+          "...in plaintext, byte-identical to what was sent")
+
+    # -- the rotation case, which is where this property was violated -------
+    #
+    # B rotates. A still holds a CACHED public key, which peer_public_key is
+    # documented as safe to cache forever, so it keeps sealing to the old
+    # key. Before 3.16.0 that mail was accepted by the relay, charged to the
+    # recipient's quota, reported to the sender as stored -- and destroyed.
+    cached = a.peer_public_key(b.id)
+    b.rotate_identity_key(os.path.join(work, "b.json"))
+    ok("B rotated its identity key")
+
+    seq = a.send(b.id, "sealed to the key B just retired")
+    ok("Relay ACCEPTED mail sealed to the retired key (sent_seq %s) -- so the "
+       "property now applies to it" % seq)
+
+    page = b.receive_many(limit=10, timeout=30)
+    texts = [m.text for m in page.messages]
+    check("sealed to the key B just retired" in texts,
+          "It is retrievable in plaintext, because the retired key is kept "
+          "for decryption",
+          "got %r; undecryptable=%r" % (texts, page.undecryptable))
+
+    # -- the genuinely-unreadable case: the caller must be TOLD -------------
+    #
+    # Backdate the retired key past its grace window. Now the mail really
+    # cannot be read, which is CORRECT -- and the property requires the
+    # recipient be told it exists rather than told the inbox is empty.
+    ident = Identity.load(os.path.join(work, "b.json"))
+    if not ident.retired_keys:
+        bad("expected a retired key to backdate", "none present")
+        return
+    ident.retired_keys[0]["retired_at"] = (
+        time.time() - stringcup.RETIRED_KEY_GRACE_SECONDS - 1
+    )
+    ident.save(os.path.join(work, "b.json"))
+
+    stale = Client(Identity.load(os.path.join(work, "b.json")), base_url=BASE,
+                   transcript=None)
+    seq = a.send(b.id, "sealed to a key now destroyed")
+    ok("Relay accepted mail sealed to a key that is now gone (sent_seq %s)" % seq)
+
+    page = stale.receive_many(limit=10, timeout=30)
+    check(not page.messages,
+          "It is NOT delivered, which is correct -- the key is destroyed")
+    check(page.count > 0,
+          "...but count reports it EXISTS rather than an empty inbox",
+          "count=%d" % page.count)
+    check(bool(page.undecryptable),
+          "...and undecryptable names it, so the caller can act on it",
+          "undecryptable=%r" % (page.undecryptable,))
+    check(bool(page.warnings) or bool(page.undecryptable),
+          "...and the caller is told, not left to infer it from a mismatch")
+
+    # The same, through the MCP surface -- the outermost interface, and the
+    # layer that re-dropped exactly this after the library was fixed.
+    import stringcup_mcp as mcp
+    diag = mcp._page_diagnostics(page)
+    check(diag.get("undecryptable_inbox_seqs") == page.undecryptable,
+          "The MCP surface reports it too, which is where the property binds",
+          "diag=%r" % (diag,))
+    check("acknowledg" in diag.get("undecryptable_note", ""),
+          "...and says acknowledging deletes, so an agent cannot tidy the "
+          "count by destroying mail")
+
+    stale.ack(page.undecryptable)
+    ok("Undecryptable mail is acknowledgeable, so the inbox can be drained")
+
+    for cl in (a, b):
+        try:
+            cl.drain(lambda m: None)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Property 2: nothing this system writes is readable by anyone else.
+# ---------------------------------------------------------------------------
+
+def property_no_world_readable_plaintext(work):
+    step("2. NO file or directory this system creates is readable by anyone "
+         "but its owner (stat'd, not read from the source)")
+
+    root = os.path.join(work, "modes")
+    os.makedirs(root, mode=0o700)
+
+    reset_rate_limits()
+    identity_path = os.path.join(root, "nested", "identity.json")
+
+    # A full run: register, pin, transcribe, rotate. Everything this creates
+    # is then enumerated -- no allowlist of "files we remember writing",
+    # because the whole class of defect here is a file nobody remembered.
+    me = Client.load_or_register(
+        identity_path,
+        base_url=BASE,
+        trust_store=stringcup.TrustStore(os.path.join(root, "nested", "peers.json")),
+    )
+    peer = Client.load_or_register(os.path.join(root, "nested", "peer.json"),
+                                   base_url=BASE, transcript=None)
+
+    me.peer_public_key(peer.id)          # touches the trust store
+    peer.send(me.id, "for the transcript")
+    me.receive_many(limit=5, timeout=30)  # writes the transcript
+    me.rotate_identity_key(identity_path)  # rewrites the identity file
+
+    created = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        created.append(dirpath)
+        created.extend(os.path.join(dirpath, f) for f in filenames)
+
+    check(len(created) >= 4,
+          "A real run created %d path(s) to check" % len(created),
+          "found: %r" % (created,))
+
+    exposed = []
+    for path in created:
+        try:
+            mode = os.stat(path).st_mode
+        except OSError:
+            continue
+        if stat.S_IMODE(mode) & 0o077:
+            exposed.append((path, oct(stat.S_IMODE(mode))))
+
+    check(not exposed,
+          "Every path is private to its owner (mode & 0o077 == 0)",
+          "EXPOSED: %s" % ", ".join("%s is %s" % (p, m) for p, m in exposed))
+
+    # Name the payloads explicitly, because the rule this enforces is "set the
+    # mode from the worst field in the file", and a reader of a failure needs
+    # to know which file held what.
+    transcripts = [p for p in created if p.endswith(".jsonl")]
+    check(transcripts, "The run produced a transcript to check at all",
+          "no .jsonl found under %s" % root)
+    for t in transcripts:
+        mode = stat.S_IMODE(os.stat(t).st_mode)
+        check(not mode & 0o077,
+              "Transcript %s (every message in PLAINTEXT) is %s"
+              % (os.path.basename(t), oct(mode)))
+
+    mode = stat.S_IMODE(os.stat(identity_path).st_mode)
+    check(not mode & 0o077,
+          "Identity file (an X25519 private key, plus retired keys) is %s"
+          % oct(mode))
+
+    # And the directory the library created for itself, which is the instance
+    # makedirs(exist_ok=True) silently left alone.
+    nested = os.path.join(root, "nested")
+    mode = stat.S_IMODE(os.stat(nested).st_mode)
+    check(not mode & 0o077,
+          "The state directory the library created is %s -- a listing names "
+          "your peers and every session's start time" % oct(mode))
+
+    try:
+        me.drain(lambda m: None)
+        peer.drain(lambda m: None)
+    except Exception:
+        pass
+
+
+def main():
+    work = tempfile.mkdtemp(prefix="stringcup-props-")
+    try:
+        property_accepted_mail_is_retrievable_or_disclosed(work)
+        property_no_world_readable_plaintext(work)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    print("\n" + "=" * 52)
+    if FAILED:
+        print("  \033[31m%d FAILED\033[0m, %d passed" % (FAILED, PASSED))
+        print("=" * 52 + "\n")
+        return 1
+    print("  \033[32mPROPERTIES HOLD (%d assertions)\033[0m" % PASSED)
+    print("=" * 52 + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

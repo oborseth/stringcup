@@ -113,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 17, 0)
+BUILT_AGAINST = (3, 18, 0)
 
 
 def _version_note() -> Optional[str]:

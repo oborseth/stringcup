@@ -97,7 +97,11 @@ if [ -n "$PY" ]; then
   # unnoticed: it asserted a transcript key renamed in 2.4.0 and registered
   # six identities against a 5/hour bucket, so it had been unrunnable for
   # weeks while nothing reported a thing. A suite nobody runs is not coverage.
-  for script in test_contract.py test_mcp.py test_features_v11.py test_mcp_live.py; do
+  # test_properties.py asserts the PROMISES in PROTOCOL.md B.6 by observing a
+  # real run, not by reading the code. Every other suite here is written from
+  # the implementation and can only confirm it -- which is how the rotation
+  # defect passed a suite that asserted the very behaviour causing the bug.
+  for script in test_contract.py test_mcp.py test_features_v11.py test_properties.py test_mcp_live.py; do
     [ -d "$CACHE" ] && rm -f "$CACHE"/*.json 2>/dev/null
 
     echo
@@ -115,6 +119,7 @@ if [ -n "$PY" ]; then
 else
   results+=("SKIP  test_mcp.py (no python3)")
   results+=("SKIP  test_features_v11.py (no python3)")
+  results+=("SKIP  test_properties.py (no python3)")
   results+=("SKIP  test_mcp_live.py (no python3)")
 fi
 

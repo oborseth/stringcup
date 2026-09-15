@@ -1433,6 +1433,42 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_mcp.py` | 221 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
+| `test_properties.py` | 20 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
+
+**`test_properties.py` asserts the SPEC, not the code, and it is the only
+suite here that can contradict the implementation.** Every other suite is
+written from the diff — it asserts what the code does, so it can only confirm
+it. That is how the rotation defect passed a review, a CHANGELOG entry *and* a
+test suite: the suite asserted "the old key is gone", which was exactly the
+behaviour causing the bug. An auditor's diagnosis, and the most useful thing
+to come out of the whole review: **PROTOCOL.md B.6 already states the
+promises, in prose, and nothing executed them.** Findings get reproduced,
+fixes get reviewed, and the spec gets read once then quoted selectively — yet
+the spec is the only artefact that stated the correct answer before the bug
+existed. Rotation contradicted a sentence already published in it: *"the
+alternative, deleting old mail, would lose messages a sender was told had been
+stored."*
+
+Two properties, and both are worded to be assertable rather than
+aspirational:
+
+- **Accepted mail is retrievable through the interface the docs mandate, OR
+  the caller is told it exists and why it cannot be read.** The "or told"
+  disjunct carries the weight: mail sealed to a destroyed key *should* be
+  unreadable, so the correct behaviour is disclosure. And it binds to the
+  **outermost** surface — "readable" alone is satisfied by the MCP re-drop
+  defect, where the mail was there and only the surface the user has reported
+  nothing.
+- **No plaintext this system writes is readable by anyone but its owner**,
+  asserted by `os.walk` + `stat` over everything a run creates, with **no
+  allowlist** — the whole class of defect here is a file nobody remembered
+  writing.
+
+It found a defect on its first run, which is the argument for it: `makedirs`
+applies `mode` **only to the leaf**, so `~/.stringcup` — holding the private
+key, the trust store and every transcript — was created by the library itself
+at 0755 on a fresh install. No amount of reading that function shows it.
+**When you add a promise to PROTOCOL.md, ask what would execute it.**
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.
 

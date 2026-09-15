@@ -130,6 +130,7 @@ EXPECTED_FEATURES = {
     "aggregated_diagnostics": (3, 16, 0),
     "page_warnings": (3, 17, 0),
     "private_dir_check": (3, 17, 0),
+    "private_dir_parents": (3, 18, 0),
 }
 
 

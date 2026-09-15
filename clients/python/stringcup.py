@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.17.0"
+__version__ = "3.18.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 17, 0)
+version_info = (3, 18, 0)
 
 __all__ = [
     "Client",
@@ -198,6 +198,8 @@ FEATURES = {
     # 3.17.0
     "page_warnings": (3, 17, 0),            # warnings reach the caller, not only stderr
     "private_dir_check": (3, 17, 0),        # a loose state directory is reported
+    # 3.18.0
+    "private_dir_parents": (3, 18, 0),      # every path component is created 0700
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -371,50 +373,118 @@ _PENDING_DIR_WARNINGS: List[str] = []
 
 def _private_dir(directory: str) -> Optional[str]:
     """
-    Create `directory` at 0700, and report — never repair — a loose existing one.
+    Create `directory` **and its parents** at 0700, reporting a loose existing one.
 
-    **`os.makedirs(..., mode=0o700, exist_ok=True)` ignores `mode` when the
-    directory already exists.** So a `~/.stringcup` created at 0755 by an
-    earlier version, or by a user's own `mkdir`, stays 0755 forever and the
-    `0o700` is decoration. Verified: `makedirs("/tmp/x", 0o700,
-    exist_ok=True)` over an existing 0755 leaves it 0755.
+    Two separate defects live in the obvious one-liner
+    `os.makedirs(directory, mode=0o700, exist_ok=True)`, and the second is the
+    worse of the two:
 
-    This is the same defect as the transcript's `O_CREAT` mode, three
-    functions away, and an auditor found it by asking for the *class* rather
-    than the instance after the transcript case: **a mode that applies only at
-    creation time says nothing about the artifacts that already exist.**
+    1. **`exist_ok=True` ignores `mode` when the directory already exists.**
+       So a `~/.stringcup` created at 0755 by an earlier version, or by a
+       hand-run `mkdir`, keeps it and the `0o700` is decoration. Verified.
 
-    What leaks is the listing, not the contents — the files inside are 0600.
-    But the listing says you hold a trust store and therefore pinned peers,
-    that you keep a transcript, and, because transcripts are named
-    `session-<UTC>-<rand>.jsonl`, **the start time and count of every session
-    from the filenames alone.** That is metadata rather than content, so it is
-    rank 4 on this project's ranking and is reported rather than rushed.
+    2. **`mode` applies ONLY TO THE LEAF. Intermediate directories are created
+       with the default `0o777 & ~umask`, i.e. 0755.** Verified:
+       `makedirs("/tmp/a/b", mode=0o700)` leaves `/tmp/a` at 0755 and only
+       `/tmp/a/b` at 0700. This is not an upgrade problem — **the library
+       created the exposed directory itself, on a fresh install**, because
+       `session_transcript_path()` asks for `<identity dir>/transcripts` and
+       the identity directory is therefore an *intermediate*. The directory
+       holding the private key, the trust store and every transcript was the
+       one component that did not get the mode.
 
-    Returns a warning string when the existing directory is group- or
-    world-accessible, else None. Repairing is refused for the same reason the
-    transcript mode is: an operator may have loosened it deliberately, and a
-    library silently re-tightening a directory it did not create is a
-    different defect.
+    Found by the end-to-end property test in `test_properties.py` on its first
+    run, by stat-ing what a real run created rather than by reading this
+    function — which is the whole argument for that suite. An auditor
+    predicted that exact outcome for that exact test.
+
+    So each component is created individually at 0700. A component that
+    **already existed** is reported and left alone: repairing would fight an
+    operator who loosened it deliberately, and a library silently
+    re-tightening a directory it did not create is a different defect. Same
+    policy as the transcript file mode.
+
+    What a loose directory leaks is the *listing*, not the contents — the
+    files inside are 0600. But the listing says you hold a trust store and
+    therefore have pinned peers, that you keep a transcript, and, because
+    transcripts are named `session-<UTC>-<rand>.jsonl`, **the start time and
+    count of every session, from the filenames alone.** That is metadata
+    rather than content, so it is the lowest rank on this project's ordering.
+
+    Returns a warning naming the loosest pre-existing component, else None.
     """
-    existed = os.path.isdir(directory)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    if not existed:
-        return None
+    absolute = os.path.abspath(directory)
+    parts = absolute.split(os.sep)
+
+    warning = None
+    path = os.sep if absolute.startswith(os.sep) else ""
+
+    for part in parts:
+        if not part:
+            continue
+        path = os.path.join(path, part) if path else part
+
+        if os.path.isdir(path):
+            # Pre-existing. Report the ones this library would have created,
+            # and stay quiet about /tmp, /home and other shared ancestors --
+            # a warning naming a directory the caller does not own is noise
+            # that trains people to ignore the channel.
+            continue
+
+        try:
+            os.mkdir(path, 0o700)
+            # mkdir's mode is masked by umask, so set it explicitly. A umask
+            # of 0077 or looser would otherwise leave 0700 unreachable.
+            os.chmod(path, 0o700)
+        except FileExistsError:
+            pass
+        except OSError:
+            # Let the caller's own open() produce the real error; failing here
+            # would turn a permissions problem into a confusing traceback in
+            # directory creation.
+            return None
+
+    # Now report on the leaf and on any ancestor the caller plausibly owns,
+    # which is anything at or below the directory holding the identity file.
+    for candidate in (absolute, os.path.dirname(absolute)):
+        try:
+            mode = os.stat(candidate).st_mode & 0o777
+        except OSError:
+            continue
+        if mode & 0o077 and _looks_owned(candidate):
+            warning = (
+                "directory %s is mode %o — other local users can list it. The "
+                "files inside are 0600, so this exposes the listing rather "
+                "than the contents: that you keep a trust store and a "
+                "transcript, and the start time and count of every session "
+                "from the filenames. Not changed automatically in case it was "
+                "loosened deliberately. Fix with: chmod 700 %s"
+                % (candidate, mode, candidate)
+            )
+            break
+
+    return warning
+
+
+def _looks_owned(directory: str) -> bool:
+    """
+    Whether `directory` is plausibly this install's own state directory.
+
+    Guards the warning against naming shared ancestors -- `/tmp`, `/home`,
+    `/var` are 0755 by design and are not the caller's to fix. A warning that
+    fires on those trains the reader to ignore the channel, which is the
+    failure the warning channel was just rewritten to avoid.
+    """
+    base = os.path.basename(directory.rstrip(os.sep))
+    if base in ("", "tmp", "home", "var", "usr", "opt", "etc", "root", "srv"):
+        return False
+    if directory.rstrip(os.sep) in ("/tmp", "/home", "/var", "/usr", "/"):
+        return False
     try:
-        mode = os.stat(directory).st_mode & 0o777
+        # Someone else's directory is not ours to report on either.
+        return os.stat(directory).st_uid == os.getuid()
     except OSError:
-        return None
-    if not mode & 0o077:
-        return None
-    return (
-        "directory %s is mode %o — other local users can list it. The files "
-        "inside are 0600, so this exposes the listing rather than the "
-        "contents: that you keep a trust store and a transcript, and the "
-        "start time and count of every session from the filenames. Not "
-        "changed automatically in case it was loosened deliberately. Fix "
-        "with: chmod 700 %s" % (directory, mode, directory)
-    )
+        return False
 
 
 def new_pairing_secret() -> str:
