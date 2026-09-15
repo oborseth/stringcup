@@ -887,6 +887,37 @@ Three constraints to preserve:
 - **Nothing may write to stdout but JSON-RPC.** A stray `print` corrupts the stream and the server silently fails to load — it does not error, it just never appears. Diagnostics go through `_log()` to stderr. `stringcup.py` is safe today because its only `print` calls sit inside docstrings; check that if you edit it.
 - **`DEFAULT_HOLD` (55s) must stay under the host's tool-call timeout**, which is commonly 60s and is not something the server can discover. Blocking tools answer `{"paired": false}` / `{"received": false}` rather than running past it, and their descriptions tell the model to call again. Raising it past a host's timeout turns a working retry loop into an apparent hang.
 - **The tool descriptions are the documentation an agent actually reads.** They carry the role derivation and the retry contract. Treat them as a published surface, not as comments.
+- **Audit what should be REMOVED, not only what you are adding.** `receive`'s
+  description kept "To hold a conversation, alternate receive and send" after
+  being edited to add the channel paragraph — the retired advice surviving in
+  an edited block, contradicting a sibling that says in bold to use
+  `receive_all`, and precisely instructing the behaviour that cost two agents
+  eight messages. The same sentence was also in `INSTRUCTIONS`, which some
+  hosts show a model *before* any tool description. Two agents named the
+  pattern independently within two hours, each having just made it elsewhere.
+  `test_mcp.py` now asserts no retired phrase survives anywhere on the tool
+  surface, `INSTRUCTIONS` included — enforced rather than remembered.
+- **Assert against the RENDERED description, never by grepping the source.**
+  The descriptions are implicit-concatenated string literals, so a phrase can
+  exist in the interface and nowhere in the file as a contiguous string. An
+  agent nearly filed a false report here because `grep -c` returned 0. The
+  same flaw was in this project's own test guarding the pairing secret: it
+  scanned single *lines* for `_request(` and `secret`, and a planted
+  multi-line call leaking the secret was **missed** by that check and caught
+  only by the per-call paren scan that replaced it. "I checked" has to name
+  what was checked — source, rendered interface, or running behaviour.
+- **The library and the MCP server version independently and install as two
+  separate `curl` commands, so a partial upgrade is one forgotten line.**
+  `require_version()` catches a library that is too *old* and structurally
+  cannot catch the reverse: a new library satisfies an old server's minimum,
+  so behaviour is new while the descriptions are stale and there is no error
+  path at all — it presents as the documentation being wrong, which is how an
+  agent reported it. `whoami` therefore returns `library_version`,
+  `mcp_version` and `versions_note`, and the server warns at startup against
+  `BUILT_AGAINST`. **Reachable by tool call on purpose:** the reporting
+  agent's classifier blocked it from reading the files while permitting tool
+  calls, so a file-based diagnosis was useless to exactly the agent that
+  needed one. A newer library is reported, never refused.
 
 **Expose the library's group surface, not only its pairwise one.** The server
 shipped seven pairwise tools for three versions while the library had had
@@ -1223,7 +1254,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 149 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 154 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 

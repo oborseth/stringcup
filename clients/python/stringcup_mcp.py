@@ -70,7 +70,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "duplicate_channel_guard", "verified_channel_labels",
                            "pairing_secret")
 
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -93,6 +93,38 @@ MAX_HOLD = 300.0
 DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 
 
+#: The library version this server was written against.
+#:
+#: `require_version()` above catches a library that is too OLD. It cannot
+#: catch the reverse, which is the failure that actually happened: an operator
+#: replaced `stringcup.py` and not `stringcup_mcp.py`, so a new library
+#: satisfied an old server's minimum and everything "worked" while the tool
+#: descriptions -- the interface an agent actually reads -- stayed stale. The
+#: agent saw new behaviour with old advice and reasonably concluded the docs
+#: were wrong.
+#:
+#: A newer library is NOT an error: it is usually fine and blocking it would
+#: break legitimate installs. It is reported, not refused.
+BUILT_AGAINST = (3, 7, 0)
+
+
+def _version_note() -> Optional[str]:
+    """A warning when the library is newer than this server was built for."""
+    if stringcup.version_info <= BUILT_AGAINST:
+        return None
+
+    return (
+        "PARTIAL UPGRADE: stringcup.py is %s but this MCP server (%s) was written "
+        "against %s. The library and the server are separate files installed "
+        "separately, so one can be replaced without the other. Behaviour here may be "
+        "newer than these tool descriptions describe \u2014 if a description contradicts "
+        "what you observe, trust the behaviour and tell your operator to re-download "
+        "stringcup_mcp.py."
+        % (stringcup.__version__, __version__,
+           ".".join(str(n) for n in BUILT_AGAINST))
+    )
+
+
 def _log(message: str) -> None:
     """Diagnostics go to stderr. stdout is the JSON-RPC channel and nothing else."""
     sys.stderr.write("[stringcup-mcp] " + message + "\n")
@@ -108,6 +140,12 @@ _client: Optional[Client] = None
 
 def _identity_path() -> str:
     return os.environ.get("STRINGCUP_IDENTITY") or DEFAULT_IDENTITY
+
+
+_startup_note = _version_note()
+if _startup_note:
+    # stderr, never stdout: stdout is the JSON-RPC channel.
+    sys.stderr.write("[stringcup-mcp] " + _startup_note + "\n")
 
 
 def client() -> Client:
@@ -163,6 +201,16 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "fingerprint": me.my_fingerprint,
         "fingerprint_short": me.my_fingerprint_short,
         "relay": me.base_url,
+        # Both versions, because these are TWO FILES installed by two separate
+        # curl commands, versioned independently. A partial upgrade is one
+        # forgotten line, and it presents as the documentation being wrong:
+        # new library behaviour with old tool descriptions. An agent reported
+        # exactly that and could not diagnose it, because the classifier on
+        # its host blocked it from reading the files while permitting tool
+        # calls. So the versions have to be reachable BY TOOL CALL.
+        "library_version": stringcup.__version__,
+        "mcp_version": __version__,
+        "versions_note": _version_note(),
         # Load-bearing, not incidental: an operator setting STRINGCUP_IDENTITY
         # needs to confirm the variable actually took effect rather than assume
         # it did, and the $HOME-relative default fails silently by minting a new
@@ -678,8 +726,8 @@ TOOLS: List[Dict[str, Any]] = [
             "Acknowledging is what deletes it from the relay, and it happens here, so "
             "you cannot accidentally leave a message to be redelivered forever. "
             "Returns {\"received\": false} if nothing arrived within the hold — an "
-            "ordinary outcome; call again. To hold a conversation, alternate receive "
-            "and send.\n\n"
+            "ordinary outcome; call again. To hold a conversation use receive_all "
+            "rather than alternating receive and send.\n\n"
             "`channel` names the channel a broadcast came in on, and is VERIFIED: set "
             "only when the sender is a member of that channel alongside you. Null "
             "means direct message, pre-3.4.0 sender, OR a claim that failed to verify "
@@ -979,7 +1027,9 @@ INSTRUCTIONS = (
     "Whoever initiates calls open_rendezvous, passes the token to the other agent "
     "through a human, then await_peer; the other agent calls join_rendezvous with that "
     "token. Roles follow from that: opening makes you the initiator (speak first), "
-    "joining makes you the responder (listen first). Then alternate send and receive. "
+    "joining makes you the responder (listen first). Then use receive_all and send "
+    "\u2014 NOT receive and send: receive returns the oldest unread message, so calling "
+    "it once per turn makes you answer stale content while your peer moves on. "
     "Blocking tools return a not-yet result rather than hanging — call them again."
 )
 

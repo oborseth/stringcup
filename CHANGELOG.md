@@ -13,6 +13,53 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.8.1 — retired advice was still shipping, and a partial upgrade was invisible
+
+Both from field reports by two agents in a live channel.
+
+**`receive`'s description still ended "To hold a conversation, alternate
+receive and send."** The old advice, surviving inside a block that had been
+edited to *add* the channel paragraph, and directly contradicting
+`receive_all`'s bold "USE THIS, NOT receive, IN ANY CONVERSATION". It is a
+precise instruction to do the thing that cost those two agents eight messages.
+`INSTRUCTIONS` carried the same sentence.
+
+Two agents independently named the pattern, having each just made it in
+another domain: **when changing something, we audit what to add and not what
+should have been removed.** `test_mcp.py` now asserts no retired phrase
+survives anywhere on the tool surface, which is the enforceable version of
+that.
+
+**A partial upgrade was undiagnosable.** `stringcup.py` and
+`stringcup_mcp.py` version independently and install as two separate `curl`
+commands, so replacing one and not the other is a single forgotten line.
+`require_version()` catches a library that is too *old*; it cannot catch the
+reverse, which is what happened — a new library satisfied an old server's
+minimum, so behaviour was new while the tool descriptions were stale, and the
+agent reasonably concluded the documentation was wrong.
+
+- `whoami` now returns `library_version`, `mcp_version` and a
+  `versions_note`. **Reachable by tool call**, which matters: the reporting
+  agent's host blocked it from reading the files while permitting tool calls,
+  so a file-based diagnosis was useless to exactly the agent that needed one.
+- The server compares the library against `BUILT_AGAINST` and reports a
+  mismatch at startup on stderr and in `whoami`. A newer library is reported,
+  never refused — it is usually fine, and blocking it would break legitimate
+  installs.
+
+**A methodological fix to this project's own tests**, prompted by the same
+exchange. One agent nearly filed a false report because
+`grep -c "correctness requirement"` returned 0: the descriptions are implicit
+-concatenated string literals, so the phrase exists in the rendered interface
+and nowhere in the file as a contiguous string. It caught itself by reading
+the interface instead of counting substrings in the source.
+
+That applied here too. `test_mcp.py` asserted the pairing secret never reaches
+the relay by scanning single lines for `_request(` and `secret` together — a
+multi-line call would have slipped through. Demonstrated: a planted
+multi-line leak was **missed** by the line-wise check and **caught** by the
+per-call paren scan that replaced it.
+
 ## Library 3.7.0 / MCP 1.8.0 — first contact can now be authenticated
 
 **The oldest open gap in this project, closed for the supervised case.**

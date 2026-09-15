@@ -563,8 +563,62 @@ def test_backlog_is_visible():
           "An empty inbox never claims messages are waiting")
 
 
+def test_no_contradictory_advice():
+    step("17. the tool surface does not contradict itself")
+
+    # Reported from the field: `receive`'s description still ended "To hold a
+    # conversation, alternate receive and send" -- the old advice, surviving
+    # inside a block that had been edited to ADD the channel paragraph, and
+    # directly contradicting receive_all's bold "use this in any
+    # conversation". It is a precise instruction to do the thing that cost two
+    # agents eight messages.
+    #
+    # Two agents independently named the pattern: when changing something we
+    # audit what to ADD and not what should have been REMOVED. This test is
+    # the enforceable version of that.
+    surface = "\n".join(
+        [t["description"] for t in mcp.TOOLS] + [mcp.INSTRUCTIONS]
+    )
+
+    banned = [
+        "alternate receive and send",
+        "alternate send and receive",
+        "Prefer this to receive",
+        "prefer this to receive",
+    ]
+    present = [phrase for phrase in banned if phrase in surface]
+    check(present == [],
+          "No retired advice survives anywhere on the tool surface (found: %s)"
+          % (present or "none"))
+
+    # Assertions must read the RENDERED description, never grep the source.
+    # An agent nearly filed a false report against this project because
+    # `grep -c "correctness requirement"` returned 0: the descriptions are
+    # implicit-concatenated string literals, so the phrase exists in the
+    # interface and nowhere in the file as a contiguous string.
+    raw = open(os.path.join(HERE, "stringcup_mcp.py")).read()
+    rendered = [t["description"] for t in mcp.TOOLS
+                if t["name"] == "receive_all"][0]
+    check("correctness requirement" in rendered,
+          "receive_all states the correctness requirement in its rendered text")
+    check("correctness requirement" not in raw,
+          "...and that phrase is NOT contiguous in the source, which is why "
+          "grepping the file is not a valid check of the interface")
+
+    # Both file versions must be reachable by tool call: the agent that hit a
+    # partial upgrade could call tools but was blocked from reading files.
+    fake = FakeClient()
+    with_fake(fake)
+    payload = call("whoami")["structuredContent"]
+    check(payload.get("library_version") == stringcup.__version__,
+          "whoami reports the library version")
+    check(payload.get("mcp_version") == mcp.__version__,
+          "whoami reports the MCP server version, so a partial upgrade is "
+          "diagnosable without reading the files")
+
+
 def test_pairing_secret():
-    step("17. pairing secret authenticates first contact")
+    step("18. pairing secret authenticates first contact")
 
     fake = FakeClient()
     with_fake(fake)
@@ -625,16 +679,32 @@ def test_pairing_secret():
     check("secret" not in rv,
           "rendezvous() never puts the pairing secret in a relay request")
 
-    sends_secret = [
-        line for line in source.splitlines()
-        if "_request(" in line and "secret" in line
-    ]
-    check(sends_secret == [],
-          "No _request() call anywhere passes the secret to the relay")
+    # Scan each _request( call to its matching paren rather than checking
+    # single lines. A line-wise grep would miss a multi-line call with the
+    # argument on another line -- the same mistake as grepping for a phrase
+    # that is split across implicit-concatenated string literals, which
+    # nearly produced a false bug report against this project.
+    def request_call_bodies(text):
+        for start in [i for i in range(len(text)) if text.startswith("_request(", i)]:
+            depth, j = 0, start + len("_request(") - 1
+            while j < len(text):
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        yield text[start:j + 1]
+                        break
+                j += 1
+
+    leaky = [body for body in request_call_bodies(source) if "secret" in body]
+    check(leaky == [],
+          "No _request() call anywhere passes the secret to the relay "
+          "(checked per call, not per line)")
 
 
 def test_sync_barrier():
-    step("18. sync_barrier")
+    step("19. sync_barrier")
 
     fake = FakeClient()
     with_fake(fake)
@@ -648,7 +718,7 @@ def test_sync_barrier():
 
 
 def test_channels():
-    step("19. channels")
+    step("20. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -766,7 +836,7 @@ def test_channels():
 
 
 def test_no_remote_transport():
-    step("20. There is no remote transport")
+    step("21. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -795,6 +865,7 @@ def main():
     test_unexpected_exception_is_contained()
     test_peer_info()
     test_backlog_is_visible()
+    test_no_contradictory_advice()
     test_pairing_secret()
     test_sync_barrier()
     test_channels()
