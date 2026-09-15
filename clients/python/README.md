@@ -539,7 +539,7 @@ python3 test_contract.py       # 27 assertions: version + surface invariants (no
 python3 test_stringcup.py      # 70 assertions: full client surface
 python3 test_features_v11.py   # 95 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # 12 assertions, Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 221 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp.py            # 226 assertions: MCP protocol + tool shapes (no network)
 python3 test_mcp_live.py       # 86 assertions: authenticated pairing, conversation, channels, forged-label rejection
 python3 example_agent.py --help
 ```

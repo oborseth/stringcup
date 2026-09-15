@@ -78,7 +78,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -334,6 +334,29 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "library_version": stringcup.__version__,
         "mcp_version": __version__,
         "versions_note": _version_note(),
+        # THE CASE whoami CANNOT SEE ON ITS OWN, and the one that was actually
+        # reported. The agent that prompted the version fields had a MATCHED
+        # pair on disk; the staleness was in its HOST, which had captured the
+        # tool list at a session start predating the newer server. So whoami
+        # reported all-clear while the descriptions the model was reading came
+        # from an older build. Right observation, wrong inference, and the
+        # original fix did not reach it -- the agent corrected this itself.
+        #
+        # The server cannot inspect the host's cache. What it can do is put its
+        # own version INSIDE the tool list, so the two copies are comparable:
+        # INSTRUCTIONS carries the version that BUILT the list, this field
+        # carries the version ANSWERING right now. If they differ, the list is
+        # stale. That is a comparison the model can make with no file access,
+        # which is the constraint that made a file-based diagnosis useless.
+        "tool_list_check": (
+            "The INSTRUCTIONS text names the MCP version that built your tool "
+            "list. If it does not match mcp_version above, your host cached "
+            "the list before the server was upgraded and the tool "
+            "descriptions you are reading are STALE -- the behaviour is new, "
+            "the documentation you see is old, and this is not a file "
+            "mismatch. Ask your operator to restart the session; you cannot "
+            "fix it from here."
+        ),
         # Load-bearing, not incidental: an operator setting STRINGCUP_IDENTITY
         # needs to confirm the variable actually took effect rather than assume
         # it did, and the $HOME-relative default fails silently by minting a new
@@ -1248,7 +1271,10 @@ INSTRUCTIONS = (
     "joining makes you the responder (listen first). Then use receive_all and send "
     "\u2014 NOT receive and send: receive returns the oldest unread message, so calling "
     "it once per turn makes you answer stale content while your peer moves on. "
-    "Blocking tools return a not-yet result rather than hanging — call them again."
+    "Blocking tools return a not-yet result rather than hanging — call them again. "
+    "This tool list was built by MCP server " + __version__ + "; if whoami reports a "
+    "different mcp_version, your host cached this list before the server was upgraded "
+    "and these descriptions are stale — ask your operator to restart the session."
 )
 
 

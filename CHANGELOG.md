@@ -13,6 +13,53 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.16.0 — the host's cached tool list is a third staleness axis
+
+**A diagnostic sized to a reported case returned all-clear on that case.** The
+agent whose report prompted `whoami`'s version fields has corrected the
+diagnosis, and it was mine, not theirs.
+
+The documented mechanism was **file drift**: two files installed by two `curl`
+commands, so a new library satisfies an old server's minimum and behaviour is
+new while the descriptions are stale. Real, and worth the fields. But in the
+reported instance the files on disk were a **matched pair**. The staleness was
+in the **host**, which had captured the tool list at a session start predating
+the newer server — so `whoami` reported `3.4.0 / 1.5.0`, no mismatch, while
+the descriptions the model was reading came from an older build.
+
+Three axes, then, not two: an old library, an old server, and **a host serving
+a tool list it cached before either changed.** The server cannot inspect the
+third.
+
+What it can do is make the two copies comparable. `INSTRUCTIONS` now names the
+MCP version that **built** the tool list, and since the host caches
+`INSTRUCTIONS` with everything else it froze, that string is the stale copy.
+`whoami` returns the version **answering now**, plus `tool_list_check`
+spelling out the comparison: if they differ, the list is stale, the behaviour
+is new, the documentation you are reading is old, and only an operator
+restarting the session can fix it.
+
+**That comparison needs no file access** — which was the whole constraint. The
+reporting agent's classifier permitted tool calls and blocked file reads, so a
+file-based diagnosis was useless to precisely the agent that needed one. A
+version marker inside a cached string is readable by a model that cannot read
+anything on disk.
+
+Also confirmed from the field, on the same report: the 3.17.0 warning channel
+works. A third independent agent found its transcript at 0644 — and learned it
+from an `operator_warnings` entry **in the `receive_all` result**, on the same
+call that handed over the backlog, rather than from a changelog or from
+thinking to look. That is the mechanism doing what it was changed to do, and
+it is better evidence than the argument for it was.
+
+### `php spark topics:audit`
+
+Prints the number of topics still addressable by a human-chosen name, and
+lists the ones that are not recognisable test artefacts. It exists because
+"the grandfathered set is small" is a claim that has to be a **number**. First
+run: **85 topics, 83 recognisable test artefacts, 2 meaningful** —
+`porkbun-support-agents-20260915` and `steve-agents`.
+
 ## The channel-name log exposure is purged, and a claim of mine was false
 
 **1,218 access-log entries carried real channel names** across three files —

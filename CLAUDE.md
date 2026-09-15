@@ -1027,6 +1027,26 @@ Three constraints to preserve:
   calls, so a file-based diagnosis was useless to exactly the agent that
   needed one. A newer library is reported, never refused.
 
+  **But that was the wrong diagnosis of the reported case, and the agent
+  corrected it.** In its instance the two files on disk were a *matched* pair;
+  the staleness was in its **host**, which had captured the tool list at a
+  session start predating the newer server. So `whoami` would have reported
+  no mismatch while the descriptions the model was reading came from an older
+  build — a diagnostic sized to the reported situation that returns all-clear
+  on it. The file-drift mechanism is real and worth the fields; it simply was
+  not what happened.
+
+  **The host's cached tool list is a third staleness axis**, alongside an old
+  library and an old server, and the server cannot inspect it. What it can do
+  is make the two copies comparable: `INSTRUCTIONS` now carries the MCP
+  version that **built** the list, and `whoami` returns the version
+  **answering now** plus a `tool_list_check` explaining the comparison. If
+  they differ, the list is stale and only an operator restarting the session
+  can fix it. That comparison needs no file access, which was the constraint
+  that made a file-based diagnosis useless in the first place. **Keep the
+  version marker inside `INSTRUCTIONS`** — it is load-bearing there precisely
+  because it is cached with everything else the host froze.
+
 **Expose the library's group surface, not only its pairwise one.** The server
 shipped seven pairwise tools for three versions while the library had had
 topics since 1.11, so on a host where MCP is the only workable path — which
@@ -1515,7 +1535,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 95 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 221 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 226 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 | `test_properties.py` | 37 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |

@@ -1201,6 +1201,34 @@ def test_mcp_does_not_redrop_diagnostics():
           "receive_all reports the relay's count, not a hardcoded zero")
 
 
+def test_tool_list_carries_its_build_version():
+    step("21d. the cached tool list must be able to report its own staleness")
+
+    # A host caches the tool list at session start. If the server is upgraded
+    # underneath it, whoami reports a MATCHED pair on disk while the model
+    # reads descriptions from an older build -- the diagnostic returns
+    # all-clear on exactly the case it was built for. The agent that prompted
+    # the version fields hit this and corrected the diagnosis itself.
+    #
+    # The server cannot see the host's cache, so it makes the two copies
+    # comparable instead: INSTRUCTIONS is cached WITH the stale list and names
+    # the version that built it, while whoami answers live. This asserts the
+    # marker is present, because without it the comparison is impossible and
+    # nothing else would fail.
+    check(mcp.__version__ in mcp.INSTRUCTIONS,
+          "INSTRUCTIONS names the MCP version that built the tool list")
+    check("stale" in mcp.INSTRUCTIONS.lower(),
+          "...and says what a mismatch means, in the text the host caches")
+
+    who = call("whoami", {})["structuredContent"]
+    check(who.get("mcp_version") == mcp.__version__,
+          "whoami reports the version answering NOW")
+    check("stale" in (who.get("tool_list_check") or "").lower(),
+          "...and tool_list_check explains the comparison to the model")
+    check("operator" in (who.get("tool_list_check") or "").lower(),
+          "...and says only an operator restart fixes it, since the agent cannot")
+
+
 def test_sync_barrier():
     step("22. sync_barrier")
 
@@ -1370,6 +1398,7 @@ def main():
     test_key_rotation_is_coarse_forward_secrecy()
     test_receive_many_keeps_diagnostics()
     test_mcp_does_not_redrop_diagnostics()
+    test_tool_list_carries_its_build_version()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()
