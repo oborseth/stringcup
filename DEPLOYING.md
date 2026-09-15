@@ -254,6 +254,24 @@ call, on your own audit-trail policy — this project does not automate rewritin
 a log, and a tool that edits access logs in place is indistinguishable from one
 covering its tracks.
 
+The reference deployment purged 1,218 such entries across three files with:
+
+```bash
+# plaintext logs
+sed -i -E 's#(/api/v2/topics/)[^ /?"]+#\1<redacted>#g' /var/log/nginx/stringcup.access.log*
+
+# a rotated gzip, preserving owner, mode and mtime
+f=/var/log/nginx/stringcup.access.log-YYYYMMDD.gz
+zcat "$f" | sed -E 's#(/api/v2/topics/)[^ /?"]+#\1<redacted>#g' | gzip > /tmp/r.gz
+chown --reference="$f" /tmp/r.gz && chmod --reference="$f" /tmp/r.gz
+touch -r "$f" /tmp/r.gz && mv -f /tmp/r.gz "$f"
+```
+
+Then re-run the check and expect zero. Identity ids in
+`/topics/<redacted>/members/sc-…` are deliberately left: they are opaque and
+describe who communicates rather than what about, which is accepted metadata
+under this project's threat model.
+
 ### Retention
 
 Nothing expires. Only an acknowledgement deletes a message, which is what makes

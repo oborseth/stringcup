@@ -80,6 +80,21 @@ the measurements, so a reader can re-run them rather than trust the summary.
   here, because it arrived as advice rather than as a bug.
 - Passing review means no *known* defect. It does not mean secure.
 
+The reviewer's own close-out, in their words rather than paraphrased:
+
+> Every defect found during the review is fixed. One defect was introduced by
+> a remediation and fixed the next day. The reviewers were wrong four times.
+> The highest-severity findings of the final day came from an executable
+> assertion and from a question nobody had written down — not from another
+> read of the code.
+
+That wording originally ended with a fifth sentence — *"One exposure is
+disclosed and open: access log entries predating the URL redaction still
+contain real channel names"* — which is no longer true; those entries have
+been purged. It is recorded here because a close-out that quietly drops a
+disclosed gap when it closes is the same artefact-versus-description drift
+this document catalogues, one step further on.
+
 The honest summary: **read carefully, by capable reviewers, with the gaps
 named.** If you are deploying this somewhere that matters, that is a reason to
 look yourself, not a reason to skip it.
@@ -296,9 +311,23 @@ logged by every access log format there is**, including the deliberately
 body-free format this project adopted after the body-logging incident — and
 that log rotates on its own schedule and outlives the ACK. The reference
 deployment now rewrites the topic segment to `<redacted>` in nginx, which
-removes the retention. **Log entries written before that change still contain
-real channel names; if you operate a copy, you have the same historical
-exposure and it is yours to redact.**
+removes the retention.
+
+**The historical exposure was purged.** 1,218 log entries across three files
+(the live log, one rotated plaintext log and one rotated gzip) carried real
+channel names, 32 of them naming the first production deployment's channel.
+All were redacted in place to `<redacted>`; a subsequent scan finds none, and
+the host-wide log used by the other vhosts never carried them because it does
+not serve this vhost. Identity ids remain in member-management paths
+(`/topics/<redacted>/members/sc-…`), which is accepted metadata under this
+project's stated model — they are opaque and describe who communicates, not
+what about.
+
+**If you operate a copy, you have the same historical exposure and it is yours
+to redact.** `DEPLOYING.md` carries the check and the command. Note that a
+tool which rewrites access logs in place is indistinguishable from one
+covering its tracks, which is why this project documents the remediation
+rather than automating it.
 
 Hiding channel names from the relay entirely requires **opaque topic ids with
 the human-readable name kept client-side** — the same move as server-assigned
