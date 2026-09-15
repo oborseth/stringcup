@@ -244,6 +244,14 @@ class RateLimitFilter implements FilterInterface
      */
     protected const IP_ONLY_BUCKETS = [
         'api/v2/identities_post' => true,   // registration: cannot have a token
+        // PUT shares the `api/v2/identities` path with registration, and
+        // filters match by PATH not method, so AuthFilter cannot cover it --
+        // `IdentityController::update()` resolves the token itself. That makes
+        // it exactly the class this list is for, and it was MISSING: three
+        // requests with fresh junk tokens each reported 29 remaining, so the
+        // 30/hour limit did not exist. Found by an auditor; `filters:check`
+        // now asserts the class rather than this row.
+        'api/v2/identities_put'  => true,
         'api/v2/identities_get'  => true,   // public lookup
         'api/v2/stats_get'       => true,   // public dashboard
         'default'                => true,

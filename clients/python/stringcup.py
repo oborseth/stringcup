@@ -74,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.9.0"
+__version__ = "3.10.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 9, 0)
+version_info = (3, 10, 0)
 
 __all__ = [
     "Client",
@@ -174,6 +174,10 @@ FEATURES = {
     "directional_pairing_tag": (3, 8, 0),  # pairing tag is not reflectable
     # 3.9.0
     "verified_pairing_pins": (3, 9, 0),   # a verified pairing pins durably
+    # 3.10.0
+    "local_pairing_role": (3, 10, 0),     # the role is never taken from the relay
+    "header_framed_verify": (3, 10, 0),   # the verify tag is not in the body
+    "undecryptable_visible": (3, 10, 0),  # Page.undecryptable, not silent drops
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -234,9 +238,40 @@ def split_channel_label(text: str):
 #: PAKE is needed.
 PAIRING_SECRET_BYTES = 16
 
-#: Marker for the verification message exchanged during an authenticated
-#: pairing. Distinct so it is never confused with agent content, and consumed
-#: inside the pairing call so the agent never sees it.
+#: Header field naming a message as pairing framing rather than content.
+#:
+#: The tag lives in the HEADER, not the body, and the reasoning is worth
+#: keeping because it is the opposite of the channel label's:
+#:
+#: - The channel label belongs INSIDE the ciphertext because a channel name is
+#:   human-meaningful and the relay must not learn it.
+#: - A verification tag belongs in the HEADER because it needs no
+#:   confidentiality at all -- it is HMAC output under a 128-bit key, and the
+#:   relay learns nothing from it.
+#:
+#: Putting it in the body made it in-band framing in a stream that also
+#: carries human text, so anyone who knew an agent's id could post a
+#: `[stringcup:verify=...]` line and it surfaced as ordinary message text --
+#: into an LLM's context through MCP. Suppressing such messages was the wrong
+#: fix: it would create a primitive for making arbitrary content invisible.
+#: Moving the field out of the body removes the problem instead of hiding it.
+#: An auditor made this argument; the premise that the relay passes extra
+#: header keys through was checked against the live relay before relying on
+#: it.
+#:
+#: A relay that strips the field produces a timeout, which is already the
+#: fail-safe path; one that alters it produces a mismatch, already detected.
+VERIFY_HEADER = "purpose"
+VERIFY_PURPOSE = "pairing-verify"
+VERIFY_TAG_FIELD = "tag"
+
+#: Body of a verification message. Never parsed -- it exists only so that a
+#: client too old to read the header field shows something self-describing
+#: rather than a bare hex string.
+VERIFY_BODY = "[stringcup] pairing verification"
+
+#: The pre-3.10.0 in-band form, still ACCEPTED so a peer on 3.8/3.9 can still
+#: complete a pairing. Never sent. Remove once those versions are gone.
 VERIFY_PREFIX = "[stringcup:verify="
 
 
@@ -337,8 +372,26 @@ def verification_tag(
 
     - `role` -- breaks the symmetry that made reflection work.
     - both **ids**, not only keys. `sorted(keys)` alone is ambiguous when the
-      two keys are equal, which this protocol contemplates because multiple
-      instances of one identity are supported. Degenerate, but free to close.
+      two keys are equal.
+
+      **Read this before relying on that.** Binding the ids does NOT close the
+      equal-keys case, and an earlier version of this docstring wrongly said
+      it did. Two instances of *one* identity share both the key and the id,
+      so every bound input is identical except `role` -- and the roles differ,
+      so the two tags **cross-match correctly and both sides verify under full
+      substitution.** Demonstrated. Role binding does not save it either, for
+      the same reason.
+
+      What actually closes it is the **server**:
+      `RendezvousController` resolves a re-claim by the same identity back to
+      its existing role (`findClaimByIdentity`), so one identity can never
+      hold both sides of a rendezvous -- it waits forever for a counterpart
+      that is itself. **The protection lives in PHP, not in this tag.** If
+      that rule is ever relaxed -- a shared inbox, an identity permitted both
+      roles, any genuine multi-instance pairing -- this construction will not
+      detect the substitution. Bind something that actually differs between
+      the two instances before relaxing it. Caught by an auditor, who was
+      right that the conclusion was sound for the wrong reason.
     - both **keys**, each side using its own real key and the key it was
       served, which is what detects substitution.
     - the **rendezvous token**, so a tag cannot be spliced in from a different
@@ -779,6 +832,26 @@ class Page:
     has_more: bool
     next_since_id: Optional[int]
 
+    #: Inbox sequence numbers that could NOT be decrypted.
+    #:
+    #: These were silently dropped before, which made `count` disagree with
+    #: `len(messages)` for no visible reason and, worse, made them
+    #: unacknowledgeable: the client never saw an id to ACK, so they persisted
+    #: forever and counted against `MAX_PENDING_MESSAGES`.
+    #:
+    #: **That is reachable by any registered identity.** Encrypt to the wrong
+    #: key and the recipient cannot read or remove the message; repeat it to
+    #: the 2000-message ceiling and every legitimate sender gets `507` while
+    #: the recipient has no client-side way to clear the backlog. Demonstrated
+    #: with three injections: server `count=3`, decryptable `0`.
+    #:
+    #: They are **surfaced, never auto-acknowledged.** A decryption failure can
+    #: also mean a transient local problem -- the wrong identity file loaded,
+    #: a key rotated mid-flight -- and acknowledging deletes. Destroying mail
+    #: to tidy a count would be the one thing this store promises not to do.
+    #: The caller decides, with `ack(page.undecryptable)`.
+    undecryptable: List[int] = field(default_factory=list)
+
     #: Server's X-Long-Poll disposition: "off", "ready", "waited", or
     #: "unavailable" when the hold pool was full and the request returned at
     #: once. Callers that long poll must check this, or a full pool turns their
@@ -977,6 +1050,9 @@ class Client:
 
     #: Warn at most once per process that a verified pairing was not pinned.
     _warned_unpinned = False
+
+    #: Warn at most once per process about undecryptable mail piling up.
+    _warned_undecryptable = False
 
 
     def __init__(
@@ -1251,7 +1327,7 @@ class Client:
         return "\n".join(lines)
 
     def _verify_pairing(self, info: dict, secret: str, token: str,
-                        timeout: float) -> dict:
+                        role: str, timeout: float) -> dict:
         """
         Exchange and compare DIRECTIONAL verification tags with the peer.
 
@@ -1272,15 +1348,33 @@ class Client:
         peer_id = info["peer_id"]
         peer_pub = info["peer_identity_public_key"]
 
-        role = info.get("role")
+        # THE ROLE IS LOCAL. It is never taken from the relay.
+        #
+        # The direction binding is what stops reflection, so taking the role
+        # from the relay would hand the adversary an input to the very thing
+        # defending against it. It is also unnecessary: a client knows its own
+        # role by construction -- open_rendezvous()/await_peer() is the
+        # initiator, join_rendezvous() is the responder -- which is why
+        # handoff_block() already prints it from the local call. An auditor
+        # pointed out the dependency could simply be deleted rather than
+        # reasoned about, which collapses the question instead of answering it.
         if role not in PAIRING_ROLES:
-            # The relay derives and reports the role. Without one there is no
-            # direction to bind, so refuse rather than fall back to a
-            # symmetric tag -- that fallback *is* the vulnerability.
+            raise ValidationError(
+                "a local pairing role is required (%r); it must never be read "
+                "from the relay response" % (role,)
+            )
+
+        # The relay's claim is still worth reading -- as a signal, not a source.
+        # An honest relay always agrees with the local derivation, so a
+        # disagreement is free attack detection that was previously discarded.
+        claimed = info.get("role")
+        if claimed in PAIRING_ROLES and claimed != role:
             raise VerificationFailed(
-                "the relay did not report a pairing role (%r), so this pairing "
-                "cannot be verified directionally. Refusing rather than falling "
-                "back to a reflectable tag." % (role,)
+                "the relay reports this pairing as %r while this client is the "
+                "%s by construction. An honest relay cannot disagree: opening a "
+                "rendezvous makes you the initiator and joining makes you the "
+                "responder. Treat the message path as hostile and report it."
+                % (claimed, role)
             )
 
         ids = (self.id, peer_id)
@@ -1305,9 +1399,15 @@ class Client:
                 self.trust_store.forget(peer_id)
                 self._pin_created_for = None
 
-        self.send(peer_id, VERIFY_PREFIX + mine + "]")
+        self.send(
+            peer_id,
+            VERIFY_BODY,
+            header_extra={VERIFY_HEADER: VERIFY_PURPOSE, VERIFY_TAG_FIELD: mine},
+        )
 
         deadline = time.monotonic() + timeout
+        verify_cursor: Optional[int] = None
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1319,16 +1419,36 @@ class Client:
                     "pairing as authenticated." % timeout
                 )
 
+            # Cursor forward rather than re-reading the first page forever.
+            #
+            # Without `since_id` this only ever saw page one, so an inbox
+            # already holding MAX_PAGE pending messages hid the verification
+            # message and the pairing timed out -- meaning anyone able to send
+            # mail could cheaply deny an authenticated pairing. Fail-safe, but
+            # free to fix. Reported by an auditor.
             page = self.fetch(limit=MAX_PAGE,
+                              since_id=verify_cursor,
                               wait=int(min(MAX_WAIT, max(0, remaining))),
                               verify_channels=False)
 
+            if page.next_since_id is not None:
+                verify_cursor = page.next_since_id
+
             for msg in page.messages:
-                if msg.sender_id != peer_id or not msg.text.startswith(VERIFY_PREFIX):
+                if msg.sender_id != peer_id:
+                    continue
+
+                theirs = None
+                if msg.header.get(VERIFY_HEADER) == VERIFY_PURPOSE:
+                    theirs = str(msg.header.get(VERIFY_TAG_FIELD) or "").strip()
+                elif msg.text.startswith(VERIFY_PREFIX):
+                    # Legacy in-band form from a 3.8/3.9 peer.
+                    theirs = msg.text[len(VERIFY_PREFIX):].rstrip("]").strip()
+
+                if not theirs:
                     continue
 
                 self.ack([msg.id])
-                theirs = msg.text[len(VERIFY_PREFIX):].rstrip("]").strip()
 
                 if hmac.compare_digest(theirs, mine):
                     _unpoison()
@@ -1336,11 +1456,13 @@ class Client:
                     # this: the peer holds the other role and cannot produce
                     # this value. This is the reflection attack, caught.
                     raise VerificationFailed(
-                        "the peer returned OUR OWN verification tag. Nothing "
-                        "legitimate produces that -- the peer holds the other role "
-                        "and cannot compute this value. This is a reflection "
-                        "attempt by something on the message path. Treat the "
-                        "channel as compromised: do not send, and report it."
+                        "the peer returned OUR OWN verification tag. That is what a "
+                        "reflecting relay does -- echoing a side's tag back to it to "
+                        "fake a match -- and it is also what a BROKEN OR "
+                        "HALF-IMPLEMENTED peer does. Do not send either way. Report "
+                        "it, and if the peer is a client under development, suspect "
+                        "the bug before the adversary: a correct peer holds the other "
+                        "role and cannot compute this value."
                     )
 
                 if not hmac.compare_digest(theirs, expected):
@@ -1387,7 +1509,8 @@ class Client:
                 return info
 
     def await_peer(self, token: str, timeout: float = 300.0,
-                   secret: Optional[str] = None) -> dict:
+                   secret: Optional[str] = None,
+                   role: str = PAIRING_ROLES[0]) -> dict:
         """
         Block until the counterpart arrives, or raise `PairingTimeout`.
 
@@ -1417,7 +1540,7 @@ class Client:
             if info.get("peer_id"):
                 if secret:
                     return self._verify_pairing(
-                        info, secret, token,
+                        info, secret, token, role,
                         max(30.0, deadline - time.monotonic()))
 
                 info["verified"] = False
@@ -1438,12 +1561,15 @@ class Client:
         info = self.rendezvous(token=token, wait=0)
         if info.get("peer_id"):
             if secret:
-                return self._verify_pairing(info, secret, token, timeout)
+                return self._verify_pairing(
+                    info, secret, token, PAIRING_ROLES[1], timeout)
 
             info["verified"] = False
             return info
 
-        return self.await_peer(token, timeout=timeout, secret=secret)
+        # Still the responder when falling through to the waiting loop.
+        return self.await_peer(token, timeout=timeout, secret=secret,
+                               role=PAIRING_ROLES[1])
 
     def rendezvous_release(self, token: str) -> dict:
         """Drop this identity's claim so the token can be reused immediately."""
@@ -1527,6 +1653,7 @@ class Client:
         text: str,
         idempotency_key: Optional[str] = None,
         retries: int = 3,
+        header_extra: Optional[Dict[str, str]] = None,
     ) -> int:
         """
         Encrypt and send. Returns **your own** outbound sequence number.
@@ -1552,6 +1679,21 @@ class Client:
         )
         payload["recipient_id"] = recipient_id
         payload["sender_id"] = self.id
+
+        # Protocol framing belongs in the header, not in the body.
+        #
+        # The relay stores and returns unrecognised header keys verbatim
+        # (verified against the live relay), so this needs no server change.
+        # The header is plaintext to the relay, so ONLY put things here that
+        # need no confidentiality -- a channel name does, and stays inside the
+        # ciphertext; a verification tag does not.
+        if header_extra:
+            for field, value in header_extra.items():
+                if field in ("version", "algo", "ephemeral_pub", "iv"):
+                    raise ValidationError(
+                        "header_extra may not override the crypto field %r" % field
+                    )
+                payload["header"][field] = value
 
         key = idempotency_key or str(uuid.uuid4())
 
@@ -1632,10 +1774,16 @@ class Client:
         body = self._request("GET", path)
 
         messages = []
+        undecryptable: List[int] = []
         for raw in body.get("messages", []):
             try:
                 text = decrypt(self.identity.private_key, self.id, raw)
             except DecryptionError:
+                # Recorded rather than dropped. See Page.undecryptable.
+                try:
+                    undecryptable.append(int(raw["id"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
                 continue
             claim, text = split_channel_label(text)
 
@@ -1664,11 +1812,23 @@ class Client:
             )
             self._log_transcript("in", raw["sender_id"], int(raw["id"]), text)
 
+        if undecryptable and not Client._warned_undecryptable:
+            Client._warned_undecryptable = True
+            sys.stderr.write(
+                "[stringcup] %d message(s) in this page could not be decrypted and "
+                "are NOT acknowledged, so they will persist and count against your "
+                "inbox quota. See Page.undecryptable; ack them only if you are sure "
+                "they are not yours (a wrong identity file would look the same).\n"
+                % len(undecryptable)
+            )
+            sys.stderr.flush()
+
         return Page(
             messages=messages,
             count=int(body.get("count", 0)),
             has_more=bool(body.get("has_more", False)),
             next_since_id=body.get("next_since_id"),
+            undecryptable=undecryptable,
             long_poll=self._last_headers.get("x-long-poll", "off"),
         )
 

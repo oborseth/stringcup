@@ -52,6 +52,24 @@ done
 
 # The MCP server is Python and wraps the client library rather than speaking to
 # the API directly, so it gets its own pair: a protocol/stdio suite that needs
+# Config consistency first, because it needs no server and no network.
+#
+# filters:check asserts every rate-limit bucket that AuthFilter does not
+# protect keys on IP rather than on a caller-supplied bearer string. Those are
+# two hand-maintained lists in different files that must agree, and they
+# disagreed -- api/v2/identities_put was missing, making its 30/hour limit
+# unenforceable by anyone presenting a fresh random token.
+echo
+echo "############################################################"
+echo "# filters:check"
+echo "############################################################"
+if (cd "$ROOT" && php spark filters:check); then
+  results+=("PASS  filters:check")
+else
+  results+=("FAIL  filters:check")
+  failed=1
+fi
+
 # no network, then a live two-process conversation that registers two
 # identities like any other suite.
 PY="$(command -v python3 || true)"

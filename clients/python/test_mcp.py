@@ -720,6 +720,66 @@ def test_pairing_secret():
           and stringcup.other_pairing_role("responder") == "initiator",
           "other_pairing_role gives the tag each side must EXPECT")
 
+    # ---- the role must be LOCAL, never the relay's word ----
+    #
+    # Direction binding is what stops reflection, so reading the role from the
+    # relay would hand the adversary an input to the defence. A client knows
+    # its role by construction, which is why handoff_block() already prints it
+    # from the local call.
+    lib = open(os.path.join(HERE, "stringcup.py")).read()
+    verify_body = lib.split("def _verify_pairing(")[1].split("\n    def ")[0]
+    # The precise property: the role BOUND INTO THE TAG is the local one.
+    # Reading the relay's claim is fine and desirable -- it is compared, never
+    # bound. So the thing that must not exist is the ASSIGNMENT of the bound
+    # role from the response.
+    check('role = info.get("role")' not in verify_body,
+          "The role bound into the tag is never assigned from the relay response")
+    check('claimed = info.get("role")' in verify_body,
+          "...while the relay's claim is still read, to be compared against it")
+    check("claimed" in verify_body and "disagree" in verify_body.lower(),
+          "...and a relay that CLAIMS a different role is treated as a signal, "
+          "since an honest relay can never disagree with the local derivation")
+
+    # ---- the equal-keys case: the docstring must not overstate ----
+    #
+    # An earlier docstring claimed binding ids closed this. It does not: two
+    # instances of one identity share key AND id, so only `role` differs --
+    # and the roles differ, so the tags CROSS-MATCH and both verify under full
+    # substitution. What closes it is the server refusing one identity both
+    # sides. Asserted so the wrong claim cannot come back.
+    one_id = "sc-" + "i" * 24
+    served = "OJ0DbbTVtTOQ/eSNqYLaUwDsQXtTEzg+8KsVkVCJRXM="
+    i1_mine = stringcup.verification_tag(
+        sec, "initiator", (one_id, one_id), (A, served), "rv-x")
+    i2_expects = stringcup.verification_tag(
+        sec, "initiator", (one_id, one_id), (A, served), "rv-x")
+    check(i1_mine == i2_expects,
+          "EQUAL-KEYS CASE STILL CROSS-MATCHES: role and id binding do NOT "
+          "close it, so the docstring must credit the server rule instead")
+    check("lives in PHP" in lib or "protection lives" in lib,
+          "...and the docstring says the protection lives in the server")
+
+    # ---- undecryptable mail must be visible, not silently dropped ----
+    #
+    # fetch() used to `continue` past a DecryptionError, so `count` disagreed
+    # with len(messages) invisibly AND the client never saw an id to ACK. Any
+    # registered identity can encrypt to the wrong key; repeat to the
+    # 2000-message ceiling and every legitimate sender gets 507 while the
+    # recipient has no client-side way to clear it. Demonstrated live.
+    check("undecryptable" in lib,
+          "Page exposes the ids that failed to decrypt")
+    fetch_body = lib.split("    def fetch(")[1].split("\n    def ")[0]
+    check("undecryptable.append" in fetch_body,
+          "...populated where the decryption error is caught")
+    check("self.ack(" not in fetch_body,
+          "...and fetch NEVER acknowledges them itself: a wrong identity file "
+          "looks identical, and acknowledging deletes")
+
+    # ---- the verification exchange must cursor forward ----
+    check("since_id=verify_cursor" in verify_body,
+          "The verification fetch pages forward, so a full first page cannot "
+          "hide the peer's tag and deny an authenticated pairing")
+
     # THE property the whole scheme rests on. If the secret ever reaches the
     # relay it is worth nothing -- the relay already knows the token, and a
     # value it knows cannot prove anything about a key it served. Asserted
@@ -815,7 +875,7 @@ def test_pairing_pin_lifecycle():
         text=stringcup.VERIFY_PREFIX + their_tag + "]", created_at="x")
 
     c, store_obj = _client(inbox=(good_msg,))
-    out = c._verify_pairing(dict(info), secret, "rv-x", 5)
+    out = c._verify_pairing(dict(info), secret, "rv-x", "initiator", 5)
     check(out["verified"] is True, "A matching peer tag verifies the pairing")
     check(out["pinned"] is True, "...and the result says it was pinned")
     check(store_obj.get(peer) == stringcup.fingerprint(GOOD),
@@ -827,7 +887,7 @@ def test_pairing_pin_lifecycle():
     store_obj.pin(peer, stringcup.fingerprint(GOOD))   # as rendezvous() would
     raised = False
     try:
-        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+        c._verify_pairing(dict(info), secret, "rv-x", "initiator", 0.01)
     except stringcup.VerificationFailed:
         raised = True
     check(raised, "A silent peer fails verification")
@@ -839,7 +899,7 @@ def test_pairing_pin_lifecycle():
     c, store_obj = _client(pre_pin=stringcup.fingerprint(GOOD),
                            pin_created=False)
     try:
-        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+        c._verify_pairing(dict(info), secret, "rv-x", "initiator", 0.01)
     except stringcup.VerificationFailed:
         pass
     check(store_obj.get(peer) == stringcup.fingerprint(GOOD),
@@ -855,7 +915,7 @@ def test_pairing_pin_lifecycle():
     store_obj.pin(peer, stringcup.fingerprint(GOOD))
     reflected = None
     try:
-        c._verify_pairing(dict(info), secret, "rv-x", 5)
+        c._verify_pairing(dict(info), secret, "rv-x", "initiator", 5)
     except stringcup.VerificationFailed as exc:
         reflected = str(exc)
     check(reflected is not None and "OUR OWN" in reflected,
@@ -865,7 +925,7 @@ def test_pairing_pin_lifecycle():
     c, _ = _client(store=False)
     raised = False
     try:
-        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+        c._verify_pairing(dict(info), secret, "rv-x", "initiator", 0.01)
     except stringcup.VerificationFailed:
         raised = True
     check(raised, "With no trust store at all, failure still raises cleanly")

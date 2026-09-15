@@ -115,6 +115,9 @@ EXPECTED_FEATURES = {
     "pairing_secret": (3, 7, 0),
     "directional_pairing_tag": (3, 8, 0),
     "verified_pairing_pins": (3, 9, 0),
+    "local_pairing_role": (3, 10, 0),
+    "header_framed_verify": (3, 10, 0),
+    "undecryptable_visible": (3, 10, 0),
 }
 
 

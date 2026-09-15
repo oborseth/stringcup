@@ -63,15 +63,16 @@ from stringcup import (  # noqa: E402
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.9.0")
+stringcup.require_version("3.10.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "receive_many", "backlog_visible", "sync_barrier",
                            "channel_labels", "membership_notice",
                            "duplicate_channel_guard", "verified_channel_labels",
                            "pairing_secret", "directional_pairing_tag",
-                           "verified_pairing_pins")
+                           "verified_pairing_pins", "local_pairing_role",
+                           "header_framed_verify", "undecryptable_visible")
 
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -106,7 +107,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 9, 0)
+BUILT_AGAINST = (3, 10, 0)
 
 
 def _version_note() -> Optional[str]:

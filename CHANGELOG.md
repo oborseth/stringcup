@@ -13,6 +13,92 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.10.0 / MCP 1.11.0 — the role is local, the tag is a header, and undecryptable mail is visible
+
+A second audit round on the pairing feature, plus one finding of my own made
+while fixing theirs.
+
+**The role is derived locally and never read from the relay.** Direction
+binding is what stops reflection, so taking the role from the relay handed the
+adversary an input to the defence. It was also unnecessary: a client knows its
+role by construction — `open_rendezvous()`/`await_peer()` is the initiator,
+`join_rendezvous()` the responder — which is why `handoff_block()` already
+printed it from the local call. The auditor's framing was that the dependency
+should be *deleted* rather than reasoned about, which collapses the question
+instead of answering it. The relay's claim is still read, as a **signal**: an
+honest relay can never disagree with the local derivation, so a disagreement
+now raises instead of being discarded.
+
+**A false claim in the docstring, corrected.** It said binding both ids closed
+the equal-keys case. It does not. Two instances of one identity share key
+*and* id, so only `role` differs — and the roles differ, so the tags
+**cross-match and both sides verify under full substitution**. Demonstrated.
+What actually closes it is the **server**: `findClaimByIdentity` returns an
+identity's existing role on re-claim, so one identity can never hold both
+sides. **The protection lives in PHP, not in the tag**, and if that rule is
+ever relaxed the construction will not detect the substitution. The auditor
+was right that the conclusion was sound for the wrong reason — the same
+overstated-claim pattern this project has hit twice before.
+
+**The verification tag moved from the ciphertext body to the message header.**
+The body form was in-band framing in a stream that also carries human text, so
+anyone who knew an agent's id could post a `[stringcup:verify=...]` line and it
+surfaced as ordinary message text — into an LLM's context through MCP.
+Suppressing such messages was the wrong fix and was rejected: it would create a
+primitive for making arbitrary content invisible. Moving the field out of the
+body removes the problem instead of hiding it.
+
+The contrast is the durable part: **the channel label belongs inside the
+ciphertext because a channel name is sensitive; the verification tag belongs in
+the header because it is not** — it is HMAC output under a 128-bit key and the
+relay learns nothing from it. One rule had been applied to both.
+
+The premise that the relay passes unrecognised header keys through was
+**checked against the live relay** before being relied on. My first probe said
+it did not, because I put the keys at the envelope top level instead of inside
+`header`; the corrected probe showed `purpose` and `tag` surviving verbatim. No
+server change. The pre-3.10.0 in-band form is still *accepted* so a 3.8/3.9
+peer can complete a pairing, and never sent.
+
+**The verification fetch now pages forward.** Without a cursor it only ever saw
+the first page, so an inbox already holding 200 pending messages hid the peer's
+tag and the pairing timed out — meaning anyone able to send mail could cheaply
+deny an authenticated pairing. Fail-safe, but free to fix.
+
+**`api/v2/identities_put` was missing from the rate limiter's IP-only list.**
+`PUT /api/v2/identities` shares its path with unauthenticated registration, so
+filters — which match by path, not method — cannot cover it, which is exactly
+the class that list exists for. Measured live: three requests with fresh junk
+bearer tokens each reported **29 remaining**, so the 30/hour limit did not
+exist for anyone presenting a random token.
+
+The row is a one-line fix; the auditor's better point was that
+`IP_ONLY_BUCKETS` and the auth filter list are two hand-maintained lists in
+different files that must agree, with nothing tying them together. **`php spark
+filters:check`** now asserts every bucket whose path is not auth-covered
+appears in the IP-only list. It failed on exactly that one bucket and nothing
+else, and it runs in `tests/run_all.sh`.
+
+### Found while fixing the above: undecryptable mail was invisible and unclearable
+
+`fetch()` silently skipped any message that failed to decrypt. Two
+consequences, the second serious:
+
+- `count` disagreed with `len(messages)` for no visible reason.
+- **The client never saw an id to acknowledge**, so those messages persisted
+  forever and counted against `MAX_PENDING_MESSAGES`.
+
+Any registered identity can encrypt to the wrong key. Repeat to the
+2000-message ceiling and every legitimate sender gets `507` while the recipient
+has **no client-side way to clear it**. Demonstrated with three injections:
+server `count=3`, decryptable `0`, nothing the client could ACK.
+
+`Page.undecryptable` now carries those ids, with a one-time stderr warning.
+They are **surfaced, never auto-acknowledged** — a decryption failure can also
+mean the wrong identity file was loaded, and acknowledging deletes. Destroying
+mail to tidy a count is the one thing this store promises not to do, so the
+caller decides with `ack(page.undecryptable)`.
+
 ## Library 3.9.0 / MCP 1.10.0 — a verified pairing now pins
 
 Two wrinkles in the pairing secret, found by self-audit after the reflection
