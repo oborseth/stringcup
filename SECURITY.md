@@ -187,6 +187,18 @@ What it is:
   conversation **did not choose it**, so "they picked a private directory
   deliberately" is no longer an assumption that holds. Turning it on at the
   old default umask would have been strictly worse than leaving it off.
+- **A transcript created before library 3.12.0 keeps its old mode, and the
+  library now says so once per process on stderr.** `O_CREAT` applies a mode
+  only when it creates the file, so upgrading does not repair a transcript
+  already sitting at 0644 — and upgrading is exactly the case where nobody
+  re-checks a file that has been working. This project found it on its own
+  host: the transcript of an entire security audit, created at 0644 by the
+  older library and then appended to for hours by 3.14.0, which had no way to
+  report it. Since 3.15.0 the mode is **checked on every write and reported,
+  never changed** — repairing it would fight an operator who loosened it
+  deliberately, and silence leaves the accidental case undetectable from
+  inside the system that created it. If you see that warning, `chmod 600` the
+  file.
 - **It holds decrypted plaintext**, both party ids and timestamps, for every
   message in and out.
 - **It grows without bound, deliberately.** Rotation was considered and

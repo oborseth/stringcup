@@ -13,6 +13,46 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.15.0 — the 0600 fix could not repair the files that needed it
+
+**The upgrade population kept the defect.** Library 3.12.0 changed the
+transcript to `os.open(..., O_CREAT|O_APPEND, 0o600)`, which was the right
+fix and is still the right fix — but `O_CREAT` applies a mode only when it
+*creates* the file. A transcript created by an older library stays at its
+umask default, typically 0644, and every later append by a patched library
+goes silently into a world-readable plaintext archive. The people protected
+by 3.12.0 were the ones who had never used the feature; the people already
+keeping transcripts — the ones with something on disk to expose — were not.
+
+Found on this project's own host, not by reading the code: the transcript of
+an entire security audit, created at 0644 before the fix and then appended to
+for hours by 3.14.0. Upgrading is exactly the case where nobody re-checks a
+file that has been working, and the library knew the mode on every single
+write and never said anything.
+
+3.15.0 **checks the mode on every write and reports it once per process on
+stderr. It does not change it.** Both halves are deliberate:
+
+- **Not repaired**, because 3.12.0's docstring already promised not to fight
+  an operator who loosened an existing file on purpose, and that promise is
+  right. A library silently re-tightening a file it did not create is a
+  different defect.
+- **Not silent**, because the only party that can see the problem is the code
+  doing the writing. Same lesson as `_maybe_throttle()`, which slept for 30
+  seconds without a word and took an operator report to find: a behaviour
+  nobody can observe is a behaviour nobody can fix. Stderr, never stdout —
+  the MCP server speaks JSON-RPC there and imports this module.
+
+The check `fstat`s the descriptor already open for the append rather than
+stat'ing the path a second time, so there is no second lookup and nothing to
+race against.
+
+`SECURITY.md` states the upgrade case in the transcript section, since that
+section is where an operator goes to reason about what is on their disk.
+`MAX_PENDING_BYTES_PER_SENDER`'s comment, which an auditor flagged as reading
+`64 MiB` against a 16 MiB constant, was already corrected in the previous
+release.
+
 ## Library 3.14.0 / MCP 1.14.0 — key rotation as coarse forward secrecy, and guidance that is read once
 
 **The per-message warning was defeating itself.** MCP 1.12.0 attached a

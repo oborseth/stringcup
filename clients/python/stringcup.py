@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.14.0"
+__version__ = "3.15.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 14, 0)
+version_info = (3, 15, 0)
 
 __all__ = [
     "Client",
@@ -190,6 +190,8 @@ FEATURES = {
     "audited_refusals": (3, 13, 0),       # a refused send is recorded too
     # 3.14.0
     "key_rotation": (3, 14, 0),           # coarse forward secrecy by rotation
+    # 3.15.0
+    "transcript_mode_warning": (3, 15, 0),  # a loose transcript mode is reported
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1099,6 +1101,9 @@ class Client:
 
     #: Warn at most once per process about undecryptable mail piling up.
     _warned_undecryptable = False
+
+    #: Warn at most once per process that the transcript is readable by others.
+    _warned_transcript_mode = False
 
 
     def __init__(
@@ -2824,6 +2829,23 @@ class Client:
         `O_CREAT` with a mode applies only on creation, so this sets the mode
         for a new file and does not fight an operator who deliberately
         loosened an existing one.
+
+        **That is also the hole, and it is the upgrade population.** A
+        transcript created by a pre-3.12.0 library keeps its 0644 forever: the
+        fix cannot repair a file it did not create, and every later append is
+        silently made to a world-readable plaintext archive. Found on this
+        project's own box — a transcript of an entire security audit, created
+        at 0644 by the older library and then appended to for hours by 3.14.0,
+        which had no way to say so. Upgrading is exactly the case where nobody
+        re-checks a file that has been working.
+
+        So the mode is **checked on every write and reported once per process
+        on stderr**, and still not changed. Repairing it would fight the
+        deliberate case; staying silent leaves the accidental one undetectable
+        from inside the system that created it. Same lesson as
+        `_maybe_throttle()`: a silent behaviour took an operator report to
+        find, so it writes to stderr now. **Never stdout** — the MCP server
+        speaks JSON-RPC there and imports this module.
         """
         if not self.transcript:
             return
@@ -2847,6 +2869,21 @@ class Client:
                 os.O_WRONLY | os.O_CREAT | os.O_APPEND,
                 0o600,
             )
+            if not Client._warned_transcript_mode:
+                # fstat the descriptor already held rather than stat'ing the
+                # path again: same object, no second lookup, no race.
+                mode = os.fstat(fd).st_mode & 0o777
+                if mode & 0o077:
+                    Client._warned_transcript_mode = True
+                    sys.stderr.write(
+                        "stringcup: transcript %s is mode %o — readable by "
+                        "other local users. It holds every message in "
+                        "plaintext, both party ids and timestamps. Files "
+                        "created before library 3.12.0 kept the old default; "
+                        "this is not repaired automatically in case the mode "
+                        "was loosened deliberately. Fix with: chmod 600 %s\n"
+                        % (self.transcript, mode, self.transcript)
+                    )
             with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:

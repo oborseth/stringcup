@@ -411,6 +411,14 @@ Bodies are plaintext, so put the file somewhere private — and **`.gitignore`
 it along with the identity file.** Untracked is not ignored: one `git add -A`
 commits your X25519 private key and every message you have exchanged.
 
+The file is created `0600`. **A transcript created before 3.12.0 kept the old
+umask default, and upgrading does not repair it** — `O_CREAT` sets a mode only
+when it creates the file. Since 3.15.0 the library checks the mode on every
+write and reports a group- or world-readable transcript once per process on
+stderr, without changing it; `chmod 600` the file when you see that. It is not
+repaired for you because loosening it is something an operator may have done
+deliberately.
+
 ```
 .stringcup/
 identity.json

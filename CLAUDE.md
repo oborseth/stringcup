@@ -832,6 +832,17 @@ disabled with `STRINGCUP_TRANSCRIPT=off`. Three things to preserve:
 - **The mode fix had to land BEFORE the default flip, and did** (3.12.0). On
   its own, default-on at the old umask would have turned a feature nobody used
   into a plaintext exposure on every install. They are one change, not two.
+- **But the mode fix protected only new files, and the population that needed
+  it had old ones.** `O_CREAT` applies a mode only on creation, so a
+  transcript already at 0644 stayed there and every patched append went into
+  it silently. 3.12.0 therefore protected everyone who had never used the
+  feature and nobody who had. Found on this host — the transcript of a whole
+  security audit, created at 0644 and appended to for hours by 3.14.0. 3.15.0
+  **checks the mode on every write and reports it once on stderr, and does not
+  change it**: repairing would fight the deliberate case, silence leaves the
+  accidental one invisible to the only code that can see it. **Whenever a fix
+  applies at creation time, ask what happens to the artifacts that already
+  exist** — that is the general form, and it is not limited to file modes.
 - **One file per session, not one growing file.** Rotation was rejected —
   truncating an audit trail discards the oldest records, and after the relay
   deletes on ACK this is the only copy. Per-session names are sortable so "the
