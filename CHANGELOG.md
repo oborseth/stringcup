@@ -13,6 +13,73 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.20.0 — the relay was never blind to channel names, and the docs said it was
+
+An auditor set out to write the fourth PROTOCOL.md B.6 property — *"the relay
+is blind"* — and reported that **it cannot honestly pass**, for a reason that
+is not a bug but a contradiction in a decision already made and already
+documented.
+
+`GET /api/v2/topics/{name}` puts the channel name **in the URL path**, and a
+roster read precedes every broadcast. Meanwhile the comment on
+`CHANNEL_LABEL_RE` justified keeping the label inside the ciphertext on the
+grounds that a header field would "hand the relay a labelled social graph and
+break the deliberate non-enumerability of the topic namespace". Both cannot be
+true. Measured on the reference host: **403 roster reads, 32 of them naming a
+real deployment's channel** — the same channel this project's own docs cite,
+named after a company, a function and a date, as the reason the name is
+sensitive.
+
+**And the URL was worse than the header would have been, in one specific way.**
+A header lives in a row an ACK deletes. A request line is logged by **every
+access log format that exists, including the deliberately body-free one this
+project switched to after the body-logging incident** — and that log rotates
+on its own schedule and outlives the ACK. The sensitive value kept out of the
+header was sitting in the access log of every roster read.
+
+Two changes, and neither pretends to be more than it is:
+
+- **The rationale is restated accurately**, in `stringcup.py`, `CLAUDE.md` and
+  `SECURITY.md`. The relay sees channel names, necessarily. Keeping the label
+  out of the header still buys two real things — no per-message retention in a
+  stored column, and no (sender, recipient, channel) association at rest — and
+  it does **not** buy secrecy of the name from the relay. The old wording must
+  not come back.
+- **nginx redacts the topic segment.** `log_format stringcup` now logs
+  `$stringcup_logged_uri`, a `map` rewriting `/api/v2/topics/<name>` to
+  `/api/v2/topics/<redacted>` while leaving query strings intact, since
+  `limit`, `since_id` and `wait` carry nothing. Verified live. That removes
+  the retention, not the relay's knowledge.
+
+Hiding the name from the relay at all needs **opaque topic ids with the human
+name kept client-side** — the same move as server-assigned `external_id`s, and
+a v3 change. Not implemented, and now recorded as a named gap rather than as a
+protection that was being claimed.
+
+**The general rule, which is the fourth instance of it:** where a doc explains
+a design choice, check that the rest of the API does not contradict the
+rationale. Same species as `SECURITY.md` naming token hashes beside the
+ciphertext, the constant commented 64 MiB at 16, and the 507 tile saying "per
+recipient".
+
+### Also: the transcript may be a symlink
+
+The only remaining write without `O_EXCL` is the transcript append, and it
+cannot have one — appending to an existing file is the point. `O_NOFOLLOW` was
+considered and **rejected**: symlinking a log to a volume is ordinary
+practice, and refusing it would break a legitimate setup for a marginal gain.
+The auditor agreed and sharpened why the risk differs in kind from the `.tmp`
+case: there, a symlink *escalates*, moving a private key somewhere the
+attacker could not otherwise read; here, anyone able to pre-place the path can
+already read the transcript once it exists.
+
+The exception is a link pointing **outside** the state directory — a shared
+mount, a synced folder, a web root — where plaintext lands somewhere the
+directory's permissions never governed. So: **warn, naming the target, once
+per process.** The hook was already there, since the mode check already
+`fstat`s the descriptor. An operator who did it deliberately gets one
+confirming line; one who did not learns their plaintext is being redirected.
+
 ## Library 3.19.0 — a predictable temp path could capture the private key
 
 **Rank 1, and the highest-severity defect found since the world-readable

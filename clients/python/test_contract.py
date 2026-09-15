@@ -133,6 +133,7 @@ EXPECTED_FEATURES = {
     "private_dir_parents": (3, 18, 0),
     "exclusive_atomic_writes": (3, 19, 0),
     "bounded_dir_report": (3, 19, 0),
+    "transcript_symlink_warning": (3, 20, 0),
 }
 
 

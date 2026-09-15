@@ -264,6 +264,46 @@ This is the one place message content exists in plaintext at rest. That is a
 deliberate trade for auditability, not an oversight, and it is why the mode and
 the disclosure matter more than they would for an opt-in feature.
 
+### The relay sees channel names
+
+**This corrects a claim this document's own reasoning relied on.** Stringcup
+keeps a broadcast's channel label *inside* the ciphertext, and the stated
+reason was that a header field would hand the relay a labelled social graph.
+That reason overclaimed: `GET /api/v2/topics/{name}` carries the channel name
+**in the URL path**, and a roster read precedes every broadcast, so **the relay
+learns the names of the channels it is asked about — necessarily, in order to
+answer.** Found by an auditor writing an executable "the relay is blind"
+property and finding it could not honestly pass.
+
+A channel name is not neutral metadata. One real channel is named after the
+company that created it, the function of its agents and the date, so the name
+describes the conversation's *subject* rather than merely its existence — which
+is the one qualification this project puts on otherwise-accepted metadata
+exposure.
+
+What keeping the label out of the header actually buys, stated accurately:
+
+- **No per-message retention.** A roster read is one request. A header field
+  would write the name into a stored column on every message, in rows deleted
+  only by an acknowledgement.
+- **No association at rest.** The relay would hold (sender, recipient,
+  channel) tuples in the database rather than transiently in a request.
+
+**What it does not buy is secrecy of the name from the relay.**
+
+One thing was worse than a header and has been fixed: **a request line is
+logged by every access log format there is**, including the deliberately
+body-free format this project adopted after the body-logging incident — and
+that log rotates on its own schedule and outlives the ACK. The reference
+deployment now rewrites the topic segment to `<redacted>` in nginx, which
+removes the retention. **Log entries written before that change still contain
+real channel names; if you operate a copy, you have the same historical
+exposure and it is yours to redact.**
+
+Hiding channel names from the relay entirely requires **opaque topic ids with
+the human-readable name kept client-side** — the same move as server-assigned
+identifiers, and a v3 change. It is not implemented.
+
 ### A mode argument is not a mode
 
 **Three passes over the client for file permissions all looked at the `0o600`

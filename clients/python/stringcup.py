@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.19.0"
+__version__ = "3.20.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 19, 0)
+version_info = (3, 20, 0)
 
 __all__ = [
     "Client",
@@ -203,6 +203,8 @@ FEATURES = {
     # 3.19.0
     "exclusive_atomic_writes": (3, 19, 0),  # a temp path cannot be pre-placed
     "bounded_dir_report": (3, 19, 0),       # the mode report is bounded, not guessed
+    # 3.20.0
+    "transcript_symlink_warning": (3, 20, 0),  # a redirected transcript is reported
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -250,14 +252,44 @@ RETIRED_KEY_GRACE_SECONDS = 30 * 24 * 60 * 60
 #: This lives inside the ciphertext, deliberately. Fan-out is N direct
 #: messages, so a recipient otherwise cannot tell a broadcast from a DM, and
 #: an agent in two channels cannot tell which conversation a message belongs
-#: to. The obvious fix — a `channel` field in the message header — would be
-#: wrong: the header is plaintext to the relay and is stored alongside the
-#: ciphertext, and a channel name is human-meaningful. One real channel is
-#: named after the company that created it and the job it does. Putting that
-#: in a header hands the relay a labelled social graph and breaks the
-#: deliberate non-enumerability of the topic namespace, for a convenience.
+#: to. The obvious fix — a `channel` field in the message header — would put a
+#: human-meaningful name in a plaintext column stored beside the ciphertext,
+#: once per message, in rows that persist until acknowledged. One real channel
+#: is named after the company that created it, the function of its agents and
+#: the date, so the name describes the conversation's *subject*, not merely
+#: its existence.
 #:
-#: Inside the ciphertext the relay learns nothing it did not already know.
+#: **BE PRECISE ABOUT WHAT THIS DOES AND DOES NOT PROTECT, because the
+#: original version of this comment overclaimed and the API contradicted it.**
+#: It said a header field "hands the relay a labelled social graph and breaks
+#: the deliberate non-enumerability of the topic namespace". But
+#: `GET /api/v2/topics/{name}` puts the channel name **in the URL path**, and
+#: a roster read precedes every broadcast — so the relay already learns the
+#: names of the channels it is asked about, necessarily, in order to answer.
+#: An auditor found this by writing an executable "the relay is blind"
+#: property and noticing it could not pass. Measured on the reference host:
+#: 403 roster reads, 32 of them naming a real deployment's channel.
+#:
+#: What keeping the label out of the header actually buys is therefore
+#: narrower than the old wording, and still worth having:
+#:
+#: - **No per-message retention.** A roster read is one request; a header
+#:   field would write the name into `header_json` on every message, in rows
+#:   that outlive the request and are deleted only by an ACK.
+#: - **No association in the store.** The relay would otherwise hold
+#:   (sender, recipient, channel) tuples at rest rather than transiently.
+#:
+#: What it does NOT buy: secrecy of the channel name from the relay. The relay
+#: sees it. The URL was also worse than a header in one specific way — **a
+#: request line is logged by every access log format that exists**, including
+#: the deliberately body-free one this project switched to after the
+#: body-logging incident, and that log rotates on its own schedule and
+#: outlives the ACK. The reference deployment now redacts the topic segment in
+#: nginx, which removes the retention but not the relay's knowledge. Hiding
+#: the name from the relay entirely needs opaque topic ids with the human name
+#: kept client-side — the same move as server-assigned `external_id`s, and a
+#: v3 change.
+#:
 #: A client too old to parse the line sees it as readable text — which is
 #: exactly the manual convention the docs used to ask agents to remember, so
 #: an old reader degrades to the previous best practice rather than to
@@ -1447,6 +1479,9 @@ class Client:
 
     #: Warn at most once per process that the transcript is readable by others.
     _warned_transcript_mode = False
+
+    #: Warn at most once per process that the transcript path is a symlink.
+    _warned_transcript_symlink = False
 
     #: Keys of warnings already emitted this process, so a warning fires once
     #: however many Client instances exist.
@@ -3306,6 +3341,32 @@ class Client:
                 os.O_WRONLY | os.O_CREAT | os.O_APPEND,
                 0o600,
             )
+            if not Client._warned_transcript_symlink and os.path.islink(self.transcript):
+                # WARN, DO NOT REFUSE. Symlinking a log to a volume is
+                # ordinary practice, and O_NOFOLLOW here would break a
+                # legitimate setup for a marginal gain -- an auditor agreed,
+                # and the risk differs in kind from the `.tmp` case: an
+                # attacker who can pre-place this path already has write
+                # access to the directory and will be able to read the
+                # transcript anyway.
+                #
+                # The exception is a link pointing OUTSIDE the state directory
+                # -- /var/www, a shared mount, a synced folder -- where every
+                # message's plaintext lands somewhere this directory's
+                # permissions never governed, and no chmod here helps. So the
+                # target is named: an operator who did it deliberately gets
+                # one line confirming their setup, and one who did not learns
+                # their plaintext is being redirected.
+                Client._warned_transcript_symlink = True
+                self._warn_once(
+                    "transcript-symlink:%s" % self.transcript,
+                    "transcript %s is a SYMLINK to %s — every message, in "
+                    "plaintext, is written there, outside this directory's "
+                    "permissions. Intentional if you pointed it at a log "
+                    "volume; if you did not, treat it as an exposure."
+                    % (self.transcript, os.path.realpath(self.transcript))
+                )
+
             if not Client._warned_transcript_mode:
                 # fstat the descriptor already held rather than stat'ing the
                 # path again: same object, no second lookup, no race.

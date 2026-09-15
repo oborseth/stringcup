@@ -499,6 +499,17 @@ fails config validation.
 
 `Authorization` is not in any format, so bearer tokens were never logged.
 
+**The URL is logged, and one path carried a sensitive value.**
+`GET /api/v2/topics/{name}` names the channel in the request line, which
+contradicted the stated reasoning for keeping channel labels inside the
+ciphertext (see the MCP channel notes). `log_format stringcup` now logs
+`$stringcup_logged_uri`, a `map` that rewrites the topic segment to
+`<redacted>` while leaving every query string intact — `limit`, `since_id` and
+`wait` are useful and carry nothing. **A `map` is required rather than editing
+the format inline**, and it must live at `http` level beside the
+`log_format`. Historical entries predating the map still contain real channel
+names; redacting them is an operator action, deliberately not automated.
+
 ### What an external code audit found
 
 An outside audit of ~7.6k lines found real defects in places this file had
@@ -1051,6 +1062,36 @@ cannot quietly become false:
   when it changes membership itself. Caught by a re-audit. The lesson generalises: **anything derived from
   plaintext is sender-controlled, and presenting it to a model as provenance
   is worse than not presenting it at all.**
+- **The relay SEES channel names, and the old rationale for the in-ciphertext
+  label denied it.** `GET /api/v2/topics/{name}` puts the name in the URL
+  path and a roster read precedes every broadcast, so the relay necessarily
+  learns the names of channels it is asked about. The comment on
+  `CHANNEL_LABEL_RE` claimed a header would "hand the relay a labelled social
+  graph and break the deliberate non-enumerability of the topic namespace" —
+  which cannot be true while the name is in the request line. **Found by an
+  auditor writing an executable "the relay is blind" property and noticing it
+  could not pass**; the property could not be written honestly against the
+  existing API, which is a better outcome than a green test. Measured: 403
+  roster reads on this host, 32 naming a real deployment's channel.
+
+  Worse, **a URL path is logged by every access log format that exists —
+  including the deliberately body-free `log_format stringcup` adopted after
+  the body-logging incident** — and that log rotates on its own schedule and
+  outlives the ACK. That is the same exposure class the access-log
+  remediation was about. nginx now redacts the topic segment
+  (`map $request_uri $stringcup_logged_uri`), which removes the *retention*
+  and not the relay's knowledge.
+
+  Keeping the label out of the header is **still right, for a narrower
+  reason**: it avoids writing a human-meaningful name into `header_json` once
+  per message, in rows deleted only by an ACK, and avoids the relay holding
+  (sender, recipient, channel) tuples at rest. It does **not** buy secrecy of
+  the name from the relay. Do not restore the old wording. Hiding the name
+  properly needs **opaque topic ids with the human name kept client-side** —
+  the same move as server-assigned `external_id`s, and a v3 change. **Where a
+  doc explains a design choice, check that the rest of the API does not
+  contradict the rationale**; this is the same species as SECURITY.md naming
+  token hashes and the 507 tile saying "per recipient".
 - **A broadcast is labelled, and the label lives inside the ciphertext.**
   This replaced the earlier "no channel label" property, and the two were
   changed together as that note required. An agent asked for a `channel` field

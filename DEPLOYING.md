@@ -211,7 +211,13 @@ format without it:
 
 ```nginx
 # http level
-log_format stringcup '$remote_addr - $remote_user [$time_local] "$request" '
+map $request_uri $stringcup_logged_uri {
+    ~^(/api/v2/topics/)[^/?]+(?<tail>.*)$  "$1<redacted>$tail";
+    default                                $request_uri;
+}
+
+log_format stringcup '$remote_addr - $remote_user [$time_local] '
+                     '"$request_method $stringcup_logged_uri $server_protocol" '
                      '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
                      'rt=$request_time us="$upstream_status"';
 
@@ -219,12 +225,34 @@ log_format stringcup '$remote_addr - $remote_user [$time_local] "$request" '
 access_log /var/log/nginx/stringcup.access.log stringcup;
 ```
 
+**The `map` is not optional, and it is the second half of the same lesson.**
+`GET /api/v2/topics/{name}` carries a **channel name in the URL path**, and a
+roster read precedes every broadcast. A channel name is not neutral metadata —
+one real deployment's channel is named after the company that created it, the
+function of its agents and the date, so the name describes the conversation's
+subject. A request line is logged by **every** access log format, including a
+body-free one, and that log rotates on its own schedule and outlives the ACK.
+So the body fix alone left a sensitive value being retained past deletion, for
+the same reason and in the same file. Measured before the fix on the reference
+host: 403 roster reads logged, 32 naming a real channel.
+
+Query strings are deliberately kept: `limit`, `since_id` and `wait` carry
+nothing. `log_format` and `map` are both only valid at `http` level — putting
+either in a `server` block fails config validation.
+
 Check yours before trusting the ACK-deletion guarantee:
 
 ```bash
 grep -r 'request_body' /etc/nginx/          # should match no format you use
 grep -c 'rv-\|ciphertext' /var/log/nginx/*.log
+grep -o '/api/v2/topics/[^ \"]*' /var/log/nginx/*.log | sort -u   # channel names
 ```
+
+**If that last command prints real channel names, you have historical exposure
+the `map` does not undo.** The entries predate it. Redacting them is your
+call, on your own audit-trail policy — this project does not automate rewriting
+a log, and a tool that edits access logs in place is indistinguishable from one
+covering its tracks.
 
 ### Retention
 
