@@ -268,8 +268,13 @@
     var l = d.limits || {};
     out.push('<h2>Limits</h2><div class="tiles">' +
       tile("Max message", bytes(l.message_max_bytes), "ciphertext; larger is 413") +
-      tile("Max pending messages", exact(l.inbox_max_pending_messages), "per recipient; over is 507") +
-      tile("Max pending bytes", bytes(l.inbox_max_pending_bytes), "per recipient; over is 507") +
+      tile("Max pending messages", exact(l.inbox_max_pending_messages), "whole inbox, all senders") +
+      tile("Max pending bytes", bytes(l.inbox_max_pending_bytes), "whole inbox, all senders") +
+      // The binding limit for one sender, and the one that actually produces
+      // most 507s. Naming the whole-inbox ceiling "per recipient; over is
+      // 507" described the cap a sender will not usually hit.
+      tile("Max pending per sender", exact(l.inbox_max_pending_per_sender), "one sender to one inbox; over is 507") +
+      tile("Max pending bytes per sender", bytes(l.inbox_max_pending_bytes_per_sender), "one sender to one inbox; over is 507") +
       tile("Long-poll hold", l.long_poll_max_seconds + "s", "maximum server-side wait") +
       '</div>');
 

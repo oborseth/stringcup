@@ -248,6 +248,15 @@ class StatsController extends BaseController
             'inbox_max_pending_bytes'    => MessageController::MAX_PENDING_BYTES,
             'long_poll_max_seconds'      => MessageController::MAX_WAIT,
             'inbox_page_max'             => MessageController::MAX_LIMIT,
+            // THE BINDING LIMIT FOR ANY ACTUAL SENDER, and therefore the one
+            // a client sizing its behaviour needs most. These were missing
+            // for a release: this endpoint published 2000 / 64 MiB while a
+            // sender was refused at 200 / 16 MiB, so the figures a client was
+            // told to plan against were 10x and 4x higher than anything it
+            // could reach. `FiltersCheck`-style enforcement now lives in
+            // `tests/v2_limits_published_test.php`.
+            'inbox_max_pending_per_sender'       => MessageController::MAX_PENDING_PER_SENDER,
+            'inbox_max_pending_bytes_per_sender' => MessageController::MAX_PENDING_BYTES_PER_SENDER,
         ];
     }
 

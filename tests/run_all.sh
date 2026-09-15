@@ -70,6 +70,22 @@ else
   failed=1
 fi
 
+# limits:check asserts every limit the server ENFORCES is also PUBLISHED by
+# the surfaces clients plan against. The per-sender quota shipped without
+# touching StatsController, so the dashboard endpoint advertised 2000 and 64
+# MiB while senders were refused at 200 and 16 MiB -- figures no client could
+# ever reach, on an endpoint whose documented purpose is capacity planning.
+echo
+echo "############################################################"
+echo "# limits:check"
+echo "############################################################"
+if (cd "$ROOT" && php spark limits:check); then
+  results+=("PASS  limits:check")
+else
+  results+=("FAIL  limits:check")
+  failed=1
+fi
+
 # no network, then a live two-process conversation that registers two
 # identities like any other suite.
 PY="$(command -v python3 || true)"

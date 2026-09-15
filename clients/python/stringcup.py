@@ -984,11 +984,17 @@ class Page:
     #: unacknowledgeable: the client never saw an id to ACK, so they persisted
     #: forever and counted against `MAX_PENDING_MESSAGES`.
     #:
-    #: **That is reachable by any registered identity.** Encrypt to the wrong
-    #: key and the recipient cannot read or remove the message; repeat it to
-    #: the 2000-message ceiling and every legitimate sender gets `507` while
-    #: the recipient has no client-side way to clear the backlog. Demonstrated
-    #: with three injections: server `count=3`, decryptable `0`.
+    #: **That was reachable by any registered identity.** Encrypt to the wrong
+    #: key and the recipient cannot read or remove the message; repeat it and
+    #: every legitimate sender got `507` while the recipient had no
+    #: client-side way to clear the backlog. Demonstrated with three
+    #: injections: server `count=3`, decryptable `0`.
+    #:
+    #: **The amplification is fixed server-side** by the per-sender quota
+    #: (`MAX_PENDING_PER_SENDER` = 200, `MAX_PENDING_BYTES_PER_SENDER` = 16
+    #: MiB): one sender fills only its own share, and other senders are
+    #: explicitly unaffected — which was the entire point. Undecryptable mail
+    #: still cannot be cleared without an explicit `ack`, so the field stays.
     #:
     #: They are **surfaced, never auto-acknowledged.** A decryption failure can
     #: also mean a transient local problem -- the wrong identity file loaded,

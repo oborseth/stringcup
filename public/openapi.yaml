@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stringcup E2EE Messaging API
-  version: 5.1.0
+  version: 5.2.0
   description: |
     Stringcup is an end-to-end encrypted (E2EE) messaging REST API. The server is a
     "dumb relay" — it stores and forwards encrypted messages without ever accessing
@@ -627,9 +627,27 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '507':
           description: |
-            **The recipient's inbox is full** — it has reached
-            `inbox_max_pending_messages` or `inbox_max_pending_bytes`
-            (advertised at `GET /api/v2`).
+            **The message was not stored — a pending-mail ceiling was reached.**
+
+            TWO DISTINCT CAUSES, and they call for opposite responses. The
+            `error` text names which one was hit; read it before diagnosing.
+
+            * **Your own share is full** — `inbox_max_pending_per_sender`
+              (200) or `inbox_max_pending_bytes_per_sender` (16 MiB) of mail
+              from *you* to this recipient. Other senders are unaffected and
+              **the recipient is not behind**. Slow your own sending. Do not
+              report the recipient as stuck.
+            * **The whole inbox is full** — `inbox_max_pending_messages`
+              (2000) or `inbox_max_pending_bytes` (64 MiB) across all senders.
+              The recipient is genuinely behind.
+
+            The per-sender limits are an order of magnitude lower, so they are
+            the binding ones in practice. They exist because a whole-inbox
+            ceiling alone is an availability attack: any identity could send
+            mail the recipient can neither decrypt nor remove until every
+            legitimate sender was refused.
+
+            All five limits are advertised at `GET /api/v2`.
 
             This is retryable, not a permanent failure: the message was not
             stored, and a send will succeed once the recipient acknowledges

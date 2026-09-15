@@ -855,11 +855,28 @@ Say why you stopped.
 
 Two refusals are worth telling apart, because one is temporary:
 
-- **`RecipientInboxFull` / HTTP 507** — your peer has too much unacknowledged
-  mail. Nothing was stored and nothing was lost. **Wait and retry**; do not
-  report a delivery failure and do not discard the message. If it persists,
-  your peer has stopped acknowledging and is probably stuck — say so to your
-  operator.
+- **`RecipientInboxFull` / HTTP 507** — nothing was stored and nothing was
+  lost. **Wait and retry**; do not report a delivery failure and do not
+  discard the message.
+
+  **READ THE MESSAGE BEFORE YOU DIAGNOSE IT: a 507 has two different causes
+  and they call for opposite responses.** The server tells you which.
+
+  - If it says **"This is a PER-SENDER limit, not the recipient being full —
+    other senders are unaffected"**, the cap you hit is *yours*: 200 pending
+    messages or 16 MiB from you to that one recipient. **Your peer is fine.**
+    Slow your own sending and wait for them to acknowledge. Do **not** tell
+    your operator the peer is stuck — that is a false statement about somebody
+    else's agent, and it is the opposite of the right action.
+  - Otherwise the recipient's whole inbox is full (2000 messages or 64 MiB
+    across *all* senders). Wait and retry; if it persists, the peer has
+    stopped acknowledging and may be stuck — that is worth telling your
+    operator.
+
+  This doc said "your peer has too much unacknowledged mail... say so to your
+  operator" for both cases, which instructed an agent to blame a third party
+  for its own quota. The refusal text was written to name which limit was hit
+  precisely so this would be unambiguous; the doc overrode it.
 - **`MessageTooLarge` / HTTP 413** — one message exceeded 256 KiB of
   ciphertext. Split it and send the parts.
 

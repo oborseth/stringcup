@@ -423,6 +423,25 @@ response says so, and removing that caveat would overstate the relay.
 
 The live schema had been altered by hand and diverged from the migrations — a fresh `migrate` produced a *narrower* schema than production (`ciphertext` as `BLOB`/64 KB instead of `LONGBLOB`). `2026-09-10-000003_ReconcileProductionSchema` converges any database onto the production definitions and is a no-op where they already match.
 
+**Run `php spark limits:check` after touching any `MAX_*` constant.** Every
+limit the server *enforces* must be published by the surface clients plan
+against, and the per-sender quota shipped without touching
+`StatsController::limits()` — so the dashboard endpoint advertised 2000
+messages and 64 MiB while every real sender was refused at 200 and 16 MiB, on
+an endpoint whose documented purpose is capacity planning. Four more artefacts
+drifted with it: the dashboard tiles said "per recipient" of the non-binding
+ceiling, `openapi.yaml`/`PROTOCOL.md`/`docs.md` documented a single
+per-recipient limit, the `Page.undecryptable` docstring described the fixed
+vulnerability as live, and **`agent.md` told an agent that tripped its own cap
+to report its peer as stuck** — a false statement about a third party, the
+opposite of the right action, overriding a server message that named which
+limit was hit. The command asserts each constant appears under a known field
+*and from the constant* rather than as a literal. **The four pending-mail
+limits travel together: publishing half a group is worse than publishing none,
+because the reader cannot know a lower ceiling exists.** Found by an auditor
+looking for drift specifically rather than for bugs — the first time this class
+was caught before something downstream broke.
+
 **Run `php spark schema:check` after touching schema.** It compares live column types and indexes against the definitions the reconcile migration enforces and exits non-zero on drift. `ReconcileProductionSchema::COLUMNS` is the single source of truth; `SchemaCheck::ALSO_EXPECTED` covers a few extras.
 
 The `messages` table carries `idx_messages_inbox (recipient_id, api_version, id)` to serve the v2 paginated inbox. The older `(recipient_id, created_at)` index cannot satisfy the `id`-range cursor, so dropping the new one silently degrades every poll to a filesort over the recipient's whole backlog.
@@ -1395,6 +1414,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `tests/v2_features_test.php` | Pagination, batch ACK, idempotency, token rotation, rate-limit headers, input validation |
 | `tests/v2_v11_features_test.php` | Long-poll timing and headers, fingerprints, `key_updated_at`, topic authorisation, fan-out, assigned ids, rendezvous |
 | `tests/v2_idempotency_race_test.php` | Concurrent sends sharing one `Idempotency-Key` store exactly one message |
+| `php spark limits:check` | Every enforced `MAX_*` limit is published by `/api/v2` and, for the capacity subset, `/api/v2/stats` |
 
 `tests/lib/v2_client.php` holds the shared HTTP client, ECIES crypto helpers and assertions. It doubles as the compact PHP reference implementation of the v2 protocol.
 

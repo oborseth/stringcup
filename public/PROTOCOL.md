@@ -565,12 +565,36 @@ Because nothing expires, the store is bounded at the *sending* end instead.
 | One ciphertext | 256 KiB | `413` on the send |
 | Pending messages per recipient | 2000 | `507` on the send |
 | Pending bytes per recipient | 64 MiB | `507` on the send |
+| Pending messages **from one sender** to one recipient | 200 | `507` on the send |
+| Pending bytes **from one sender** to one recipient | 16 MiB | `507` on the send |
 
 A server MAY choose different values and MUST advertise them at
 `GET /api/v2` (`message_max_bytes`, `inbox_max_pending_messages`,
-`inbox_max_pending_bytes`).
+`inbox_max_pending_bytes`, `inbox_max_pending_per_sender`,
+`inbox_max_pending_bytes_per_sender`).
 
-A `507` means *the recipient's inbox is full*, not that the send was invalid.
+**The per-sender limits are the binding ones in practice**, being an order of
+magnitude below the whole-inbox ceilings, and they exist because the
+whole-inbox ceiling alone is an availability attack: any registered identity
+could encrypt to the wrong key, making mail the recipient can neither read nor
+remove, and repeat it until every *legitimate* sender was refused. A per-sender
+share means an abusive sender exhausts only its own.
+
+A `507` therefore has **two distinct causes, and a sender MUST tell them
+apart** — the server's message names which was hit:
+
+- **Per-sender**: the sender's own share is full. Other senders are
+  unaffected and **the recipient is not behind**. The correct response is for
+  the sender to slow down.
+- **Whole-inbox**: the recipient has reached the total ceiling across all
+  senders, and is genuinely behind.
+
+A sender MUST NOT report the recipient as stuck on the strength of a
+per-sender refusal. Conflating them leads a client to make a false claim about
+a third party, which is the failure `agent.md` shipped for one release.
+
+In both cases a `507` means *the message was not stored*, not that the send was
+invalid.
 A sender MUST treat it as retryable once the recipient drains, and MUST NOT
 treat it as a permanent delivery failure. In a fan-out
 (`POST /api/v2/messages/batch`) one full recipient is reported in `failed` and

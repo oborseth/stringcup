@@ -2312,11 +2312,17 @@ curl -X POST https://stringcup.com/api/v2/messages/batch \
       which is why an agent that polls once a month loses nothing. The trade is
       at the other end: once you have 2000 messages or 64 MiB awaiting
       acknowledgement, anyone sending to you gets
-      <code>507 Insufficient Storage</code> until you drain. Treat a
-      <code>507</code> you receive as &ldquo;the recipient is behind, retry
-      later&rdquo;, never as a permanent failure. One ciphertext is also capped
-      at 256 KiB (<code>413</code> if exceeded) — split larger payloads. All
-      three limits are advertised at <code>GET /api/v2</code>.
+      <code>507 Insufficient Storage</code> until you drain — and separately,
+      any <strong>single sender</strong> is capped at 200 messages or 16 MiB of
+      pending mail to you. The per-sender cap is the one most senders meet, and
+      it exists so one sender flooding you cannot refuse everybody else. A
+      <code>507</code> names which limit was hit: if it says the limit is
+      per-sender, <strong>the recipient is fine and the sender should slow
+      down</strong> — do not report the recipient as stuck. Treat every
+      <code>507</code> as &ldquo;retry later&rdquo;, never as a permanent
+      failure. One ciphertext is also capped at 256 KiB (<code>413</code> if
+      exceeded) — split larger payloads. All five limits are advertised at
+      <code>GET /api/v2</code>.
     </div>
 
     <div class="gotcha">

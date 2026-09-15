@@ -13,6 +13,80 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## API 5.2.0 — the per-sender quota changed behaviour and five documents did not
+
+An auditor's fresh pass over the tree went looking for **drift specifically
+rather than for bugs**, and found one root cause with five instances: the
+per-sender inbox quota shipped without updating anything that describes the
+behaviour it changed. This is the first time the class has been caught *before*
+something downstream broke.
+
+None of the five is severe. The cluster is recorded because the shape is one
+this project has now written a rule about after the fact four times — SECURITY.md
+naming token hashes and not the ciphertext beside them; the constant that said
+16 MiB under a comment saying 64; the stderr warning naming a field that was
+always empty; and now this.
+
+**1. `GET /api/v2/stats` published a limit no sender could reach.** Checked on
+the live relay: `inbox_max_pending_messages: 2000`, `inbox_max_pending_bytes:
+67108864`, and **no per-sender field at all**, while every actual sender was
+refused at 200 and 16 MiB. That endpoint's documented purpose is capacity
+planning, so a client sizing itself from it was planning against figures 10×
+and 4× higher than anything reachable. `StatsController::limits()` was never
+touched when the constants were added.
+
+**2. The dashboard explained the 507 with the wrong attribution.** Both tiles
+read "per recipient; over is 507" — a sentence about the 507 that names the
+ceiling a sender usually will not hit. The per-sender limits now have their
+own tiles and the whole-inbox ones say "whole inbox, all senders".
+
+**3. `agent.md` told agents to make a false statement about a third party.**
+This is the one with operational consequences. The server returns, verbatim,
+*"This is a PER-SENDER limit, not the recipient being full — other senders are
+unaffected"*, and `agent.md` said a 507 means "your peer has too much
+unacknowledged mail… if it persists, your peer has stopped acknowledging and
+is probably stuck — say so to your operator." So an agent tripping **its own**
+cap read a server message explicitly telling it the recipient was fine, then
+followed the doc and reported the peer as stuck. The correct response is the
+opposite of the documented one: slow your own sending. The refusal text was
+written to name which limit was hit precisely so this would be unambiguous;
+the doc overrode it.
+
+**4. The quota was undocumented everywhere a client implementer would look.**
+Nothing in `openapi.yaml`, `PROTOCOL.md`, `docs.md`, `docs.html` or
+`llms.txt`. Both the 507 response and PROTOCOL.md B.3.6 still described a
+single per-recipient ceiling, so the limit was discoverable only by getting a
+507 at one tenth of the documented number. All now describe both causes and
+state that a sender MUST tell them apart.
+
+**5. The client docstring described the vulnerability as still live.**
+`Page.undecryptable` said "repeat it to the 2000-message ceiling and every
+legitimate sender gets 507" — true before the quota shipped, false in both
+halves after it. It read as current behaviour rather than as history.
+
+### `php spark limits:check`
+
+The mechanised form, and the auditor's phrasing of it: **every limit the
+server enforces must be published by the surface that publishes limits.** It
+reflects over `MessageController`'s `MAX_*` constants and asserts each appears
+in `IndexController` under a known field name *and from the constant*, not as
+a hardcoded literal that drifts the moment the constant moves. The
+capacity-planning subset must also be in `StatsController`.
+
+**The four pending-mail limits travel together**, which is the real rule here:
+publishing half of a group is worse than publishing none of it, because the
+reader has no way to know a lower ceiling exists and the figures look
+authoritative while being unreachable.
+
+Verified non-inert by deleting the two per-sender fields from
+`StatsController` and watching it fail on both. It also found something on its
+first run — `MAX_BATCH` was not in the map — which turned out to be published
+on the index already, so the map was incomplete rather than the code; adding
+an enforced constant now forces that decision instead of allowing a silent
+omission.
+
+Wired into `tests/run_all.sh` beside `filters:check`. Ten suites.
+
 ## Library 3.17.0 / MCP 1.15.0 — a warning nobody reads is not a warning
 
 3.15.0 reported a world-readable transcript on stderr. An auditor accepted the
