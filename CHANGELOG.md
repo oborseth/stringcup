@@ -13,6 +13,55 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Two of the retention sweeper's rules could never fire
+
+An auditor asked why 83 test topics were still on the relay, from **a count
+being larger than expected** rather than from reading the sweeper. Either the
+test identities were live principals in production, or the topic rules were not
+reclaiming what they appeared to. **Both were true, and one is a defect.**
+
+`topic memberships for a deleted identity` and `topics whose owner is gone`
+both key on the identity **row** being absent (`i.id IS NULL`). Identities are
+**deliberately never deleted** — that is a documented invariant three sections
+away in the same file — and only `db:prune` removes one, which `DEPLOYING.md`
+says must never be scheduled. So both rules were **structurally unreachable on
+any real relay**, and topics accumulated without limit.
+
+The `messages` rules have the identical dead form (`messages for a deleted
+identity`) *plus* a **reachability** rule beside it that does the actual work.
+The topic rules had no equivalent. That asymmetry is the whole defect, and it
+also answers the auditor's follow-up worry about the neighbouring message and
+token rules: those fire, because they key on token expiry rather than row
+deletion.
+
+`topics no member can reach any more` is the missing rule, with `memberships of
+a topic that is gone` after it. **Keyed on MEMBERS, not on the owner**: any
+member may read a roster and broadcast, so an owner going inactive does not
+make a channel dead, and reclaiming on that would destroy a live channel whose
+owner had merely stopped polling.
+
+**Nothing is reclaimable today, and that is the second half of the answer.**
+Every one of those topics still has a member holding a token inside
+`INACTIVITY_TTL_DAYS` + 7. They age out on their own; deleting them sooner is
+an operator decision, not housekeeping. `php spark topics:audit` now reports
+reclaimable versus still-held so that is checkable rather than asserted.
+
+### `topics:audit` prints the rule, not just a count
+
+The first version reported "83 recognisable test artefacts, 2 meaningful" from
+a regex on the name. The auditor rejected that as **a name-matching classifier
+deciding which rows are sensitive — structurally identical to the
+`_looks_owned` mistake** that silenced a user-owned 0755 directory for being
+called `tmp`, and erring the same way, towards reassurance: a production
+channel a human named `test-integration-eu` would be counted as disposable.
+
+So it prints the pattern, lists every matched name, and states the figure as a
+**bound** — a lower bound on what is disposable, an upper bound on what is safe
+to ignore — so a reader can disagree with the classifier rather than inherit
+it. It also corrects a number I had given the auditor: the set is **85 rows,
+not the 7 I claimed**, of which 2 are meaningful, and one of those is the
+channel this project's own comments cite as the worst case.
+
 ## API 5.3.0 / Library 3.21.0 / MCP 1.17.0 — the relay assigns channel ids
 
 `GET /api/v2/topics/{name}` carried a **human-meaningful channel name in the

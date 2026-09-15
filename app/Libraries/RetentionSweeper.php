@@ -182,6 +182,45 @@ class RetentionSweeper
                 'DELETE t FROM topics t
                   LEFT JOIN identities i ON i.id = t.owner_identity_id
                       WHERE i.id IS NULL',
+
+            // THE TWO RULES ABOVE CANNOT FIRE IN PRODUCTION, and that is why
+            // this one exists.
+            //
+            // Both key on the identity ROW being gone (`i.id IS NULL`), but
+            // identities are deliberately never deleted -- only `db:prune`
+            // removes one, and that is a one-off development command which
+            // DEPLOYING.md says must not be scheduled. So the topic rules were
+            // structurally unreachable on any real relay, and topics
+            // accumulated forever. Measured: 85 topics, 83 of them test
+            // artefacts, none of them ever reclaimable.
+            //
+            // The `messages` rules above have exactly the same dead form --
+            // 'messages for a deleted identity' -- but a REACHABILITY rule
+            // beside it that does the actual work. The topic rules had no
+            // equivalent. Found by an auditor asking why 83 test topics were
+            // still there, from a count being larger than expected rather than
+            // from reading this file.
+            //
+            // A topic is unreachable when NO MEMBER can authenticate: nobody
+            // can then read the roster or broadcast to it. Keyed on members
+            // rather than on the owner deliberately -- any member may read a
+            // roster and fan out, so an owner going inactive does NOT make a
+            // channel dead, and deleting on that would destroy a live channel
+            // whose owner had simply stopped polling.
+            'topics no member can reach any more' =>
+                "DELETE t FROM topics t
+                      WHERE NOT EXISTS (
+                            SELECT 1 FROM topic_members tm
+                              JOIN identities i ON i.id = tm.identity_id
+                             WHERE tm.topic_id = t.id
+                               AND NOT {$unreachable})",
+
+            // Memberships of a topic that no longer exists, including the ones
+            // the rule above just orphaned. Last, so it runs after them.
+            'memberships of a topic that is gone' =>
+                'DELETE tm FROM topic_members tm
+                  LEFT JOIN topics t ON t.id = tm.topic_id
+                      WHERE t.id IS NULL',
         ];
 
         $results = [];

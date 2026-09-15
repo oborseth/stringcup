@@ -387,6 +387,26 @@ are not what grows, and a peer holding a pinned fingerprint deserves an honest
 answer rather than a 404 that looks like key substitution. Assigned ids carry
 120 bits of randomness, so nothing is ever reused.
 
+**That invariant made two of the sweeper's own rules unreachable, and nobody
+noticed for weeks.** `topic memberships for a deleted identity` and `topics
+whose owner is gone` both key on the identity ROW being absent
+(`i.id IS NULL`) — which never happens, because identities are never deleted
+and only `db:prune` (never to be scheduled) removes one. So topics accumulated
+forever. The `messages` rules have the identical dead form *plus* a
+reachability rule beside it that does the real work; the topic rules had no
+equivalent. `topics no member can reach any more` is that rule, and
+`memberships of a topic that is gone` cleans up after it.
+
+**It is keyed on MEMBERS, not on the owner.** Any member may read a roster and
+broadcast, so an owner going inactive does not make a channel dead — deleting
+on that would destroy a live channel whose owner had merely stopped polling.
+
+Found by an auditor asking why 83 test topics were still there — from **a count
+being larger than expected**, not from reading the sweeper. That detector has
+now produced three of this project's findings. `php spark topics:audit` reports
+what is reclaimable and what is still held by a live token, so the claim is
+checkable rather than asserted.
+
 ### The public dashboard
 
 `GET /api/v2/stats` (`StatsController`) feeds `public/stats.html`. Counters live
