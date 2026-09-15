@@ -35,6 +35,9 @@ class FiltersCheck extends BaseCommand
     protected $name        = 'filters:check';
     protected $description = 'Verify every unauthenticated rate-limit bucket keys on IP.';
 
+    /** Methods a bucket key may name. A key ending in anything else is a typo. */
+    private const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
     public function run(array $params)
     {
         $limiter  = new RateLimitFilter();
@@ -55,12 +58,40 @@ class FiltersCheck extends BaseCommand
                 continue;
             }
 
-            // Buckets are "<path>_<method>"; recover the path.
-            $path = preg_replace('/_[a-z]+$/', '', $bucket);
+            // Split on the LAST underscore: a bucket key is "<path>_<method>",
+            // and the path itself may contain underscores.
+            //
+            // The first version of this matched the whole bucket KEY against
+            // the auth PATH globs, which are different namespaces --
+            // "api/v2/messages_post" is not a path. It lined up only because
+            // every key happens to be <path>_<method> and every auth pattern
+            // happens to end in "*", so prefix matching coincided. An auditor
+            // called it "correct by coincidence", and named the failure that
+            // matters: an auth pattern WITHOUT a trailing "*" leaves its
+            // buckets unmatched, the check demands they be added to
+            // IP_ONLY_BUCKETS, and a human complies -- moving an
+            // AUTH-COVERED endpoint onto the IP-only list. A test that pushes
+            // someone toward the unsafe edit is worse than no test.
+            $cut = strrpos($bucket, '_');
+            if ($cut === false) {
+                $problems[] = $bucket . ' (malformed bucket key: no method suffix)';
+                continue;
+            }
+
+            $path   = substr($bucket, 0, $cut);
+            $method = strtoupper(substr($bucket, $cut + 1));
+
+            if (!in_array($method, self::METHODS, true)) {
+                $problems[] = $bucket . ' (unrecognised method "' . $method . '")';
+                continue;
+            }
 
             $covered = false;
             foreach ($authPaths as $pattern) {
-                $regex = '#^' . str_replace(['*', '/'], ['.*', '\/'], $pattern) . '$#';
+                // preg_quote FIRST, then re-expand the glob. The previous
+                // translation replaced only "*" and "/", so an unescaped "."
+                // in a pattern became a wildcard. Nothing contains one today.
+                $regex = '#^' . str_replace('\*', '.*', preg_quote($pattern, '#')) . '$#';
                 if (preg_match($regex, $path)) {
                     $covered = true;
                     break;
@@ -68,7 +99,7 @@ class FiltersCheck extends BaseCommand
             }
 
             if (!$covered && !isset($ipOnly[$bucket])) {
-                $problems[] = $bucket;
+                $problems[] = $bucket . ' (path "' . $path . '", method ' . $method . ')';
             }
         }
 
