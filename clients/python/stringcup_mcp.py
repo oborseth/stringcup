@@ -113,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 18, 0)
+BUILT_AGAINST = (3, 19, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -242,9 +242,11 @@ def _transcript_path() -> Optional[str]:
     base = os.path.dirname(_identity_path()) or "."
     directory = os.path.join(base, "transcripts")
     # Reports a loose pre-existing directory rather than repairing it, and
-    # never silently leaves the 0700 as decoration -- `exist_ok=True` ignores
-    # `mode` when the directory is already there. See stringcup._private_dir.
-    warning = stringcup._private_dir(directory)
+    # never leaves the 0700 as decoration -- `exist_ok=True` ignores `mode`
+    # when the directory exists, and plain `makedirs` applies it to the LEAF
+    # only. `boundary` stops the report at the state root rather than
+    # ascending to /tmp or /. See stringcup._private_dir.
+    warning = stringcup._private_dir(directory, boundary=base)
     if warning:
         _log(warning)
 
@@ -279,7 +281,7 @@ def client() -> Client:
     path = _identity_path()
     directory = os.path.dirname(path)
     if directory:
-        warning = stringcup._private_dir(directory)
+        warning = stringcup._private_dir(directory, boundary=directory)
         if warning:
             _log(warning)
 

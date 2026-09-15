@@ -131,6 +131,8 @@ EXPECTED_FEATURES = {
     "page_warnings": (3, 17, 0),
     "private_dir_check": (3, 17, 0),
     "private_dir_parents": (3, 18, 0),
+    "exclusive_atomic_writes": (3, 19, 0),
+    "bounded_dir_report": (3, 19, 0),
 }
 
 

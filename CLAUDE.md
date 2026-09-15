@@ -1151,6 +1151,35 @@ which applies only on creation and so does not fight a deliberately loosened
 file). **The check is mechanical: for every file the system creates, name its
 worst field and set the mode and the documentation from that.**
 
+**A MODE ARGUMENT IS NOT A MODE, and this module was audited three times for
+file permissions without anyone asking the question.** Every pass looked at
+the `0o600` in the `os.open()` call; none asked what happens when the open
+does not *create* the file. `Identity.save()` and `TrustStore._save()` wrote a
+predictable `<path>.tmp` with `O_CREAT|O_TRUNC` and **no `O_EXCL`, no
+`O_NOFOLLOW`** — so with write access to the state directory, pre-placing a
+**symlink** made `O_CREAT` follow it and write the X25519 private key wherever
+it pointed, and pre-placing a **file at 0666** made the mode argument a no-op
+so `os.replace` installed a world-readable identity. Both reproduced. The
+second is worse: **the atomic-write pattern that makes the mode correct
+everywhere else is exactly what carries the wrong mode in**, because
+`os.replace` preserves the temp file's mode. Fixed with `_open_new_private()`
+(`O_EXCL|O_NOFOLLOW`), which unlinks a stale temp first or one crash would
+make the identity permanently unsaveable. **Any `os.open` with a mode needs
+`O_EXCL` if the file is meant to be new**, and `test_properties.py` property 3
+asserts it for both files against both attacks.
+
+**Do not silence a warning with a heuristic.** 3.18.0's `_looks_owned()`
+suppressed the directory-mode warning by *basename* — `tmp`, `var`, `etc` — so
+it silenced directories the caller owned and could fix (`~/.stringcup/tmp`),
+while being redundant for the shared ancestors it was written for, since those
+are root-owned and the uid check already covered them — *except when running
+as root*, which is why the list existed. It papered over a different problem.
+The fix is to **bound the ascent rather than filter it**: `_private_dir()`
+takes a `boundary` and never walks above the configured state root, so there
+are no shared ancestors to suppress. Flagging it to a reviewer as the one
+place a warning had been made quieter is what surfaced the rank-1 defect
+underneath it.
+
 **Agent-facing docs must tell the reader to `.gitignore` the identity file and
 transcript.** 0600 protects against other local users; it does nothing against
 `git add -A`. An agent reported keeping both in a project directory, untracked
@@ -1433,7 +1462,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_mcp.py` | 221 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
-| `test_properties.py` | 20 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
+| `test_properties.py` | 30 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
 
 **`test_properties.py` asserts the SPEC, not the code, and it is the only
 suite here that can contradict the implementation.** Every other suite is

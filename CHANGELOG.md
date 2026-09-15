@@ -13,6 +13,92 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.19.0 — a predictable temp path could capture the private key
+
+**Rank 1, and the highest-severity defect found since the world-readable
+transcript.** Asking an auditor to second-guess one heuristic turned up the
+defect underneath it.
+
+Both atomic writes in the client — `Identity.save()` and `TrustStore._save()`
+— opened a predictable `<path>.tmp` with `O_WRONLY|O_CREAT|O_TRUNC, 0o600`.
+**No `O_EXCL`, no `O_NOFOLLOW`.** With write access to the state directory and
+nothing else, two attacks, both reproduced before the fix:
+
+- **Symlink.** Pre-create `identity.json.tmp` pointing anywhere. `O_CREAT`
+  follows it and **the X25519 private key is written through the link.**
+  Verified: the key landed in an attacker-controlled path.
+- **Pre-created file.** No symlink needed. Create `identity.json.tmp` at 0666
+  first. The open succeeds, **the mode argument is ignored because the file
+  already exists**, the private key is written into it, and `os.replace` moves
+  a world-readable file into place as the identity. Verified: the identity
+  file ended up **0666 with the private key readable by any local user**.
+
+The second is the nastier one, because the atomic-write pattern that makes the
+mode correct everywhere else is exactly what carries the wrong mode in —
+`os.replace` preserves whatever mode the temp file had, whoever set it. This
+module had been audited three times for file modes in two days, and each pass
+looked at the mode *argument*.
+
+Not a default-install defect: it needs a world-writable state directory. It is
+reachable by an explicit `STRINGCUP_IDENTITY` under `/tmp`, by a container
+putting state on a shared mount, or by the leaf-only `makedirs` bug fixed in
+3.18.0 leaving an intermediate at 0755 on a shared host. **Low likelihood,
+maximum severity.**
+
+Both writes now go through `_open_new_private()`: `O_EXCL` plus `O_NOFOLLOW`
+where the platform has it, so the create fails outright if anything is at that
+path, symlink or file. **Behaviour change worth knowing:** a stale `.tmp` from
+a crashed write is no longer silently overwritten, so the helper unlinks it
+first — otherwise one crash would make the identity permanently unsaveable.
+`os.unlink` on a symlink removes the link and not its target, so that does not
+hand the attack back.
+
+### The heuristic that led to it
+
+3.18.0's `_looks_owned()` suppressed the directory-mode warning for `/tmp`,
+`/home`, `/var` and friends. It was flagged here as the one place a security
+warning had deliberately been made quieter, and an auditor found it **wrong in
+both directions**:
+
+- **It matched on BASENAME, not path.** So any directory the caller owned and
+  could fix was silenced for having an unlucky name — `~/.stringcup/tmp`,
+  `~/agents/prod/var`, `/home/me/work/etc`.
+- **It was redundant for the case it was written for.** `/tmp` and `/var` are
+  root-owned, so the `st_uid == os.getuid()` check already excluded them —
+  *except when running as root*, which is how the list came to exist at all.
+  It papered over a different problem.
+
+The fix is to **bound the ascent rather than filter it**: `_private_dir()`
+takes a `boundary` and reports only on the state directory and the components
+between it and that root, never walking up to filesystem roots. Then there are
+no shared ancestors to suppress and nothing is skipped for its name. Verified
+as root, where the uid check alone would have warned on `/tmp` at 0777: no
+report, because the walk never reaches it.
+
+### Property 3, and the honest limit on properties
+
+`test_properties.py` gains the class: **no atomic write can be redirected or
+made world-readable by anything pre-placed at its temp path.** Four variants
+(two attacks × two files), plus that a stale temp does not permanently break
+saving. Verified against reverted code: four assertions fail there.
+
+The auditor's caveat is worth recording, because it is the limit of the whole
+approach and they raised it against their own recommendation: property 2
+could never have found this. `os.walk` + `stat` sees the state **after** a
+successful write, and this defect lives in the **window during** one.
+**Executable properties beat reasoning for the classes you have named, and are
+silent on the ones you have not.** B.6 is eleven sentences somebody wrote
+down; the defects that hurt were all in the twelfth.
+
+### Also: a bad measurement of my own
+
+While verifying property 3 against reverted code, the suite aborted in
+property 1 on a rate-limited registration, property 3 never ran, and
+`grep -c` for the failure marker returned 0 — which reads exactly like a pass.
+**Absence of a failure marker is not evidence of one.** `main()` now runs every
+property even if an earlier one raises, and counts a raise as a failure rather
+than a silent skip.
+
 ## Library 3.18.0 — the first end-to-end property test found a defect on its first run
 
 `clients/python/test_properties.py` is new, and it exists because every other

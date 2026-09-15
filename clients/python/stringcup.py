@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.18.0"
+__version__ = "3.19.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 18, 0)
+version_info = (3, 19, 0)
 
 __all__ = [
     "Client",
@@ -200,6 +200,9 @@ FEATURES = {
     "private_dir_check": (3, 17, 0),        # a loose state directory is reported
     # 3.18.0
     "private_dir_parents": (3, 18, 0),      # every path component is created 0700
+    # 3.19.0
+    "exclusive_atomic_writes": (3, 19, 0),  # a temp path cannot be pre-placed
+    "bounded_dir_report": (3, 19, 0),       # the mode report is bounded, not guessed
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -350,7 +353,10 @@ def session_transcript_path(identity_path: str) -> str:
     """
     base = os.path.dirname(identity_path) or "."
     directory = os.path.join(base, "transcripts")
-    warning = _private_dir(directory)
+    # Boundary is the identity directory: it is the state root the caller
+    # configured, and the component the leaf-only makedirs bug left exposed.
+    # Reporting stops there rather than ascending to /tmp or /.
+    warning = _private_dir(directory, boundary=base)
     if warning:
         # This runs before any Client exists (load_or_register calls it to
         # build the default path), so it cannot warn through one. Parked for
@@ -364,6 +370,60 @@ def session_transcript_path(identity_path: str) -> str:
     return os.path.join(directory, "session-%s-%s.jsonl" % (stamp, suffix))
 
 
+#: Flags for creating a file that MUST be new and MUST NOT be a symlink.
+#:
+#: `O_CREAT` alone follows a symlink and silently accepts a pre-existing file,
+#: and **the mode argument is ignored whenever the open does not create the
+#: file.** Both atomic writes in this module used
+#: `O_WRONLY|O_CREAT|O_TRUNC, 0o600` on a predictable `<path>.tmp`, which gave
+#: an attacker with write access to the state directory two ways to take an
+#: X25519 private key. Both reproduced before this fix:
+#:
+#: - **Symlink.** Pre-create `identity.json.tmp` as a symlink. `O_CREAT`
+#:   follows it and the private key is written wherever it points. Verified:
+#:   the key landed in an attacker-controlled path.
+#: - **Pre-created file.** No symlink needed. Create `identity.json.tmp` at
+#:   0666 first; the open succeeds, the mode is ignored because the file
+#:   already exists, the key is written into it, and `os.replace` then moves a
+#:   **world-readable** file into place as the identity. Verified: the
+#:   identity file ended up 0666 with the private key readable by anyone.
+#:
+#: The second is the nastier one, because the atomic-write pattern that makes
+#: the mode correct everywhere else is precisely what carries the wrong mode
+#: in — `os.replace` preserves the temp file's mode, whoever set it.
+#:
+#: `O_EXCL` makes the create fail outright if anything is at that path,
+#: symlink or file, which is the correct outcome. `O_NOFOLLOW` is belt and
+#: braces where the platform has it. **Consequence worth knowing: a stale
+#: `.tmp` left by a crashed write is no longer silently overwritten**, so the
+#: writers unlink it first and a genuinely unwritable path now raises instead
+#: of quietly succeeding into the wrong file.
+#:
+#: Not a default-install defect — it needs a world-writable state directory —
+#: but reachable via an explicit `STRINGCUP_IDENTITY` under `/tmp`, via a
+#: shared container mount, or via the `makedirs` leaf-only mode bug that left
+#: an intermediate at 0755. Low likelihood, maximum severity.
+_EXCLUSIVE_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+if hasattr(os, "O_NOFOLLOW"):
+    _EXCLUSIVE_CREATE |= os.O_NOFOLLOW
+
+
+def _open_new_private(path: str) -> int:
+    """
+    Open `path` for writing, creating it 0600, refusing to reuse or follow.
+
+    Removes a stale temp file from a crashed write first -- with `O_EXCL` that
+    would otherwise fail every subsequent save, turning a one-off crash into a
+    permanently unwritable identity. `os.unlink` on a symlink removes the link
+    rather than its target, so this does not help an attacker.
+    """
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return os.open(path, _EXCLUSIVE_CREATE, 0o600)
+
+
 #: Directory warnings raised before any Client existed, drained by the first
 #: one constructed. `session_transcript_path()` runs inside
 #: `Client.load_or_register()` before `__init__`, so it has nothing to warn
@@ -371,7 +431,7 @@ def session_transcript_path(identity_path: str) -> str:
 _PENDING_DIR_WARNINGS: List[str] = []
 
 
-def _private_dir(directory: str) -> Optional[str]:
+def _private_dir(directory: str, boundary: Optional[str] = None) -> Optional[str]:
     """
     Create `directory` **and its parents** at 0700, reporting a loose existing one.
 
@@ -393,10 +453,9 @@ def _private_dir(directory: str) -> Optional[str]:
        holding the private key, the trust store and every transcript was the
        one component that did not get the mode.
 
-    Found by the end-to-end property test in `test_properties.py` on its first
-    run, by stat-ing what a real run created rather than by reading this
-    function — which is the whole argument for that suite. An auditor
-    predicted that exact outcome for that exact test.
+    Found by `test_properties.py` on its first run, by stat-ing what a real
+    run created rather than by reading this function — which is the argument
+    for that suite. An auditor predicted that outcome for that test.
 
     So each component is created individually at 0700. A component that
     **already existed** is reported and left alone: repairing would fight an
@@ -404,55 +463,78 @@ def _private_dir(directory: str) -> Optional[str]:
     re-tightening a directory it did not create is a different defect. Same
     policy as the transcript file mode.
 
+    **`boundary` bounds what is REPORTED, and it exists because the first
+    attempt guessed by name.** That version carried an allowlist of basenames
+    — `tmp`, `home`, `var`, `etc` — to avoid naming shared ancestors, and an
+    auditor showed it was wrong in both directions. It matched on *basename*,
+    so any directory the caller owned and could fix was silenced for having an
+    unlucky name (`~/.stringcup/tmp`, `~/agents/prod/var`). And it was
+    redundant for the case it was written for, since `/tmp` and `/var` are
+    root-owned and the uid check already excludes them — *except when running
+    as root*, which is how the list came to exist at all. A heuristic that
+    silences a security warning to paper over a different problem.
+
+    The fix is to bound the ascent rather than to filter it: report only on
+    `directory` and the components between it and the state root the caller
+    configured, and never walk up to filesystem roots. Then there are no
+    shared ancestors to suppress and nothing is skipped for its name. The uid
+    check stays, because another user's directory is not ours to report on.
+
     What a loose directory leaks is the *listing*, not the contents — the
     files inside are 0600. But the listing says you hold a trust store and
     therefore have pinned peers, that you keep a transcript, and, because
     transcripts are named `session-<UTC>-<rand>.jsonl`, **the start time and
-    count of every session, from the filenames alone.** That is metadata
-    rather than content, so it is the lowest rank on this project's ordering.
+    count of every session, from the filenames alone.** Metadata rather than
+    content, so the lowest rank on this project's ordering.
 
-    Returns a warning naming the loosest pre-existing component, else None.
+    Returns a warning naming the loosest reportable component, else None.
     """
     absolute = os.path.abspath(directory)
-    parts = absolute.split(os.sep)
 
-    warning = None
+    # Create every component, not just the leaf.
     path = os.sep if absolute.startswith(os.sep) else ""
-
-    for part in parts:
+    for part in absolute.split(os.sep):
         if not part:
             continue
         path = os.path.join(path, part) if path else part
-
         if os.path.isdir(path):
-            # Pre-existing. Report the ones this library would have created,
-            # and stay quiet about /tmp, /home and other shared ancestors --
-            # a warning naming a directory the caller does not own is noise
-            # that trains people to ignore the channel.
             continue
-
         try:
             os.mkdir(path, 0o700)
-            # mkdir's mode is masked by umask, so set it explicitly. A umask
-            # of 0077 or looser would otherwise leave 0700 unreachable.
+            # mkdir's mode is masked by the umask, so set it explicitly: a
+            # umask of 0077 or looser would leave 0700 unreachable.
             os.chmod(path, 0o700)
         except FileExistsError:
             pass
         except OSError:
-            # Let the caller's own open() produce the real error; failing here
-            # would turn a permissions problem into a confusing traceback in
-            # directory creation.
+            # Let the caller's own open() raise the real error rather than
+            # turning a permissions problem into a traceback in mkdir.
             return None
 
-    # Now report on the leaf and on any ancestor the caller plausibly owns,
-    # which is anything at or below the directory holding the identity file.
-    for candidate in (absolute, os.path.dirname(absolute)):
+    # Report from the leaf up to the boundary INCLUSIVE, and no further.
+    root = os.path.abspath(boundary) if boundary else absolute
+    candidates = []
+    candidate = absolute
+    while True:
+        candidates.append(candidate)
+        if candidate == root or len(candidate) <= len(root):
+            break
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+
+    for candidate in candidates:
         try:
-            mode = os.stat(candidate).st_mode & 0o777
+            info = os.stat(candidate)
         except OSError:
             continue
-        if mode & 0o077 and _looks_owned(candidate):
-            warning = (
+        # Someone else's directory is not ours to report on or to fix.
+        if info.st_uid != os.getuid():
+            continue
+        mode = info.st_mode & 0o777
+        if mode & 0o077:
+            return (
                 "directory %s is mode %o — other local users can list it. The "
                 "files inside are 0600, so this exposes the listing rather "
                 "than the contents: that you keep a trust store and a "
@@ -461,30 +543,8 @@ def _private_dir(directory: str) -> Optional[str]:
                 "loosened deliberately. Fix with: chmod 700 %s"
                 % (candidate, mode, candidate)
             )
-            break
 
-    return warning
-
-
-def _looks_owned(directory: str) -> bool:
-    """
-    Whether `directory` is plausibly this install's own state directory.
-
-    Guards the warning against naming shared ancestors -- `/tmp`, `/home`,
-    `/var` are 0755 by design and are not the caller's to fix. A warning that
-    fires on those trains the reader to ignore the channel, which is the
-    failure the warning channel was just rewritten to avoid.
-    """
-    base = os.path.basename(directory.rstrip(os.sep))
-    if base in ("", "tmp", "home", "var", "usr", "opt", "etc", "root", "srv"):
-        return False
-    if directory.rstrip(os.sep) in ("/tmp", "/home", "/var", "/usr", "/"):
-        return False
-    try:
-        # Someone else's directory is not ours to report on either.
-        return os.stat(directory).st_uid == os.getuid()
-    except OSError:
-        return False
+    return None
 
 
 def new_pairing_secret() -> str:
@@ -960,7 +1020,7 @@ class TrustStore:
     def _save(self) -> None:
         tmp = f"{self.path}.tmp"
         payload = json.dumps({"peers": self._peers}, indent=2, sort_keys=True)
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = _open_new_private(tmp)
         try:
             with os.fdopen(fd, "w") as fh:
                 fh.write(payload)
@@ -1202,7 +1262,9 @@ class Identity:
         # disagreed. 0700 because the file inside is a private key.
         directory = os.path.dirname(path)
         if directory:
-            warning = _private_dir(directory)
+            # The identity directory is itself the state root here, so it is
+            # both what we create and where reporting stops.
+            warning = _private_dir(directory, boundary=directory)
             if warning:
                 _PENDING_DIR_WARNINGS.append(warning)
 
@@ -1221,7 +1283,7 @@ class Identity:
         if self.retired_keys:
             record["retired_keys"] = self.retired_keys
         payload = json.dumps(record, indent=2)
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = _open_new_private(tmp)
         try:
             with os.fdopen(fd, "w") as fh:
                 fh.write(payload)

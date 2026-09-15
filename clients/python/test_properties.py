@@ -287,11 +287,107 @@ def property_no_world_readable_plaintext(work):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Property 3: a hostile state directory cannot capture key material.
+# ---------------------------------------------------------------------------
+
+def property_atomic_writes_refuse_a_hostile_path(work):
+    step("3. No atomic write can be REDIRECTED or made world-readable by "
+         "anything pre-placed at its temp path")
+
+    # An auditor's finding, and the limit of property 2: os.walk-and-stat sees
+    # the state AFTER a successful write, and this defect lives in the WINDOW
+    # DURING one. Properties cover the classes you thought to state, so this
+    # is the class stated.
+    #
+    # Both reproduced before the fix, with write access to the state
+    # directory and nothing else:
+    #   SYMLINK        <path>.tmp -> attacker path. O_CREAT follows it and the
+    #                  X25519 private key is written through the link.
+    #   PRE-CREATED    <path>.tmp at 0666. The open succeeds, the mode is
+    #                  IGNORED because the file exists, the key is written in,
+    #                  and os.replace moves a world-readable file into place.
+    #                  The atomic-write pattern that makes the mode correct
+    #                  everywhere else is what carries the wrong mode in.
+    root = os.path.join(work, "hostile")
+    os.makedirs(root, mode=0o700, exist_ok=True)
+
+    for label, prepare in (
+        ("a pre-created 0666 file", "precreated"),
+        ("a symlink to an attacker path", "symlink"),
+    ):
+        for kind in ("identity", "trust store"):
+            box = os.path.join(root, "%s-%s" % (prepare, kind.replace(" ", "")))
+            os.makedirs(os.path.join(box, "attacker"), mode=0o700, exist_ok=True)
+            target = os.path.join(box, "state.json")
+            stolen = os.path.join(box, "attacker", "stolen.json")
+
+            if prepare == "precreated":
+                with open(target + ".tmp", "w"):
+                    pass
+                os.chmod(target + ".tmp", 0o666)
+            else:
+                os.symlink(stolen, target + ".tmp")
+
+            if kind == "identity":
+                ident = Identity.generate()
+                ident.external_id = "sc-" + "v" * 24
+                ident.api_token = "token"
+                ident.save(target)
+            else:
+                store = stringcup.TrustStore(target)
+                store.pin("sc-" + "p" * 24, "sha256:whatever")
+
+            mode = stat.S_IMODE(os.stat(target).st_mode)
+            check(not mode & 0o077,
+                  "%s survives %s: written %s, not world-readable"
+                  % (kind, label, oct(mode)))
+            check(not os.path.exists(stolen),
+                  "%s survives %s: nothing reached the attacker's path"
+                  % (kind, label))
+
+    # And a stale temp file from a crashed write must not make the path
+    # permanently unwritable -- O_EXCL would otherwise fail every save after
+    # one crash, turning a transient failure into a dead identity.
+    box = os.path.join(root, "stale")
+    os.makedirs(box, mode=0o700, exist_ok=True)
+    target = os.path.join(box, "state.json")
+    with open(target + ".tmp", "w") as fh:
+        fh.write("half a write from a crashed process")
+    ident = Identity.generate()
+    ident.external_id = "sc-" + "s" * 24
+    ident.api_token = "token"
+    ident.save(target)
+    check(os.path.exists(target),
+          "A stale .tmp from a crashed write does not block the next save")
+    check(json.load(open(target))["external_id"] == "sc-" + "s" * 24,
+          "...and the saved file is the new content, not the stale fragment")
+
+
 def main():
     work = tempfile.mkdtemp(prefix="stringcup-props-")
+
+    # EVERY PROPERTY RUNS EVEN IF AN EARLIER ONE RAISES, and a raise is a
+    # failure rather than a silent skip. Verifying this suite against
+    # deliberately reverted code, the run aborted in property 1 on a
+    # rate-limited registration, property 3 never executed, and `grep -c` for
+    # a failure marker returned 0 -- which reads exactly like a pass. Absence
+    # of a failure marker is not evidence of one; the count has to come from
+    # the suite, not from grepping its output.
+    properties = (
+        property_accepted_mail_is_retrievable_or_disclosed,
+        property_no_world_readable_plaintext,
+        property_atomic_writes_refuse_a_hostile_path,
+    )
+
     try:
-        property_accepted_mail_is_retrievable_or_disclosed(work)
-        property_no_world_readable_plaintext(work)
+        for prop in properties:
+            try:
+                prop(work)
+            except Exception as exc:
+                bad("%s raised %s: %s"
+                    % (prop.__name__, type(exc).__name__, exc),
+                    "A property that cannot run has not held.")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
