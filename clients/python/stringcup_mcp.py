@@ -78,7 +78,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.14.0"
+__version__ = "1.15.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -113,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 16, 0)
+BUILT_AGAINST = (3, 17, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -241,7 +241,12 @@ def _transcript_path() -> Optional[str]:
 
     base = os.path.dirname(_identity_path()) or "."
     directory = os.path.join(base, "transcripts")
-    os.makedirs(directory, mode=0o700, exist_ok=True)
+    # Reports a loose pre-existing directory rather than repairing it, and
+    # never silently leaves the 0700 as decoration -- `exist_ok=True` ignores
+    # `mode` when the directory is already there. See stringcup._private_dir.
+    warning = stringcup._private_dir(directory)
+    if warning:
+        _log(warning)
 
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     suffix = binascii.hexlify(os.urandom(2)).decode()
@@ -274,7 +279,9 @@ def client() -> Client:
     path = _identity_path()
     directory = os.path.dirname(path)
     if directory:
-        os.makedirs(directory, mode=0o700, exist_ok=True)
+        warning = stringcup._private_dir(directory)
+        if warning:
+            _log(warning)
 
     store_path = os.environ.get("STRINGCUP_TRUST_STORE")
     if not store_path:
@@ -511,6 +518,45 @@ def tool_send(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return {"sent_seq": sent_seq, "recipient_id": recipient, "sent": True}
 
 
+def _page_diagnostics(page) -> Dict[str, Any]:
+    """
+    The fields a receive result must carry even when it delivered nothing.
+
+    **The empty-page branch used to hardcode `count: 0` and omit the rest**,
+    which re-dropped, one layer out, exactly what the library had just been
+    fixed to preserve: a page can be non-empty and carry no `messages`,
+    because mail this identity cannot decrypt goes to `undecryptable` rather
+    than being delivered. So an agent with a permanently undecryptable inbox
+    -- which is what a key rotated past its grace window produces -- was told
+    "nothing arrived" by the only surface it has.
+
+    For most hosts the MCP surface *is* the product, so a library-level fix
+    that the tool layer discards is not a fix. Same rule, restated: an
+    accessor that aggregates pages must not drop a diagnostic that something
+    else tells the operator to read.
+    """
+    out: Dict[str, Any] = {}
+    if page.undecryptable:
+        out["undecryptable_inbox_seqs"] = page.undecryptable
+        out["undecryptable_note"] = (
+            "%d message(s) in your inbox could NOT be decrypted and were not "
+            "acknowledged, so they persist and count against your inbox "
+            "quota. Common causes: the sender used a stale cached copy of "
+            "your public key after you rotated, or the wrong identity file is "
+            "loaded. Tell your operator; do not acknowledge them unless you "
+            "are certain they are not yours, because acknowledging deletes."
+            % len(page.undecryptable)
+        )
+    if page.warnings:
+        # Routed here, and not left on stderr alone, because in an MCP
+        # deployment stderr is a host log a human may never open -- so a
+        # report on stderr reaches the careful operator and misses the
+        # exposed one. An auditor's point: the asymmetry was in the channel,
+        # not the policy.
+        out["operator_warnings"] = list(page.warnings)
+    return out
+
+
 def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     ack = arguments.get("ack", True)
@@ -521,13 +567,15 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
     page = me.receive_many(limit=1, timeout=_hold(arguments), ack=bool(ack))
 
     if not page.messages:
-        return {
+        empty = {
             "received": False,
             "next": (
                 "Nothing arrived within the hold. This is an ordinary outcome, not an "
                 "error — call receive again. The peer may still be thinking."
             ),
         }
+        empty.update(_page_diagnostics(page))
+        return empty
 
     msg = page.messages[0]
     result = {
@@ -551,6 +599,7 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # either side indicating why. Reported from a real conversation.
         "more_waiting": bool(page.has_more),
     }
+    result.update(_page_diagnostics(page))
     if msg.channel_claim:
         result["channel_claim_unverified"] = msg.channel_claim
         result["warning"] = (
@@ -581,15 +630,19 @@ def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
     page = me.receive_many(limit=limit, timeout=_hold(arguments), ack=bool(ack))
 
     if not page.messages:
-        return {
+        empty = {
             "received": False,
-            "count": 0,
+            # The relay's count for this page, NOT a hardcoded zero: it is
+            # non-zero when the inbox holds mail that could not be decrypted.
+            "count": page.count,
             "messages": [],
             "next": (
                 "Nothing arrived within the hold. An ordinary outcome, not an error — "
                 "call again."
             ),
         }
+        empty.update(_page_diagnostics(page))
+        return empty
 
     result = {
         "received": True,
@@ -605,6 +658,7 @@ def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "acknowledged": bool(ack),
         "more_waiting": bool(page.has_more),
     }
+    result.update(_page_diagnostics(page))
 
     forged = [m.channel_claim for m in page.messages if m.channel_claim]
     if forged:

@@ -128,6 +128,8 @@ EXPECTED_FEATURES = {
     "transcript_mode_warning": (3, 15, 0),
     "retired_key_grace": (3, 16, 0),
     "aggregated_diagnostics": (3, 16, 0),
+    "page_warnings": (3, 17, 0),
+    "private_dir_check": (3, 17, 0),
 }
 
 

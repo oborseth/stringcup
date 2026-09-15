@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.16.0"
+__version__ = "3.17.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 16, 0)
+version_info = (3, 17, 0)
 
 __all__ = [
     "Client",
@@ -195,6 +195,9 @@ FEATURES = {
     # 3.16.0
     "retired_key_grace": (3, 16, 0),        # rotation stops destroying mail in flight
     "aggregated_diagnostics": (3, 16, 0),   # receive_many keeps undecryptable/count
+    # 3.17.0
+    "page_warnings": (3, 17, 0),            # warnings reach the caller, not only stderr
+    "private_dir_check": (3, 17, 0),        # a loose state directory is reported
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -345,12 +348,73 @@ def session_transcript_path(identity_path: str) -> str:
     """
     base = os.path.dirname(identity_path) or "."
     directory = os.path.join(base, "transcripts")
-    os.makedirs(directory, mode=0o700, exist_ok=True)
+    warning = _private_dir(directory)
+    if warning:
+        # This runs before any Client exists (load_or_register calls it to
+        # build the default path), so it cannot warn through one. Parked for
+        # the first Client to drain, which is what puts it in front of an
+        # agent rather than only in a host log.
+        _PENDING_DIR_WARNINGS.append(warning)
 
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     suffix = binascii.hexlify(os.urandom(2)).decode()
 
     return os.path.join(directory, "session-%s-%s.jsonl" % (stamp, suffix))
+
+
+#: Directory warnings raised before any Client existed, drained by the first
+#: one constructed. `session_transcript_path()` runs inside
+#: `Client.load_or_register()` before `__init__`, so it has nothing to warn
+#: through.
+_PENDING_DIR_WARNINGS: List[str] = []
+
+
+def _private_dir(directory: str) -> Optional[str]:
+    """
+    Create `directory` at 0700, and report — never repair — a loose existing one.
+
+    **`os.makedirs(..., mode=0o700, exist_ok=True)` ignores `mode` when the
+    directory already exists.** So a `~/.stringcup` created at 0755 by an
+    earlier version, or by a user's own `mkdir`, stays 0755 forever and the
+    `0o700` is decoration. Verified: `makedirs("/tmp/x", 0o700,
+    exist_ok=True)` over an existing 0755 leaves it 0755.
+
+    This is the same defect as the transcript's `O_CREAT` mode, three
+    functions away, and an auditor found it by asking for the *class* rather
+    than the instance after the transcript case: **a mode that applies only at
+    creation time says nothing about the artifacts that already exist.**
+
+    What leaks is the listing, not the contents — the files inside are 0600.
+    But the listing says you hold a trust store and therefore pinned peers,
+    that you keep a transcript, and, because transcripts are named
+    `session-<UTC>-<rand>.jsonl`, **the start time and count of every session
+    from the filenames alone.** That is metadata rather than content, so it is
+    rank 4 on this project's ranking and is reported rather than rushed.
+
+    Returns a warning string when the existing directory is group- or
+    world-accessible, else None. Repairing is refused for the same reason the
+    transcript mode is: an operator may have loosened it deliberately, and a
+    library silently re-tightening a directory it did not create is a
+    different defect.
+    """
+    existed = os.path.isdir(directory)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    if not existed:
+        return None
+    try:
+        mode = os.stat(directory).st_mode & 0o777
+    except OSError:
+        return None
+    if not mode & 0o077:
+        return None
+    return (
+        "directory %s is mode %o — other local users can list it. The files "
+        "inside are 0600, so this exposes the listing rather than the "
+        "contents: that you keep a trust store and a transcript, and the "
+        "start time and count of every session from the filenames. Not "
+        "changed automatically in case it was loosened deliberately. Fix "
+        "with: chmod 700 %s" % (directory, mode, directory)
+    )
 
 
 def new_pairing_secret() -> str:
@@ -939,6 +1003,22 @@ class Page:
     #: loop into a hot spin.
     long_poll: str = "off"
 
+    #: Operator-facing warnings raised since the last page, at most once each
+    #: per process.
+    #:
+    #: **These are here because stderr reaches the wrong population.** Every
+    #: "you should know this" signal in this library used to go to stderr
+    #: only, and in the MCP deployment the docs push people towards, stderr
+    #: goes to the host's log — which a human may open never. So the report
+    #: reached operators who were already watching and missed the ones who
+    #: were exposed. An auditor pointed out the asymmetry was in the channel,
+    #: not in the policy.
+    #:
+    #: They are still written to stderr as well. This is the same treatment
+    #: `undecryptable` and `channel_claim` already get: surface it to the
+    #: caller and let the caller decide, rather than acting unilaterally.
+    warnings: List[str] = field(default_factory=list)
+
     @property
     def ids(self) -> List[int]:
         return [m.id for m in self.messages]
@@ -1046,7 +1126,9 @@ class Identity:
         # disagreed. 0700 because the file inside is a private key.
         directory = os.path.dirname(path)
         if directory:
-            os.makedirs(directory, mode=0o700, exist_ok=True)
+            warning = _private_dir(directory)
+            if warning:
+                _PENDING_DIR_WARNINGS.append(warning)
 
         # Expire on the way out, so the window is enforced by every write
         # rather than only by a reload.
@@ -1228,6 +1310,10 @@ class Client:
     #: Warn at most once per process that the transcript is readable by others.
     _warned_transcript_mode = False
 
+    #: Keys of warnings already emitted this process, so a warning fires once
+    #: however many Client instances exist.
+    _warned_keys = set()
+
 
     def __init__(
         self,
@@ -1255,6 +1341,14 @@ class Client:
         # agent whose context was compacted has no way to pick the thread back
         # up. Bodies are plaintext by definition here; put it somewhere private.
         self.transcript = transcript
+
+        #: Warnings raised since the last page was returned. Drained onto
+        #: Page.warnings so they reach the agent, not only the host log.
+        self._queued_warnings: List[str] = []
+
+        # Anything raised by a module-level helper before this Client existed.
+        while _PENDING_DIR_WARNINGS:
+            self._warn_once("dir-mode", _PENDING_DIR_WARNINGS.pop(0))
 
         self._peer_keys: Dict[str, str] = {}
 
@@ -1870,14 +1964,14 @@ class Client:
                     info["pinned"] = True
                 elif not Client._warned_unpinned:
                     Client._warned_unpinned = True
-                    sys.stderr.write(
-                        "[stringcup] pairing with %s verified, but NOT pinned: no "
-                        "trust_store is configured, so this assurance is lost when "
-                        "the process exits and a later substitution would go "
-                        "undetected. Pass trust_store=\"./known_peers.json\".\n"
-                        % peer_id
+                    self._warn_once(
+                        "unpinned",
+                        "pairing with %s verified, but NOT pinned: no "
+                        "trust_store is configured, so this assurance is lost "
+                        "when the process exits and a later substitution "
+                        "would go undetected. Pass "
+                        "trust_store=\"./known_peers.json\"." % peer_id
                     )
-                    sys.stderr.flush()
 
                 return info
 
@@ -2218,14 +2312,15 @@ class Client:
 
         if undecryptable and not Client._warned_undecryptable:
             Client._warned_undecryptable = True
-            sys.stderr.write(
-                "[stringcup] %d message(s) in this page could not be decrypted and "
-                "are NOT acknowledged, so they will persist and count against your "
-                "inbox quota. See Page.undecryptable; ack them only if you are sure "
-                "they are not yours (a wrong identity file would look the same).\n"
+            self._warn_once(
+                "undecryptable",
+                "%d message(s) in this page could not be decrypted and are "
+                "NOT acknowledged, so they will persist and count against "
+                "your inbox quota. See Page.undecryptable; ack them only if "
+                "you are sure they are not yours (a wrong identity file, or a "
+                "key you rotated past its grace window, would look the same)."
                 % len(undecryptable)
             )
-            sys.stderr.flush()
 
         return Page(
             messages=messages,
@@ -2234,6 +2329,7 @@ class Client:
             next_since_id=body.get("next_since_id"),
             undecryptable=undecryptable,
             long_poll=self._last_headers.get("x-long-poll", "off"),
+            warnings=self._drain_warnings(),
         )
 
     def receive(self, limit: int = 50) -> List[Message]:
@@ -2975,6 +3071,37 @@ class Client:
         self._maybe_throttle(bucket)
         return json.loads(raw) if raw else {}
 
+    def _warn_once(self, key: str, message: str) -> None:
+        """
+        Report an operator-facing problem once per process, on **two** channels.
+
+        stderr, because that is where a human watching a terminal looks; and a
+        queue drained onto the next `Page.warnings`, because in the MCP
+        deployment this project's own docs recommend, stderr goes to a host
+        log that may never be read. A report that only reaches the careful
+        operator is not a report — an auditor made that point about the
+        transcript-mode warning, and it applies to every warning here.
+
+        Never stdout: the MCP server speaks JSON-RPC there and imports this
+        module.
+        """
+        if key in Client._warned_keys:
+            return
+        Client._warned_keys.add(key)
+        self._queued_warnings.append(message)
+        try:
+            sys.stderr.write("[stringcup] " + message + "\n")
+            sys.stderr.flush()
+        except Exception:
+            # A broken stderr must not break a send. The queued copy survives.
+            pass
+
+    def _drain_warnings(self) -> List[str]:
+        """Take the queued warnings, so each is reported on exactly one page."""
+        queued = self._queued_warnings
+        self._queued_warnings = []
+        return queued
+
     def _log_transcript(self, direction: str, peer: str, msg_id, text: str,
                         error: Optional[str] = None) -> None:
         """
@@ -3047,13 +3174,14 @@ class Client:
                 mode = os.fstat(fd).st_mode & 0o777
                 if mode & 0o077:
                     Client._warned_transcript_mode = True
-                    sys.stderr.write(
-                        "stringcup: transcript %s is mode %o — readable by "
-                        "other local users. It holds every message in "
-                        "plaintext, both party ids and timestamps. Files "
-                        "created before library 3.12.0 kept the old default; "
-                        "this is not repaired automatically in case the mode "
-                        "was loosened deliberately. Fix with: chmod 600 %s\n"
+                    self._warn_once(
+                        "transcript-mode:%s" % self.transcript,
+                        "transcript %s is mode %o — readable by other local "
+                        "users. It holds every message in plaintext, both "
+                        "party ids and timestamps. Files created before "
+                        "library 3.12.0 kept the old default; this is not "
+                        "repaired automatically in case the mode was loosened "
+                        "deliberately. Fix with: chmod 600 %s"
                         % (self.transcript, mode, self.transcript)
                     )
             with os.fdopen(fd, "a", encoding="utf-8") as fh:

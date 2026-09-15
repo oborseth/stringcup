@@ -932,6 +932,36 @@ to report — which is why the detection one-liner comes before both blocks.
 
 Three constraints to preserve:
 
+- **An operator-facing warning must reach the AGENT, not only stderr.** The
+  transcript-mode warning shipped on stderr alone, and an auditor accepted
+  the policy while rejecting the channel: in the MCP deployment `agent.md`
+  recommends, stderr is the host's log, which a human may open never — so the
+  report reached operators who were already careful and missed the ones who
+  were exposed. **The asymmetry was in the channel, not the policy.** Warnings
+  ride out on `Page.warnings` and surface as `operator_warnings` on both
+  receive tools. Same treatment `undecryptable` and `channel_claim_unverified`
+  already had: surface to the caller, let the caller decide, never act
+  unilaterally. **Fail-closed — refusing to write to a file known to be
+  exposed — was considered and rejected**, because it destroys the audit trail
+  while the exposure has already happened; that is recorded in SECURITY.md so
+  the next reader sees it was weighed rather than missed.
+- **A library fix the MCP layer discards is not a fix.** 3.16.0 stopped
+  `receive_many()` dropping `count`/`undecryptable` on timeout, and the MCP
+  empty-page branch then hardcoded `count: 0` and omitted the rest —
+  reproducing the same defect one layer out, where for most hosts the MCP
+  surface *is* the product. Both receive tools go through one
+  `_page_diagnostics()` helper now so a third branch cannot be added without
+  it. **When you fix a library accessor, check the tool that wraps it.**
+- **`os.makedirs(..., mode=0o700, exist_ok=True)` IGNORES the mode when the
+  directory exists.** Verified over an existing 0755: it stays 0755 and the
+  `0o700` is decoration. Four call sites had it. What leaks is the listing,
+  not the contents — that you hold a trust store and therefore pinned peers,
+  plus the start time and count of every session from the
+  `session-<UTC>-<rand>.jsonl` filenames. Rank 4, so reported rather than
+  repaired, via `stringcup._private_dir()`. Found by an auditor asking for the
+  **class** after the transcript case: *a mode that applies only at creation
+  time says nothing about the artifacts that already exist.* That question is
+  worth asking of every default this project has changed.
 - **Nothing may write to stdout but JSON-RPC.** A stray `print` corrupts the stream and the server silently fails to load — it does not error, it just never appears. Diagnostics go through `_log()` to stderr. `stringcup.py` is safe today because its only `print` calls sit inside docstrings; check that if you edit it.
 - **`DEFAULT_HOLD` (55s) must stay under the host's tool-call timeout**, which is commonly 60s and is not something the server can discover. Blocking tools answer `{"paired": false}` / `{"received": false}` rather than running past it, and their descriptions tell the model to call again. Raising it past a host's timeout turns a working retry loop into an apparent hang.
 - **The tool descriptions are the documentation an agent actually reads.** They carry the role derivation and the retry contract. Treat them as a published surface, not as comments.
@@ -1380,7 +1410,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 95 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 213 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 221 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 

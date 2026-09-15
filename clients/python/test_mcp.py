@@ -205,6 +205,7 @@ class FakeClient:
         self.created = None
         self.added = None
         self.next_messages = None
+        self.receive_many_result = None
         self.last_limit = None
         self.barriered = None
         self.notified_on_create = None
@@ -258,6 +259,8 @@ class FakeClient:
         """
         self.acked = ack
         self.last_limit = limit
+        if self.receive_many_result is not None:
+            return self.receive_many_result
         msgs = list(self.next_messages if self.next_messages is not None
                     else ([self.next_message] if self.next_message else []))
         taken = msgs[:limit]
@@ -1160,6 +1163,44 @@ def test_receive_many_keeps_diagnostics():
           "...and the undecryptable ids the warning points at survive")
 
 
+def test_mcp_does_not_redrop_diagnostics():
+    step("21c. the MCP layer must not re-drop what the library preserves")
+
+    # 3.16.0 stopped receive_many discarding count/undecryptable on timeout,
+    # and the MCP empty-page branch then hardcoded count: 0 and omitted the
+    # rest -- the identical defect one layer out. For most hosts the MCP
+    # surface IS the product, so a library fix the tool layer discards is not
+    # a fix. An agent with a permanently undecryptable inbox (what a key
+    # rotated past its grace window produces) was told "nothing arrived".
+    page = stringcup.Page(
+        messages=[], count=1, has_more=False, next_since_id=None,
+        undecryptable=[41], warnings=["transcript is mode 644"],
+    )
+    diag = mcp._page_diagnostics(page)
+    check(diag.get("undecryptable_inbox_seqs") == [41],
+          "Undecryptable ids reach the agent")
+    check("acknowledg" in diag.get("undecryptable_note", ""),
+          "...with a note saying acknowledging deletes, so it does not guess")
+    check(diag.get("operator_warnings") == ["transcript is mode 644"],
+          "Library warnings reach the agent, not only the host's stderr log")
+
+    # And the empty branch of each receive tool must carry them.
+    fake = FakeClient()
+    fake.receive_many_result = stringcup.Page(
+        messages=[], count=1, has_more=False, next_since_id=None,
+        undecryptable=[41], warnings=["w"],
+    )
+    with_fake(fake)
+    for tool in ("receive", "receive_all"):
+        out = call(tool, {"hold": 0})["structuredContent"]
+        check(out.get("undecryptable_inbox_seqs") == [41],
+              "%s reports undecryptable mail even when it delivered nothing" % tool)
+        check(out.get("operator_warnings") == ["w"],
+              "%s reports operator warnings on an empty page" % tool)
+    check(call("receive_all", {"hold": 0})["structuredContent"].get("count") == 1,
+          "receive_all reports the relay's count, not a hardcoded zero")
+
+
 def test_sync_barrier():
     step("22. sync_barrier")
 
@@ -1328,6 +1369,7 @@ def main():
     test_pairing_pin_lifecycle()
     test_key_rotation_is_coarse_forward_secrecy()
     test_receive_many_keeps_diagnostics()
+    test_mcp_does_not_redrop_diagnostics()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()

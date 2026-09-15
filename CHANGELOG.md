@@ -13,6 +13,82 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.17.0 / MCP 1.15.0 — a warning nobody reads is not a warning
+
+3.15.0 reported a world-readable transcript on stderr. An auditor accepted the
+policy and rejected the channel: **in the MCP deployment these docs push
+people towards, stderr is the host's log, which a human may open never.** So
+the report reached operators who were already careful and missed the ones who
+were exposed. The asymmetry was in the channel, not in the policy.
+
+Warnings now ride out on **`Page.warnings`** as well as stderr, and the MCP
+receive tools surface them as `operator_warnings` — the agent is the one
+component in an MCP deployment that reliably has a human's attention. This is
+the treatment `undecryptable` and `channel_claim_unverified` already had:
+surface it to the caller, let the caller decide, never act unilaterally. All
+three of the library's once-per-process warnings go through one `_warn_once()`
+helper now instead of three hand-rolled stderr writes.
+
+**Fail-closed — refusing to append to a file known to be exposed — was
+considered and rejected**, and SECURITY.md says so. It destroys the audit
+trail, and the exposure has already happened, so it punishes the future for no
+benefit. Recorded so the next reader sees it was weighed rather than missed.
+
+### The same bug one level up: the state directory
+
+`os.makedirs(directory, mode=0o700, exist_ok=True)` **ignores `mode` when the
+directory already exists.** Verified: over an existing 0755 it leaves 0755. So
+`~/.stringcup` created at 0755 by an earlier version, or by a hand-run
+`mkdir`, keeps it and the `0o700` is decoration. Four call sites, two in the
+library and two in the MCP server.
+
+The files inside are 0600, so what leaks is the **listing**: that you keep a
+trust store and therefore have pinned peers, that you keep a transcript, and —
+since transcripts are `session-<UTC>-<rand>.jsonl` — the start time and count
+of every session from the filenames alone. Metadata rather than content, so it
+is the lowest rank on this project's ordering; reported, not repaired, on the
+same reasoning as the file mode.
+
+Found by an auditor asking for the **class** rather than the instance after
+the transcript case — three functions away, in the same module, the same
+sentence of reasoning. *A mode that applies only at creation time says nothing
+about the artifacts that already exist.*
+
+### And the MCP layer was re-dropping the 3.16.0 fix
+
+Found while wiring the above. 3.16.0 stopped `receive_many()` discarding
+`count` and `undecryptable` on timeout — and the MCP empty-page branch then
+**hardcoded `count: 0` and omitted the rest**, reproducing the identical
+defect one layer out. An agent with a permanently undecryptable inbox, which
+is exactly what a key rotated past its grace window produces, was told
+"nothing arrived" by the only surface it has.
+
+For most hosts the MCP surface *is* the product, so **a library fix the tool
+layer discards is not a fix.** Both receive tools now report
+`undecryptable_inbox_seqs` and a note naming the two likely causes, on the
+empty page and the populated one, through one `_page_diagnostics()` helper so
+a third branch cannot be added without it.
+
+### Disclosures, not code
+
+Two things that cannot be fixed by shipping anything, both now in
+`SECURITY.md`:
+
+- **A `verified: true` from library 3.7.0 is meaningless** and must be treated
+  as unverified — that version's pairing tag was reflectable. This was only in
+  a changelog and in a conversation, and **a changelog is not a distribution
+  mechanism**: 3.7.0 is one file people copied, and a copy still running it
+  reports `verified: true` from the broken scheme today.
+- **Trust stores written by 3.7.0 through 3.10.x may hold a poisoned pin** — a
+  pin created by a pairing that then failed, because the rollback did not exist
+  before 3.9.0 and was bypassable until 3.11.0. The likely cause is benign,
+  which makes it worse: a legitimate peer's key, pinned by a failed pairing, in
+  a store whose owner believes failed pairings pin nothing. The next honest
+  pairing raises `KeyPinMismatch`, the operator re-pins, and **the re-pinning
+  habit is what destroys pinning.** A poisoned pin cannot be told from a good
+  one by inspection, so the remedy is procedural: `trust_store.forget(peer_id)`
+  and one deliberate out-of-band re-verification.
+
 ## Library 3.16.0 — rotation was destroying mail the sender was told was stored
 
 **A remediation introduced a defect worse than anything it fixed.** 3.14.0

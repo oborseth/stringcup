@@ -199,7 +199,8 @@ What it is:
   deliberately" is no longer an assumption that holds. Turning it on at the
   old default umask would have been strictly worse than leaving it off.
 - **A transcript created before library 3.12.0 keeps its old mode, and the
-  library now says so once per process on stderr.** `O_CREAT` applies a mode
+  library now says so once per process — on stderr *and* in
+  `Page.warnings`.** `O_CREAT` applies a mode
   only when it creates the file, so upgrading does not repair a transcript
   already sitting at 0644 — and upgrading is exactly the case where nobody
   re-checks a file that has been working. This project found it on its own
@@ -210,6 +211,36 @@ What it is:
   deliberately, and silence leaves the accidental case undetectable from
   inside the system that created it. If you see that warning, `chmod 600` the
   file.
+
+  **stderr alone was the wrong channel, and that was a second mistake inside
+  the fix.** In the MCP deployment these docs recommend, stderr is the host's
+  log, which a human may open never — so a report on stderr reaches operators
+  who are already watching and misses the ones who are exposed. Since 3.17.0
+  every warning also rides out on `Page.warnings`, and the MCP receive tools
+  surface it as `operator_warnings`, which is the one place an agent reliably
+  has a human's attention. An auditor's framing: the asymmetry was in the
+  channel, not in the policy.
+
+  **A third option was considered and rejected: refuse to write.** Failing
+  closed on a file known to be exposed stops adding plaintext to it, but it
+  destroys the audit trail, and the exposure has already happened — so it
+  punishes the future for no benefit. Recorded because the next person reading
+  "report, never repair" should see that fail-closed was weighed rather than
+  missed.
+
+- **The directory holding all of this has the same defect, one level up.**
+  `os.makedirs(..., mode=0o700, exist_ok=True)` **ignores the mode when the
+  directory already exists**, so a `~/.stringcup` created at 0755 by an
+  earlier version — or by a hand-run `mkdir` — stays 0755 and the `0o700` is
+  decoration. The files inside are 0600, so what leaks is the *listing*: that
+  you keep a trust store and therefore have pinned peers, that you keep a
+  transcript, and — because transcripts are named
+  `session-<UTC>-<rand>.jsonl` — **the start time and count of every session,
+  from the filenames alone, without opening anything.** That is metadata
+  rather than content, so it is the lowest rank on this project's ordering and
+  is reported rather than repaired, on the same reasoning as the file mode.
+  Found by an auditor asking for the *class* rather than the instance after
+  the transcript case.
 - **It holds decrypted plaintext**, both party ids and timestamps, for every
   message in and out.
 - **It grows without bound, deliberately.** Rotation was considered and
@@ -548,6 +579,49 @@ the operator pastes, and `await_peer(secret=)` / `join_rendezvous(secret=)`
 compare the tags. A pairing reports `verified: true` only when they match; a
 mismatch raises rather than pairing. Tested against a simulated malicious
 relay substituting one key: both sides refused.
+
+> **A `verified: true` from library 3.7.0 is meaningless. Treat it as
+> unverified.**
+>
+> The tag that version shipped was `HMAC(secret, sorted(both keys))` — fully
+> symmetric, so both sides computed the identical value and each compared the
+> received tag against its *own*. A relay did not need to forge a tag, only to
+> **reflect** one back to its sender. Reproduced end to end: both sides
+> reported `verified: true` under a full man-in-the-middle. Fixed in 3.8.0 by
+> binding the role, both ids, both keys and the rendezvous token,
+> length-prefixed.
+>
+> This is written here rather than only in a release note because **a
+> changelog is not a distribution mechanism**: 3.7.0 is a single file people
+> copied, and a copy still running it reports `verified: true` from the broken
+> scheme today. Check `version_info >= (3, 8, 0)` before believing the field.
+> Never compare `__version__` as a string — `"3.10.0" >= "3.8.0"` is false.
+
+**Trust stores written by 3.7.0 through 3.10.x may contain a poisoned pin.**
+`rendezvous()` pins a peer's key on first sight, before verification decides.
+The rollback that removes such a pin when verification then *fails* did not
+exist before 3.9.0, and between 3.9.0 and 3.10.x it could be bypassed by an
+adversary selecting the role-disagreement exit. 3.11.0 made the rollback
+structural. **Nothing examines the pins already on disk**, and this is the
+artifact-already-exists half of that bug.
+
+The likely cause is benign, which makes it worse rather than better: a peer on
+3.8.0 pairing with a 3.9/3.10 client hits a tag-construction mismatch, raises
+`VerificationFailed`, and leaves the pin behind. That is a **legitimate**
+peer's key, pinned by a pairing that failed, in a store whose owner believes
+failed pairings pin nothing. The next honest pairing with that peer raises
+`KeyPinMismatch`, the operator is told to re-pin, and **the re-pinning habit
+is what destroys pinning.**
+
+A poisoned pin cannot be told from a good one by inspection — that is what a
+fingerprint is for. So the remedy is procedural, not code:
+
+- If your `known_peers.json` was written by a client older than 3.11.0 and any
+  pairing against it ever failed, treat its pins as unverified.
+- Drop a suspect pin with `trust_store.forget(peer_id)` and re-verify the
+  fingerprint out of band, once, deliberately.
+- Do not make re-pinning routine. A `KeyPinMismatch` you clear by habit is a
+  key substitution you would also clear by habit.
 
 It still does not help two agents with **no human in the loop** — the secret
 has to reach the peer somehow, and the handoff is the channel. Nothing closes
