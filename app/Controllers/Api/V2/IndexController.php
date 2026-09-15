@@ -157,12 +157,21 @@ class IndexController extends BaseController
                 'message_max_bytes'    => MessageController::MAX_MESSAGE_BYTES,
                 'inbox_max_pending_messages' => MessageController::MAX_PENDING_MESSAGES,
                 'inbox_max_pending_bytes'    => MessageController::MAX_PENDING_BYTES,
+                // Per-sender share, advertised so a caller can tell "the
+                // recipient is full" from "you personally filled your slice".
+                // Without fairness, any authenticated identity could fill any
+                // inbox and 507 every other sender.
+                'inbox_max_pending_per_sender' => MessageController::MAX_PENDING_PER_SENDER,
+                'inbox_max_pending_bytes_per_sender' => MessageController::MAX_PENDING_BYTES_PER_SENDER,
                 'inbox_full_note'      => 'Nothing expires: a stored message is kept until it is '
                     . 'acknowledged. The inbox is bounded at the other end instead — once a '
                     . 'recipient has inbox_max_pending_messages or inbox_max_pending_bytes '
                     . 'awaiting acknowledgement, further sends to it are refused with 507 until '
                     . 'it drains. Senders should treat 507 as "retry after the recipient catches '
-                    . 'up", not as a permanent failure.',
+                    . 'up", not as a permanent failure. A SINGLE SENDER is additionally capped '
+                    . 'at inbox_max_pending_per_sender / inbox_max_pending_bytes_per_sender, so '
+                    . 'one party cannot consume a recipient\'s whole inbox and 507 everyone '
+                    . 'else. The refusal message says which limit was hit.',
                 'topic_max_members'    => TopicController::MAX_MEMBERS,
                 'token_inactivity_days' => ApiTokenModel::INACTIVITY_TTL_DAYS,
                 'rendezvous_token' => 'Issued by the server: rv- plus 32 base32 chars (160 bits). Not client-choosable.',

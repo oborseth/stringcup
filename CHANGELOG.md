@@ -13,6 +13,53 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## API 5.1.0 — per-sender inbox fairness, and a stated threat-model priority
+
+**Any authenticated identity could fill any recipient's inbox and make every
+other sender see 507.** No crypto trick, no special position: 2000 perfectly
+valid messages. `MAX_PENDING_MESSAGES` was a per-recipient resource with no
+per-sender fairness.
+
+An auditor dissolved the framing that had blocked this. It looked like "the
+relay cannot detect undecryptable mail" — which is true, and it must not. But
+undecryptability only made the symptom *permanent*; it was never the
+vulnerability. The mitigation needs no plaintext at all, because it is pure
+accounting.
+
+- **`MAX_PENDING_PER_SENDER` (200) and `MAX_PENDING_BYTES_PER_SENDER`
+  (16 MiB)** — 10% and 25% of the global ceilings. Checked *before* the global
+  limits so the refusal lands on whoever is consuming the inbox.
+- **The refusal names which limit was hit**, per-sender or global, because
+  otherwise a security fix becomes a mystery.
+- **`idx_messages_sender_quota (recipient_id, api_version, sender_id,
+  byte_len)`** keeps the probe index-only. `sender_id` must precede `byte_len`
+  or it falls off the index and reads blob pages on every send — the one thing
+  `quotaRefusal()` is documented never to do.
+- **Broadcast is unaffected**: fan-out is N *different* recipients with one
+  message each.
+
+Verified by lowering the cap to 3 against the live relay: the flooder was
+refused at exactly 3 with the per-sender wording, and an unrelated sender's
+message was still **delivered** — the 507 landed on the flooder instead of on
+everyone.
+
+### The project's priority is now written down
+
+**Content secrecy is paramount; the fact that two agents communicated is
+accepted as visible and is not what this system defends.** From the operator,
+recorded in `SECURITY.md` and `CLAUDE.md` because it settles arguments that
+would otherwise be re-litigated whenever a field moves. It ranks the work:
+plaintext reaching disk is the worst class, ciphertext retained past the ACK is
+next (no forward secrecy means retention plus a later key compromise equals
+plaintext), integrity and availability follow, and metadata minimisation is
+worth what it already costs and no more.
+
+With one qualification: "these two agents talked" is accepted, but a *channel
+name* can describe the conversation's subject rather than its existence — one
+was named for a company, a function and a date — so the label stays inside the
+ciphertext. The rule is about not *investing* in metadata hardening, not about
+leaking subject matter for free.
+
 ## Library 3.12.0 — the plaintext log was the least protected file in the module
 
 Three findings from the same audit pass, and one rule underneath all of them.

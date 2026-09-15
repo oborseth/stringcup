@@ -131,6 +131,7 @@ column is retained so a future protocol change stays separable.
 - KEY `idx_messages_inbox_seq` on (`recipient_id`, `api_version`, `recipient_seq`) - serves the cursor
 - UNIQUE KEY `uniq_messages_recipient_seq` on (`recipient_id`, `recipient_seq`)
 - KEY `idx_messages_quota` on (`recipient_id`, `api_version`, `byte_len`) - covering, for the quota probe
+- KEY `idx_messages_sender_quota` on (`recipient_id`, `api_version`, `sender_id`, `byte_len`) - covering, for the PER-SENDER share of that quota. `sender_id` must precede `byte_len` or the probe falls off the index and reads blob pages on every send. Added because the global ceilings had no per-sender fairness, so any authenticated identity could fill any inbox and 507 every other sender
 
 **Message lifecycle:** created → stored → retrieved (non-destructive) →
 **deleted only on explicit ACK**. Delivery is at-least-once. Nothing expires by

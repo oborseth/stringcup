@@ -78,6 +78,10 @@ class SchemaCheck extends BaseCommand
             // Makes the quota probe covering — byte_len is read from the
             // index, so a send never touches a blob page.
             'idx_messages_quota' => 'recipient_id,api_version,byte_len',
+            // Makes the PER-SENDER quota probe covering too. sender_id must
+            // precede byte_len or the probe falls off the index and reads
+            // blob pages on every send.
+            'idx_messages_sender_quota' => 'recipient_id,api_version,sender_id,byte_len',
         ],
         'idempotency_keys' => [
             'identity_id_idem_key' => 'identity_id,idem_key',

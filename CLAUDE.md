@@ -1356,6 +1356,26 @@ Two constraints worth knowing:
 
 ## Security Considerations
 
+**The operator's stated priority: CONTENT secrecy is paramount; the fact that
+two agents communicated is not what this defends.** Metadata visibility is an
+accepted cost, not an open problem. Use this to rank work:
+
+1. **Plaintext reaching disk or a third party** — the worst class. The
+   transcript at 0644 was the most serious defect this project has had.
+2. **Ciphertext retained past the ACK** — second, because there is no forward
+   secrecy, so retention plus a later static-key compromise equals plaintext.
+   The access log and `db:backup` were both this.
+3. **Integrity and availability** — real, but they do not expose content.
+   Header AAD and per-sender quota fairness sit here.
+4. **Metadata minimisation** — keep what exists, do not add complexity for it.
+
+**Do not spend design budget reducing metadata exposure**, and do not accept a
+complexity increase justified only by it. But note the qualification: a
+*channel name* can describe the conversation's subject rather than its
+existence — one was named for a company, a function and a date — so keeping
+the label inside the ciphertext remains right. The rule is about not
+*investing* in metadata hardening, not about leaking subject matter for free.
+
 The published threat model is `SECURITY.md` — what the relay can and cannot
 do, and why fingerprints must be verified out of band. Keep it in step with
 any change to the security posture; it is the document people will judge this

@@ -58,7 +58,22 @@ class MessageController extends BaseController
      * backpressure rather than quietly consuming the disk.
      */
     public const MAX_PENDING_MESSAGES = 2000;
-    public const MAX_PENDING_BYTES    = 67108864;     // 64 MiB
+    public const MAX_PENDING_BYTES    = 67108864;
+
+    /**
+     * One sender's share of a recipient's inbox, count and bytes.
+     *
+     * 10% and 25% of the global ceilings. Sized so ordinary conversation
+     * cannot reach them -- 200 unacknowledged messages from a single peer
+     * means the recipient has stopped acknowledging, which is the backpressure
+     * case the global limit already covers -- while an attacker can occupy
+     * only its own slice and the 507 it triggers lands on itself.
+     *
+     * Broadcast is unaffected: fan-out is N different recipients with one
+     * message each.
+     */
+    public const MAX_PENDING_PER_SENDER = 200;
+    public const MAX_PENDING_BYTES_PER_SENDER = 16777216;     // 64 MiB
 
     /**
      * Longest a client may park on an empty inbox, in seconds.
@@ -172,6 +187,30 @@ class MessageController extends BaseController
      *
      * @return array{0: int, 1: int} count, bytes
      */
+    /**
+     * Pending count and bytes for ONE sender into one recipient's inbox.
+     *
+     * Index-only via `idx_messages_sender_quota (recipient_id, api_version,
+     * sender_id, byte_len)` -- sender_id has to precede byte_len or the probe
+     * falls off the index and reads blob pages, which is the thing
+     * quotaRefusal() is documented never to do.
+     */
+    private function pendingUsageFromSender(
+        string $recipientExternalId,
+        string $senderExternalId
+    ): array {
+        $row = (new MessageModel())
+            ->selectCount('id', 'n')
+            ->selectSum('byte_len', 'bytes')
+            ->where('recipient_id', $recipientExternalId)
+            ->where('api_version', 2)
+            ->where('sender_id', $senderExternalId)
+            ->get()
+            ->getRowArray();
+
+        return [(int) ($row['n'] ?? 0), (int) ($row['bytes'] ?? 0)];
+    }
+
     private function pendingUsage(string $recipientExternalId): array
     {
         $row = (new MessageModel())
@@ -191,14 +230,59 @@ class MessageController extends BaseController
      * The message being offered is counted too, so a send is refused *before*
      * it takes the inbox over the line rather than after.
      */
-    private function quotaRefusal(string $recipientExternalId, int $incomingBytes): ?string
-    {
+    private function quotaRefusal(
+        string $recipientExternalId,
+        int $incomingBytes,
+        ?string $senderExternalId = null
+    ): ?string {
         [$count, $bytes] = $this->pendingUsage($recipientExternalId);
+
+        // PER-SENDER SHARE FIRST, so the refusal lands on whoever is actually
+        // consuming the inbox rather than on the next innocent sender.
+        //
+        // The global ceilings are a per-recipient resource with no fairness,
+        // so any authenticated identity could fill any inbox with 2000 valid
+        // messages and make every OTHER sender see 507. No crypto trick and
+        // no special position -- an auditor pointed out that the
+        // undecryptable-mail bug I had just fixed only made the symptom
+        // permanent, and was never the vulnerability.
+        //
+        // Pure accounting: the relay learns nothing it does not already store
+        // to route a message.
+        if ($senderExternalId !== null) {
+            [$mine, $myBytes] = $this->pendingUsageFromSender(
+                $recipientExternalId,
+                $senderExternalId
+            );
+
+            if ($mine + 1 > self::MAX_PENDING_PER_SENDER) {
+                return sprintf(
+                    'Your share of this recipient\'s inbox is full: %d of %d pending '
+                        . 'messages from you. This is a PER-SENDER limit, not the '
+                        . 'recipient being full -- other senders are unaffected. The '
+                        . 'recipient must acknowledge your messages before you can '
+                        . 'send more.',
+                    $mine,
+                    self::MAX_PENDING_PER_SENDER
+                );
+            }
+
+            if ($myBytes + $incomingBytes > self::MAX_PENDING_BYTES_PER_SENDER) {
+                return sprintf(
+                    'Your share of this recipient\'s inbox is full: %d of %d pending '
+                        . 'bytes from you. This is a PER-SENDER limit, not the '
+                        . 'recipient being full.',
+                    $myBytes,
+                    self::MAX_PENDING_BYTES_PER_SENDER
+                );
+            }
+        }
 
         if ($count + 1 > self::MAX_PENDING_MESSAGES) {
             return sprintf(
-                'Recipient inbox is full: %d of %d pending messages. The recipient must '
-                    . 'acknowledge messages before it can receive more.',
+                'Recipient inbox is full: %d of %d pending messages (GLOBAL limit, '
+                    . 'across all senders). The recipient must acknowledge messages '
+                    . 'before it can receive more.',
                 $count,
                 self::MAX_PENDING_MESSAGES
             );
@@ -380,7 +464,11 @@ class MessageController extends BaseController
 
             // Checked before any sequence is claimed, so a refused send does
             // not burn a number and leave a gap in either party's numbering.
-            $refusal = $this->quotaRefusal($recipientId, strlen($ciphertextDecoded));
+            $refusal = $this->quotaRefusal(
+                $recipientId,
+                strlen($ciphertextDecoded),
+                $senderExternalId
+            );
             if ($refusal !== null) {
                 if ($idemRowId !== null) {
                     // Release the reservation: the send did not happen, and a
@@ -635,7 +723,11 @@ class MessageController extends BaseController
                 // fail the whole fan-out: the rest still go and `failed` names
                 // who did not. Same partial-success contract this endpoint
                 // already has for an unknown recipient.
-                $refusal = $this->quotaRefusal($recipientId, $entryBytes);
+                $refusal = $this->quotaRefusal(
+                    $recipientId,
+                    $entryBytes,
+                    $senderExternalId
+                );
                 if ($refusal !== null) {
                     $reject($refusal);
                     continue;

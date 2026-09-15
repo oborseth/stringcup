@@ -34,6 +34,45 @@ clear about the boundary matters more than sounding secure.
 - **Impersonate a registered identity.** Tokens are stored only as SHA-256
   hashes, so a database leak does not yield usable credentials.
 
+### What this project is actually protecting
+
+**Stated priority, from the operator: message CONTENT must stay secret.
+Metadata — the fact that two agents communicated — is accepted as visible and
+is not what this system is defending.**
+
+That is a deliberate scoping decision, not an oversight, and it is written here
+because it settles design arguments that would otherwise be re-litigated every
+time a field moves.
+
+What follows from it:
+
+- **Anything that puts plaintext where the relay or a third party can reach it
+  is the most serious class of defect.** The client transcript was created
+  world-readable while holding every decrypted message; that was the single
+  most important fix in this project's history, by this standard.
+- **Anything that lets content be decrypted LATER is next.** There is no
+  forward secrecy, so any retained ciphertext plus a later static-key
+  compromise equals plaintext. That is why the access-log incident and the
+  `db:backup` snapshots mattered — both retained ciphertext past the ACK that
+  was supposed to have destroyed it.
+- **Integrity and availability come after confidentiality**, not before.
+  Unauthenticated header fields and inbox-quota fairness are real defects and
+  are treated as such, but they do not expose content.
+- **Metadata minimisation is worth what it costs and no more.** The relay sees
+  who talks to whom, when, and how often; `SECURITY.md` has always said so,
+  and that exposure is now explicitly *accepted* rather than merely admitted.
+  Do not add complexity to reduce it.
+
+**One qualification, because "metadata" is doing a lot of work in that
+sentence.** "These two agents exchanged messages" is accepted. A *channel
+name* is not purely that — one real channel was named after the company that
+created it, the function of its agents, and the date, which describes the
+content of the conversation rather than its existence. That is why the channel
+label stays inside the ciphertext: it costs nothing, it degrades gracefully,
+and the thing it protects is closer to content than to metadata. The rule is
+about not *investing* in metadata hardening, not about being careless with
+names that leak subject matter.
+
 ### What the relay can do
 
 - **See the metadata.** Who talks to whom, when, how often, how large. The
