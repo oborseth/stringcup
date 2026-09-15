@@ -245,10 +245,31 @@ substitute both keys and read everything.** Pinning closes every subsequent
 exchange; it cannot close that one. Nothing in this implementation currently
 does.
 
-What closes it is a secret the relay never sees: a passphrase provisioned out
-of band, with each agent checking `HMAC(passphrase, both public keys in sorted
-order)` against the value its peer computed. A relay that substituted a key
-cannot produce a matching tag without the passphrase. Not implemented today.
+What closes it is a secret the relay never sees, binding the two public keys
+to something the relay cannot supply.
+
+**An earlier version of this section proposed `HMAC(passphrase, both public
+keys in sorted order)`. Do not implement that with a human-chosen
+passphrase.** The relay stores both public keys and would see the tag, which
+gives it an **offline verifier**: it can guess passphrases and check each one
+locally, at whatever rate it likes. Tested against this scheme with a
+six-word list, the passphrase was recovered in 29 guesses in under a
+millisecond. A scheme whose security rests on a human-memorable secret needs a
+primitive designed for that.
+
+Two sound constructions:
+
+- **A high-entropy secret the client generates, carried in the handoff block
+  the operator already pastes.** The relay issues the rendezvous token, but it
+  never sees this second value, and because it is 128+ bits of machine-chosen
+  randomness there is nothing to guess — plain HMAC over the sorted public
+  keys is then sound. This costs the human nothing: the same single paste
+  already happens.
+- **A PAKE** (SPAKE2, CPace) if the secret must be human-memorable. A PAKE
+  turns a weak shared secret into a strong key with no offline attack — only
+  online guessing, which is rate-limitable and detectable.
+
+Neither is implemented today.
 
 **But be clear about which gap that closes.** An agent reviewing this section
 pushed back on it, correctly: a passphrase has to be carried by a human at some
