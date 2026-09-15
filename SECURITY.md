@@ -423,5 +423,38 @@ Two things to get right:
 
 - Keep `.env` out of the webroot and out of version control. The shipped
   `.gitignore` covers it; verify before your first push.
-- Keep `writable/` outside the document root. Database snapshots written by
-  `php spark db:backup` contain API token hashes.
+- Keep `writable/` outside the document root.
+
+**Database snapshots are the most sensitive artifact this system produces.**
+This document previously described them as containing "API token hashes",
+which is true and is the *least* sensitive field in them — `token_hash` is
+SHA-256 over 256 random bits and the row is worthless without a preimage.
+A snapshot taken without `--no-messages` also contains **every pending
+ciphertext**, with both party ids, headers and timestamps, plus the complete
+membership graph.
+
+That is the second time this document understated sensitivity in the
+reassuring direction (the first was the forgery sentence), and an auditor
+named the pattern: **when documenting what a file exposes, enumerate the worst
+field in it, not the one you happened to be thinking about.**
+
+**A snapshot re-creates the retention violation this project already fixed for
+the access log.** The store honours "only an acknowledgement deletes"; a
+snapshot does not. Take one today, the recipient acknowledges tomorrow, the
+relay honestly reports the mail as gone — and the ciphertext is still in
+`writable/backups/`, where a later compromise of that recipient's static key
+decrypts it. One snapshot on the reference host held six such ciphertexts and
+was redacted in place.
+
+Consequently:
+
+- **Use `php spark db:backup --no-messages`** for the command's stated purpose.
+  A schema migration needs the schema and the small tables, not other people's
+  sealed mail. Without the flag the command warns.
+- **Snapshots are created `0600` at creation time**, not chmod'd afterwards —
+  the write is the whole database, and it used to be world-readable for the
+  duration of it.
+- **Nothing prunes them automatically.** Pass `--prune-days N` or schedule it.
+  `RetentionSweeper` is reachability-based and does not touch this directory,
+  so an un-pruned snapshot silently falsifies the deletion guarantee for any
+  identity whose mail it captured.

@@ -119,6 +119,7 @@ EXPECTED_FEATURES = {
     "header_framed_verify": (3, 10, 0),
     "undecryptable_visible": (3, 10, 0),
     "structural_pin_rollback": (3, 11, 0),
+    "private_transcript": (3, 12, 0),
 }
 
 

@@ -1010,8 +1010,16 @@ def test_pairing_pin_lifecycle():
           "No failure path inside the exchange cleans up for itself")
     guard = source.split(
         "def _verify_pairing(")[1].split("def _verify_pairing_exchange(")[0]
-    check("except Exception:" in guard and "forget(peer_id)" in guard,
+    # BaseException, not Exception. KeyboardInterrupt and SystemExit do not
+    # derive from Exception, and the exchange does network I/O in a loop for up
+    # to `timeout` seconds -- exactly when an operator watching a hang presses
+    # Ctrl-C. That exit skipped the rollback: the same outcome through the one
+    # door the wrapper did not cover.
+    check("except BaseException:" in guard and "forget(peer_id)" in guard,
           "...the wrapper does it for EVERY exit, including ones not yet written")
+    check("except Exception:" not in guard,
+          "...and catches BaseException, so Ctrl-C mid-pairing cannot leave a "
+          "poisoned pin either")
 
     # A verify-framed message must not be ACKed until its tag is one of ours:
     # the header is unauthenticated, so a relay can bolt purpose/tag onto an

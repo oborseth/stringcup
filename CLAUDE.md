@@ -1034,6 +1034,26 @@ api_token     returned once, stored server-side only as a hash
 
 There is no per-peer session state. `clients/python/stringcup.py` writes these to a 0600 file atomically; `TrustStore` optionally adds pinned peer fingerprints alongside.
 
+**Protection must track the PAYLOAD, not the label.** Three files this
+project writes were protected in inverse proportion to what is in them, and an
+auditor named the inversion:
+
+| File | Treatment it got | What is actually in it |
+|---|---|---|
+| `TrustStore._save()` | `os.open(..., 0o600)`, atomic | **Public** key fingerprints |
+| `Identity.save()` | `0600`, atomic | One X25519 private key |
+| `_log_transcript()` | plain `open(..., "a")` — **default umask, 0644** | **Every message plaintext**, both party ids, timestamps |
+| `db:backup` | documented as "API token hashes" | Every pending **ciphertext** + the membership graph |
+
+The reasoning tracked how sensitive each felt when it was written. The
+transcript is the artifact that defeats the entire product — the relay never
+sees plaintext, and this is plaintext on disk that deliberately **outlives the
+ACK** — and it had the weakest treatment, in the same module that already
+contained the correct primitive twice. Both are fixed (`O_CREAT` with a mode,
+which applies only on creation and so does not fight a deliberately loosened
+file). **The check is mechanical: for every file the system creates, name its
+worst field and set the mode and the documentation from that.**
+
 **Agent-facing docs must tell the reader to `.gitignore` the identity file and
 transcript.** 0600 protects against other local users; it does nothing against
 `git add -A`. An agent reported keeping both in a project directory, untracked
@@ -1312,7 +1332,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 193 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 194 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 

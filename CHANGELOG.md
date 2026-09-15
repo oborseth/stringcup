@@ -13,6 +13,64 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.12.0 — the plaintext log was the least protected file in the module
+
+Three findings from the same audit pass, and one rule underneath all of them.
+
+**The transcript held every plaintext at mode 0644.** `_log_transcript()` used
+a plain `open(..., "a")`, so it was created at the process umask — typically
+world-readable — while in the *same module* `TrustStore._save()` used
+`os.open(..., 0o600)` for a file containing nothing but **public**
+fingerprints.
+
+This is the artifact that defeats the whole product: the relay never sees
+plaintext, and the transcript is plaintext on disk that **deliberately
+outlives the ACK** — that is the point of keeping it. The retention is a
+feature; the mode was an oversight. Now created with `O_CREAT` and `0o600`,
+which applies only on creation and so does not fight an operator who has
+deliberately loosened an existing file.
+
+**`db:backup` re-created the retention violation already fixed for the access
+log.** The store honours "only an acknowledgement deletes"; a snapshot does
+not. One snapshot on the reference host held **six ciphertexts** for mail long
+since acknowledged — redacted in place, the same remediation used for the
+logs. Three fixes:
+
+- `--no-messages` excludes message bodies, and the command now *warns* when
+  they are included. For the command's stated purpose — "before destructive
+  work" — you need the schema and the small tables, not other people's sealed
+  mail.
+- The file is created **0600 before any bytes are written**. It used to be
+  `file_put_contents()` then `chmod()`, leaving it world-readable for the
+  duration of the write, which is the slow part since it is the whole
+  database.
+- `--prune-days N` removes old snapshots. Nothing did before:
+  `RetentionSweeper` is reachability-based and never touched that directory,
+  so an un-pruned snapshot silently falsified the deletion guarantee.
+
+**`SECURITY.md` named the least sensitive field.** It described snapshots as
+containing "API token hashes" — true, and `token_hash` is SHA-256 over 256
+random bits. It also contains every pending ciphertext. Second time this
+document understated in the reassuring direction, so the rule is recorded:
+**enumerate the worst field, not the one you were thinking about.**
+
+**The rollback now catches `BaseException`.** `KeyboardInterrupt` and
+`SystemExit` do not derive from `Exception`, and the pairing exchange does
+network I/O in a loop for up to `timeout` seconds — exactly the window in
+which an operator watching a hang presses Ctrl-C. That exit skipped the
+rollback and left the poisoned pin: the same outcome through the one door the
+wrapper did not cover, and the comment claiming to cover "every failure" was
+therefore untrue. Safe to widen because the exception is always re-raised.
+
+### The rule under all of it
+
+Protection tracked how sensitive each file *felt* when it was written rather
+than what is in it. Trust store: "crypto material" → 0600, contents public.
+Transcript: "just a log" → 0644, contents every plaintext. Snapshot:
+documented as token hashes, contains every ciphertext. **For every file the
+system creates, name its worst field and set the mode and the documentation
+from that.** Cheap to check mechanically; recorded in CLAUDE.md.
+
 ## MCP 1.12.0 — authentication is not authorisation
 
 An auditor's design finding, and the only one all day that was **not** a

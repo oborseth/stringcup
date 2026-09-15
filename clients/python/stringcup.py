@@ -74,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.11.0"
+__version__ = "3.12.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 11, 0)
+version_info = (3, 12, 0)
 
 __all__ = [
     "Client",
@@ -180,6 +180,8 @@ FEATURES = {
     "undecryptable_visible": (3, 10, 0),  # Page.undecryptable, not silent drops
     # 3.11.0
     "structural_pin_rollback": (3, 11, 0),  # every pairing exit cleans up
+    # 3.12.0
+    "private_transcript": (3, 12, 0),     # the plaintext log is created 0600
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1363,8 +1365,17 @@ class Client:
         try:
             return self._verify_pairing_exchange(
                 info, secret, token, role, timeout)
-        except Exception:
-            # Every failure, including any added later.
+        except BaseException:
+            # BaseException, not Exception: KeyboardInterrupt and SystemExit do
+            # not derive from Exception, and the exchange does network I/O in a
+            # loop for up to `timeout` seconds -- which is exactly the window in
+            # which an operator watching a pairing hang presses Ctrl-C. That
+            # exit skipped the rollback and left the poisoned pin: the same
+            # outcome, through the one door the wrapper did not cover. Caught by
+            # an auditor, who also noted the comment here claimed to cover
+            # "every failure" and therefore was not true.
+            #
+            # Widening is safe because the exception is always re-raised.
             if created_pin and self.trust_store is not None:
                 self.trust_store.forget(peer_id)
                 self._pin_created_for = None
@@ -2598,6 +2609,23 @@ class Client:
         `inbox_seq` inbound) because the two are unrelated numbering spaces.
         Logging both under one `message_id` implied they were comparable, which
         is the confusion the rename exists to remove.
+
+        **Created 0600, because this file defeats the entire product.** The
+        relay never sees plaintext; this is plaintext, on disk, unencrypted,
+        and by design it OUTLIVES THE ACK — that is the point of keeping it.
+        The retention is deliberate; the file mode was not.
+
+        It used to be a plain `open(..., "a")`, so it was created at the
+        process umask, typically 0644 — world-readable — while in the same
+        module `TrustStore._save()` used `os.open(..., 0o600)` for a file
+        containing nothing but **public** fingerprints. An auditor named the
+        inversion: the protection tracked how sensitive the file *felt* when it
+        was written rather than what is actually in it. Three files, three
+        answers, and the one holding every plaintext had the weakest.
+
+        `O_CREAT` with a mode applies only on creation, so this sets the mode
+        for a new file and does not fight an operator who deliberately
+        loosened an existing one.
         """
         if not self.transcript:
             return
@@ -2611,7 +2639,12 @@ class Client:
                 "sent_seq" if direction == "out" else "inbox_seq": msg_id,
                 "text": text,
             }
-            with open(self.transcript, "a", encoding="utf-8") as fh:
+            fd = os.open(
+                self.transcript,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o600,
+            )
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             pass
