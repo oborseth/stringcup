@@ -420,18 +420,33 @@ peers hold pinned fingerprints against.
 So the prediction, recorded in advance because this project's best detector all
 week has been a number disagreeing with an expectation:
 
-> Every one of those 85 topics has a member whose token was last used around
+> Every grandfathered topic has a member whose token was last used around
 > **2026-09-15**. Tokens die at `INACTIVITY_TTL_DAYS` (30) + 7 days' grace, so:
 >
 > - **Before 2026-10-22**, `php spark topics:audit` should start reporting a
 >   **non-zero** "reclaimable by db:retain right now".
 > - **By roughly 2026-10-22**, "addressable by a human name" should have fallen
->   from **85 to 2** — `porkbun-support-agents-20260915` and `steve-agents`,
->   whose members are genuinely active.
+>   to **2** — `porkbun-support-agents-20260915` and `steve-agents`, whose
+>   members are genuinely active. **Key on the 2, not on the starting figure:**
+>   the first version of this prediction said "85 → 2" and was stale within the
+>   hour, because running the suites creates more topics (114 by that evening).
+>   A prediction whose starting number drifts is not falsifiable, which is the
+>   defect this prediction exists to avoid.
 >
-> **If it has not fallen, the reachability rule does not fire against
+> **If it has not fallen to 2, the reachability rule does not fire against
 > production data and that is a defect** — one that hand-cleaning would have
 > hidden permanently. Check it; do not assume it.
+
+**AGE IS THE WRONG AXIS AND THE DATA PROVES IT.** A tempting shortcut is
+"purge test topics older than N days". Measured: every topic on the relay was
+created within two days, and **both live channels were created the same day as
+the 87 test artefacts, hours apart** — so a 7-day rule deletes *nothing* today
+and *everything including the production channel* on day 8. Age is not a weak
+discriminator here, it is a perfectly non-discriminating one. Making it safe
+requires AND-ing the name classifier, which puts an unreliable regex in charge
+of a `DELETE`. This is also why `RetentionSweeper` reclaims by **reachability,
+never age**: a topic whose members broadcast hourly is in use however old it
+is, the same reasoning that forbids an age-based message expiry.
 
 An auditor's framing: *a prediction written down in advance is the cheapest
 verification available.* The missed "purge before freezing" ordering costs only
