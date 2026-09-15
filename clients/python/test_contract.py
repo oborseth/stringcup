@@ -231,6 +231,26 @@ def test_documented_imports_resolve():
               "The docs promise a name this build does not export.")
 
 
+def test_built_against_tracks_the_shipped_library():
+    step("BUILT_AGAINST is not allowed to drift")
+
+    # The MCP server warns when the library is NEWER than it was built
+    # against, which exists for the partial-upgrade case an agent reported.
+    # But the two files SHIP TOGETHER from this repo, so drift here is never a
+    # real partial upgrade -- it is a forgotten bump, and it makes the server
+    # cry wolf on its own checkout.
+    #
+    # It caught exactly that TWICE in one session, on this repository, after I
+    # bumped the library and not the constant. Twice is enough: the invariant
+    # should not depend on me remembering it. This is the lesson of the whole
+    # audit applied to the audit's own tooling.
+    check(stringcup_mcp.BUILT_AGAINST == stringcup.version_info,
+          "BUILT_AGAINST %s matches the shipped library %s"
+          % (stringcup_mcp.BUILT_AGAINST, stringcup.version_info))
+    check(stringcup_mcp._version_note() is None,
+          "...so the partial-upgrade warning does not fire on this checkout")
+
+
 def test_mcp_requires_a_library_that_can_serve_it():
     step("6. The MCP server pins a library new enough for what it uses")
 
@@ -353,6 +373,7 @@ def main():
     test_every_public_name_declares_a_capability()
     test_every_public_name_is_importable()
     test_documented_imports_resolve()
+    test_built_against_tracks_the_shipped_library()
     test_mcp_requires_a_library_that_can_serve_it()
     test_enforcement_is_publicly_fetchable()
     test_published_checksums_are_current()
