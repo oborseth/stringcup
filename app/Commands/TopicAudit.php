@@ -47,6 +47,17 @@ class TopicAudit extends BaseCommand
      */
     private const FIXTURE_PATTERN = '/^(live-mcp-|p11-topic-|v11-topic-|wire-|tid-|test-|fixture-)/';
 
+    /**
+     * The prediction, in code rather than in a document somebody must recall.
+     *
+     * Tokens die at INACTIVITY_TTL_DAYS (30) + 7 days' grace, and every
+     * grandfathered topic had a member last active around 2026-09-15.
+     */
+    private const PREDICTION_DEADLINE = '2026-10-22';
+
+    /** The two whose members are genuinely active. */
+    private const PREDICTION_FLOOR = 2;
+
     public function run(array $params)
     {
         $db = Database::connect();
@@ -133,6 +144,77 @@ class TopicAudit extends BaseCommand
             CLI::write('  never be scheduled.', 'green');
         }
 
-        return EXIT_SUCCESS;
+        return $this->checkPrediction($named, $reclaimable);
+    }
+
+    /**
+     * Check the written-down prediction, and FAIL once it is overdue.
+     *
+     * WHY THIS IS CODE AND NOT A NOTE. An auditor's advice was to record a
+     * prediction in advance -- "the count should fall to 2 by roughly
+     * 2026-10-22" -- because a number disagreeing with an expectation has been
+     * this project's most productive detector. It was duly written into
+     * CLAUDE.md, where **it depended on a human remembering to look**, in a
+     * project whose entire discipline is "enforced, not remembered". That was
+     * the wrong place for it and this is the right one: the check now runs
+     * whenever anyone runs the command, and turns into a non-zero exit when
+     * the deadline passes without the prediction holding.
+     *
+     * The prediction exists because `topics no member can reach any more`
+     * replaced two rules that were structurally dead for the project's entire
+     * life, so **nothing has ever exercised it against real data.** The
+     * grandfathered topics aging out is the only natural test it will get.
+     *
+     * It fails CLOSED but NARROWLY: only when there are grandfathered topics
+     * AND the deadline has passed AND none is reclaimable. A self-hoster with
+     * no such topics sees nothing, and neither does anyone before the date --
+     * so this cannot fire spuriously in somebody else's checkout, which is
+     * what would make it a test people learn to ignore.
+     */
+    private function checkPrediction(int $named, int $reclaimable): int
+    {
+        if ($named === 0) {
+            return EXIT_SUCCESS;
+        }
+
+        $deadline = new \DateTimeImmutable(self::PREDICTION_DEADLINE);
+        $now      = new \DateTimeImmutable('now');
+        $days     = (int) $now->diff($deadline)->format('%r%a');
+
+        CLI::newLine();
+        CLI::write('THE WRITTEN-DOWN PREDICTION', 'yellow');
+        CLI::write('  due                                  : ' . self::PREDICTION_DEADLINE
+            . ' (' . ($days >= 0 ? "in {$days} days" : abs($days) . ' days ago') . ')');
+        CLI::write('  expected by then                     : human-named topics == '
+            . self::PREDICTION_FLOOR . ', reclaimable > 0 before then');
+
+        if ($now < $deadline) {
+            CLI::write('  status                               : not due yet');
+
+            return EXIT_SUCCESS;
+        }
+
+        if ($named <= self::PREDICTION_FLOOR) {
+            CLI::write('  status                               : HELD -- the reclaim rule '
+                . 'fires against production data', 'green');
+
+            return EXIT_SUCCESS;
+        }
+
+        CLI::newLine();
+        CLI::error('PREDICTION FAILED, and this is the defect it was written to catch.');
+        CLI::error(sprintf(
+            '  %d topics are still addressable by a human name, expected %d, and %d '
+                . 'are reclaimable.',
+            $named,
+            self::PREDICTION_FLOOR,
+            $reclaimable
+        ));
+        CLI::error('  `topics no member can reach any more` replaced two rules that could');
+        CLI::error('  never fire. If the count has not fallen, it does not fire either --');
+        CLI::error('  check RetentionSweeper against real data rather than a dry run, and');
+        CLI::error('  do NOT hand-clean the rows, which would hide this permanently.');
+
+        return EXIT_ERROR;
     }
 }

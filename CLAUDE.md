@@ -450,9 +450,20 @@ is, the same reasoning that forbids an age-based message expiry.
 
 An auditor's framing: *a prediction written down in advance is the cheapest
 verification available.* The missed "purge before freezing" ordering costs only
-that the metric reads 85 instead of 2 for a few weeks — the exposure-relevant
+that the metric reads high instead of 2 for a few weeks — the exposure-relevant
 figure is 2 either way — so **do not take a destructive action to recover an
 ordering whose only benefit is a tidier graph.**
+
+**The prediction is enforced in `php spark topics:audit`, not left here to be
+remembered.** Writing it into this file was the wrong place: it made a check
+depend on a human looking, in a project whose whole discipline is *enforced,
+not remembered*. The command now prints the deadline and its status on every
+run, and **exits non-zero once the date passes without the count having
+fallen** — which is the defect the prediction exists to catch. It fails closed
+but narrowly: only when grandfathered topics exist *and* the deadline has
+passed *and* none is reclaimable, so it cannot fire spuriously in a
+self-hoster's checkout, which is what would make it a check people learn to
+ignore. Verified by moving the deadline into the past and watching it fail.
 
 ### The public dashboard
 
