@@ -119,6 +119,27 @@ class TopicController extends BaseController
                     return $this->failValidationErrors('members must be an array of identity ids');
                 }
                 $seed = $req['members'];
+
+                // The same two ceilings addMembersEndpoint() enforces. This
+                // path had neither, so the seed array went straight to
+                // addMembers(), which does one SELECT plus one INSERT per
+                // entry: a single request with 50,000 ids bought a
+                // 50,000-member topic and 100,000 queries for one of the
+                // 60/hour topics_post calls. Checked BEFORE the topic row is
+                // inserted, so a refused create leaves nothing behind.
+                // Found by an external code audit.
+                if (count($seed) > self::MAX_ADD_BATCH) {
+                    return $this->failValidationErrors(
+                        'members may contain at most ' . self::MAX_ADD_BATCH . ' identities'
+                    );
+                }
+
+                // +1 for the owner, who is added unconditionally below.
+                if (count($seed) + 1 > self::MAX_MEMBERS) {
+                    return $this->failValidationErrors(
+                        'A topic may hold at most ' . self::MAX_MEMBERS . ' members'
+                    );
+                }
             }
 
             $now     = date('Y-m-d H:i:s');
@@ -277,9 +298,16 @@ class TopicController extends BaseController
                 return $this->failValidationErrors('Invalid topic name');
             }
 
-            $topic = (new TopicModel())->findByName($name);
-            if (!$topic) {
-                return $this->failNotFound('Topic not found');
+            // Membership first, ownership second. Branching straight to 403
+            // on ownership answered "that topic exists, you are not its
+            // owner" to a complete stranger, which is the same existence
+            // oracle requireMembership() exists to avoid. A non-member now
+            // gets the same 404 it gets everywhere else; a member who simply
+            // is not the owner still gets 403, because it already knows the
+            // topic exists. Found by an external code audit.
+            [$topic, $error] = $this->requireMembership($name, $identity);
+            if ($error) {
+                return $error;
             }
 
             if ((int) $topic['owner_identity_id'] !== (int) $identity['id']) {
@@ -350,9 +378,11 @@ class TopicController extends BaseController
                 return $this->failValidationErrors('Invalid topic or identity name');
             }
 
-            $topic = (new TopicModel())->findByName($name);
-            if (!$topic) {
-                return $this->failNotFound('Topic not found');
+            // Same ordering fix as addMembersEndpoint: a non-member must not
+            // be able to tell "exists, forbidden" from "does not exist".
+            [$topic, $error] = $this->requireMembership($name, $identity);
+            if ($error) {
+                return $error;
             }
 
             $isOwner = (int) $topic['owner_identity_id'] === (int) $identity['id'];

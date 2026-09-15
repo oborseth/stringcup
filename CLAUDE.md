@@ -480,6 +480,97 @@ fails config validation.
 
 `Authorization` is not in any format, so bearer tokens were never logged.
 
+### What an external code audit found
+
+An outside audit of ~7.6k lines found real defects in places this file had
+been confident about. Recorded because several were *category* mistakes, not
+slips, and the categories will recur.
+
+**The relay sat behind a load balancer and nothing here knew it.** nginx sees
+a private `172.26.x.x` peer, `App::$proxyIPs` was empty, so CodeIgniter
+ignored `X-Forwarded-For` and `getIPAddress()` returned the *load balancer's*
+address. Every per-IP limit was therefore wrong in both directions at once:
+all callers shared a handful of LB buckets, so one agent registering 5
+identities exhausted registration for everyone arriving via that node; and
+because the LB rotates across several addresses, one caller got a full budget
+per node (measured: four concurrent budgets). `proxyIPs` is now
+`'172.26.0.0/16' => 'X-Forwarded-For'`. **The audit did not catch this — it
+assumed IP meant client, as this file did.** Whenever a limit is "per IP",
+confirm what the application actually receives.
+
+**An unauthenticated bearer string named a rate-limit bucket.**
+`getIdentifier()` bucketed on any `Authorization: Bearer <anything>` without
+validating it, so a fresh random token minted a fresh counter. The 5/hour
+registration cap became unlimited identity creation. Demonstrated live: four
+requests with one junk token counted 99/98/97/96, four with fresh junk tokens
+counted 99/99/99/99. `tokenExists()` now requires the token to resolve, and
+anything unresolvable falls back to IP. **A value only earns the right to
+partition a limit once it has been verified.**
+
+**The counter had a read-modify-write race.** The `LOCK_EX` covered the write
+and none of the arithmetic, so N concurrent requests each read the same
+window and each passed. `claimWindow()` now holds one lock across read,
+decide and write — the shape `LongPollGuard` already used. Verified: 30
+concurrent requests consume exactly 30 slots.
+
+**A debug route did unauthenticated INSERTs in production.**
+`GET /test/identityTest` inserted into `identities`, registered with no
+`ENVIRONMENT` guard and sitting outside `api/v2/*` so the rate limiter never
+saw it. Confirmed live before removal; one row existed, created by the
+confirmation, so it was never exploited. **Anything outside `api/v2/*` has no
+rate limiting at all** — that is the trap, not the missing guard.
+
+**`SECURITY.md` was wrong in the reassuring direction**, which is the worst
+direction for a threat model. It claimed a malicious relay "cannot produce
+ciphertext the recipient will decrypt without the recipient's key". v2 is
+*anonymous* ECIES: encrypting needs only the recipient's public key, which the
+relay itself serves, and the recipient derives the HKDF `info` from the
+`sender_id` the relay supplied. Demonstrated by forging a message between two
+identities using only the victim's public key. `PROTOCOL.md` had it right all
+along; only the document people judge the project by was wrong. Replay is
+likewise unprevented and was undocumented. **When the audit and a doc
+disagree, reproduce it before defending the doc.**
+
+**Batch ACK read every blob to delete it.** `findAll()` with no projection
+pulled `ciphertext` (LONGBLOB, up to 256 KiB) for a full page of 200 to read
+three integers — up to ~51 MiB, past `memory_limit`. The failure mode is the
+bad one: the ACK 500s, messages stay pending, and **the inbox can never
+drain**. Both ACK paths now `select('id, recipient_seq, created_at')`.
+
+**Rate-limit counter files were never deleted** by anything: not the sweeper,
+not a cron, and `DEPLOYING.md` says no cron is needed. The exhaustion is of
+*inodes*, and when `writable/` fills, sessions, cache, the long-poll slot file
+and the sweeper's own marker all fail together. `RetentionSweeper` now prunes
+files older than a day (the longest window is an hour).
+
+**`POST /topics` enforced neither membership ceiling** that
+`addMembersEndpoint` does, so one request could seed a 50,000-member topic and
+100,000 queries against one of 60 hourly calls. **When two endpoints reach the
+same writer, the limits belong on both.**
+
+**The topic existence oracle survived in two paths.** `requireMembership()`
+answers 404 so the namespace stays non-enumerable, but `addMembersEndpoint`
+and `removeMember` branched to 403 on *ownership* before checking membership —
+telling a stranger the topic exists. Both now go through
+`requireMembership()` first. **`create()` still returns 409 on a taken name
+and that is inherent**: the namespace is globally unique, so a caller must be
+told. Do not describe the namespace as non-enumerable without that caveat.
+
+**The batch send path was missing stats and the sweep** that the single-send
+path has, so fan-out was invisible on the dashboard and a broadcast-only relay
+never swept. Those compound, because a channel deployment takes that path
+almost exclusively. **When a second path is added beside an instrumented one,
+the instrumentation is part of the contract.**
+
+Smaller: `/health` disclosed `ENVIRONMENT` and per-subsystem state to
+anonymous callers in production; `del eph_priv` had a comment implying it
+zeroed key material, which it cannot; the intentional sequence gaps on a
+failed insert now say so in a comment.
+
+Still open and deliberate: `vendor/` and `system/` are committed including dev
+dependencies, so framework patches are manual and `composer audit` does not
+help. `TopicController::index()` is N+1.
+
 ### Scaling: what actually binds
 
 Measured on the current host (2 vCPU, 1938MB RAM, ~761MB free, 6 vhosts

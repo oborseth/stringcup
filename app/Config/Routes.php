@@ -54,6 +54,11 @@ $routes->group('api/v2', ['namespace' => 'App\Controllers\Api\V2'], static funct
     $routes->delete('topics/(:segment)/members/(:segment)', 'TopicController::removeMember/$1/$2');
 });
 
-$routes->get('test', 'Test::index');
-$routes->get('test/identityTest', 'Test::identityTest');
+// Deliberately no debug routes. `Test::identityTest` used to live here and
+// was an unauthenticated INSERT into `identities`, registered with no
+// ENVIRONMENT guard and sitting outside `api/v2/*` so RateLimitFilter never
+// saw it -- a one-line anonymous table-fill on a public host. Found by an
+// external code audit; confirmed live before removal. If you need a scratch
+// endpoint, guard it with `if (ENVIRONMENT !== 'production')` and put it
+// inside a rate-limited group.
 

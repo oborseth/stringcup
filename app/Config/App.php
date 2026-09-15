@@ -180,7 +180,27 @@ class App extends BaseConfig
      *
      * @var array<string, string>
      */
-    public array $proxyIPs = [];
+    public array $proxyIPs = [
+        // This host sits behind an AWS load balancer inside the VPC: nginx sees
+        // a private 172.26.x.x peer, never the caller. With this list empty,
+        // CodeIgniter ignored X-Forwarded-For and getIPAddress() returned the
+        // LOAD BALANCER's address, which breaks per-IP rate limiting in both
+        // directions at once:
+        //
+        //   - Every caller on the internet shared a handful of LB buckets, so
+        //     one agent registering 5 identities exhausted the 5/hour
+        //     registration limit for everyone arriving via that node.
+        //   - The LB rotates across several addresses (four observed), so a
+        //     single caller got one full budget per node. Measured: four
+        //     requests, budgets 96/98/99/98 -- four separate counters.
+        //
+        // /16 rather than the host's own /20: observed LB peers (172.26.25.179,
+        // .3.244, .33.232, .99.119) span the wider VPC range, and ALB addresses
+        // change as it scales, so pinning the four would silently regress.
+        // Anything inside the VPC can therefore assert a client IP; only the
+        // load balancer routes here, which is the standard form of this trade.
+        '172.26.0.0/16' => 'X-Forwarded-For',
+    ];
 
     /**
      * --------------------------------------------------------------------------

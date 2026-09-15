@@ -97,6 +97,20 @@ class HealthController extends BaseController
             $statusCode = 200; // Still return 200 for warnings
         }
 
+        // In production an anonymous caller gets the verdict and nothing else.
+        // A load balancer needs the status code; it does not need to be told
+        // which subsystem is failing, nor the ENVIRONMENT string. The detail
+        // stays available outside production, and the same information is in
+        // the log either way -- every branch above already logs. Reported by
+        // an external code audit as minor reconnaissance value, which is the
+        // right severity: it is a disclosure, not a hole.
+        if (ENVIRONMENT === 'production') {
+            $health = [
+                'status'    => $health['status'],
+                'timestamp' => $health['timestamp'],
+            ];
+        }
+
         return $this->response
             ->setJSON($health)
             ->setStatusCode($statusCode);

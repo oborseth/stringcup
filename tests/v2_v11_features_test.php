@@ -268,6 +268,18 @@ assert_code(404, $res, 'Roster no longer resolves');
 // ============================================================
 step('7. Server-assigned identifiers');
 // ============================================================
+// This suite needs SIX requests against the 5/hour registration bucket: four
+// real registrations above, plus the two rejection probes below. It used to
+// pass only because the limiter was broken -- it bucketed on any unvalidated
+// bearer string, and `getIPAddress()` returned the load balancer's address
+// rather than the caller's, so the effective limit was several times 5. With
+// both fixed the sixth request is correctly a 429, so reset here rather than
+// raise a limit that exists for a good reason.
+if (!reset_rate_limits()) {
+    echo "  note: not running on the server, so the registration bucket could\n";
+    echo "        not be reset; the probes below may legitimately 429.\n";
+}
+
 $res = api('POST', "$API_BASE/identities", [
     'external_id'         => 'chosen-name-' . $suffix,
     'identity_public_key' => base64_encode(generate_keypair()['pub']),

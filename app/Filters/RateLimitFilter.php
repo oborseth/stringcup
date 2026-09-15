@@ -82,32 +82,25 @@ class RateLimitFilter implements FilterInterface
         // Get identifier (authenticated token or IP address)
         $identifier = $this->getIdentifier($request);
 
-        $timestamps = $this->readWindow($identifier, $limitKey, $windowSeconds);
-
-        // Reset is when the oldest in-window request ages out.
-        $reset = $timestamps === []
-            ? time() + $windowSeconds
-            : min($timestamps) + $windowSeconds;
-
-        if (count($timestamps) >= $maxRequests) {
-            $this->budget = [
-                'limit'     => $maxRequests,
-                'remaining' => 0,
-                'reset'     => $reset,
-            ];
-
-            return $this->rateLimitedResponse($maxRequests, $windowSeconds, $reset);
-        }
-
-        // Record this request
-        $timestamps[] = time();
-        $this->writeWindow($identifier, $limitKey, $timestamps);
+        // Read, decide and record under ONE lock. Splitting them let N
+        // concurrent requests each read the same window, each conclude it was
+        // under the limit, and each overwrite the others -- so a caller
+        // issuing requests in parallel rather than serially exceeded any
+        // limit by roughly its concurrency. The lock used to cover only the
+        // write, which protected the file's integrity and none of the
+        // arithmetic that mattered. Found by an external code audit.
+        $claim = $this->claimWindow($identifier, $limitKey, $windowSeconds, $maxRequests);
 
         $this->budget = [
             'limit'     => $maxRequests,
-            'remaining' => max(0, $maxRequests - count($timestamps)),
-            'reset'     => min($timestamps) + $windowSeconds,
+            'remaining' => $claim['remaining'],
+            'reset'     => $claim['reset'],
         ];
+
+        if (!$claim['allowed']) {
+            return $this->rateLimitedResponse($maxRequests, $windowSeconds, $claim['reset']);
+        }
+
         return $request;
     }
 
@@ -250,14 +243,72 @@ class RateLimitFilter implements FilterInterface
         $authHeader = $request->getHeaderLine('Authorization');
         if ($authHeader && stripos($authHeader, 'Bearer ') === 0) {
             $plainToken = trim(substr($authHeader, 7));
-            if ($plainToken !== '') {
+
+            // The token must be REAL before it may name a bucket. This check
+            // is the whole point of the method.
+            //
+            // It used to bucket on any bearer string without validating it,
+            // which made every limit on an unauthenticated endpoint free:
+            // `Authorization: Bearer <random>` minted a brand-new counter per
+            // request, so the 5/hour registration cap became unlimited
+            // identity creation, and identities_get (100/hr) and stats_get
+            // (600/hr) went the same way. Registration ignores the header
+            // entirely, so there was nothing downstream to reject it either.
+            // Demonstrated against the live relay: four requests with one junk
+            // token counted 99, 98, 97, 96; four with fresh junk tokens
+            // counted 99, 99, 99, 99. Found by an external code audit.
+            //
+            // An unresolvable token falls through to the IP bucket, so a
+            // forged header can no longer buy a fresh budget -- at worst it
+            // shares the attacker's own IP bucket. A bare indexed existence
+            // check, deliberately: expiry and last_used_at belong to
+            // AuthFilter, and duplicating them here would put two answers to
+            // "is this token valid" in the codebase.
+            if ($plainToken !== '' && $this->tokenExists($plainToken)) {
                 // Hashed so no credential material reaches the cache filename.
                 return 'token:' . substr(hash('sha256', $plainToken), 0, 32);
             }
         }
 
-        // Unauthenticated endpoints (registration, lookup) fall back to IP.
+        // Unauthenticated endpoints (registration, lookup), and anyone
+        // presenting a token that does not resolve.
         return 'ip:' . $request->getIPAddress();
+    }
+
+    /**
+     * Does this bearer token correspond to a stored token at all?
+     *
+     * Existence only. A revoked-or-expired token still resolves here and so
+     * still gets its own bucket, which is correct: AuthFilter will reject the
+     * request, and the caller demonstrably holds a real credential, so it is
+     * not the anonymous case the IP bucket exists for.
+     */
+    protected function tokenExists(string $plainToken): bool
+    {
+        static $memo = [];
+
+        // Via the model, so there is one definition of how a token is hashed.
+        $hash = \App\Models\ApiTokenModel::hashToken($plainToken);
+        $key  = bin2hex(substr($hash, 0, 8));
+
+        // Memoised per request: before() and after() both run, and the filter
+        // instance is shared between them.
+        if (array_key_exists($key, $memo)) {
+            return $memo[$key];
+        }
+
+        try {
+            $found = db_connect()
+                ->table('api_tokens')
+                ->where('token_hash', $hash)
+                ->countAllResults() > 0;
+        } catch (\Throwable $e) {
+            // A limiter that fails closed would take the API down with the
+            // database. Treat it as anonymous and keep enforcing per IP.
+            $found = false;
+        }
+
+        return $memo[$key] = $found;
     }
 
     /**
@@ -265,39 +316,80 @@ class RateLimitFilter implements FilterInterface
      *
      * @return list<int>
      */
-    protected function readWindow(string $identifier, string $limitKey, int $windowSeconds): array
-    {
+    /**
+     * Claim one request against the window, atomically.
+     *
+     * Holds a single exclusive lock across the read, the decision and the
+     * write, which is the only way the count can be trusted: the previous
+     * split read/write meant concurrent callers each saw a stale window.
+     * `LongPollGuard` already used this shape.
+     *
+     * A rejected request is deliberately not recorded, so being throttled
+     * cannot extend the throttle.
+     *
+     * Fails OPEN. A limiter that cannot open its counter file must not take
+     * the API down with it; the alternative is a full disk turning into a
+     * total outage.
+     *
+     * @return array{allowed:bool, remaining:int, reset:int}
+     */
+    protected function claimWindow(
+        string $identifier,
+        string $limitKey,
+        int $windowSeconds,
+        int $maxRequests
+    ): array {
         $cacheFile = $this->getCacheFile($identifier, $limitKey);
 
-        if (!file_exists($cacheFile)) {
-            return [];
+        // 'c+' creates without truncating, so the handle is usable for both
+        // reading the existing window and rewriting it.
+        $handle = @fopen($cacheFile, 'c+');
+        if ($handle === false) {
+            return ['allowed' => true, 'remaining' => $maxRequests - 1, 'reset' => time() + $windowSeconds];
         }
 
-        $data = json_decode((string) file_get_contents($cacheFile), true);
-        if (!$data || !isset($data['requests']) || !is_array($data['requests'])) {
-            return [];
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                return ['allowed' => true, 'remaining' => $maxRequests - 1, 'reset' => time() + $windowSeconds];
+            }
+
+            $raw  = (string) stream_get_contents($handle);
+            $data = json_decode($raw, true);
+
+            $cutoff     = time() - $windowSeconds;
+            $timestamps = [];
+            if (is_array($data) && isset($data['requests']) && is_array($data['requests'])) {
+                $timestamps = array_values(array_filter(
+                    $data['requests'],
+                    static fn ($timestamp) => is_int($timestamp) && $timestamp > $cutoff
+                ));
+            }
+
+            // Reset is when the oldest in-window request ages out.
+            $reset = $timestamps === []
+                ? time() + $windowSeconds
+                : min($timestamps) + $windowSeconds;
+
+            if (count($timestamps) >= $maxRequests) {
+                return ['allowed' => false, 'remaining' => 0, 'reset' => $reset];
+            }
+
+            $timestamps[] = time();
+
+            ftruncate($handle, 0);
+            rewind($handle);
+            fwrite($handle, json_encode(['requests' => $timestamps]));
+            fflush($handle);
+
+            return [
+                'allowed'   => true,
+                'remaining' => max(0, $maxRequests - count($timestamps)),
+                'reset'     => min($timestamps) + $windowSeconds,
+            ];
+        } finally {
+            @flock($handle, LOCK_UN);
+            @fclose($handle);
         }
-
-        $cutoff = time() - $windowSeconds;
-
-        return array_values(array_filter(
-            $data['requests'],
-            static fn ($timestamp) => is_int($timestamp) && $timestamp > $cutoff
-        ));
-    }
-
-    /**
-     * Persist the pruned window.
-     *
-     * @param list<int> $timestamps
-     */
-    protected function writeWindow(string $identifier, string $limitKey, array $timestamps): void
-    {
-        file_put_contents(
-            $this->getCacheFile($identifier, $limitKey),
-            json_encode(['requests' => array_values($timestamps)]),
-            LOCK_EX
-        );
     }
 
     /**

@@ -211,6 +211,33 @@ function ecies_decrypt(string $my_priv, string $sender_id, string $my_id, array 
  *
  * @return array{0: string, 1: string} [assigned external_id, api_token]
  */
+/**
+ * Clear the server's rate-limit counters, when running on the server itself.
+ *
+ * Registration is 5/hour and deliberately so: it is the one unauthenticated
+ * write, and raising it would weaken the only barrier to identity farming.
+ * A suite that legitimately needs more than five registration-bucket calls
+ * therefore has to reset between sections rather than ask for a higher limit.
+ *
+ * Returns false when the directory is not reachable -- running from another
+ * host -- so the caller can carry on and let the 429 happen honestly instead
+ * of failing for a reason nobody can diagnose from the output.
+ */
+function reset_rate_limits(): bool {
+    $dir = __DIR__ . '/../../writable/cache/ratelimit';
+    if (!is_dir($dir) || !is_writable($dir)) {
+        return false;
+    }
+
+    foreach (glob($dir . '/*') ?: [] as $file) {
+        if (is_file($file)) {
+            @unlink($file);
+        }
+    }
+
+    return true;
+}
+
 function register_identity(string $apiBase, string $pub, string $displayName): array {
     $res = api('POST', "$apiBase/identities", [
         'identity_public_key' => base64_encode($pub),

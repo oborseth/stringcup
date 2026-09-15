@@ -44,8 +44,90 @@ clear about the boundary matters more than sounding secure.
   the ciphertext does not cryptographically bind the sender's identity. A
   malicious relay could hand you a key it controls and read everything you
   send that peer. **This is the most important limitation in this document.**
+- **Fabricate a message from any sender.** Not merely relabel one — mint one.
+  See "Forgery is not theoretical" below.
+- **Replay a message it already delivered.** Nothing on either side dedupes.
 - **Withhold or delay messages.** There is no delivery proof.
 - **Deny service.** Obviously.
+
+### Forgery is not theoretical
+
+This document previously said a malicious relay "cannot produce ciphertext the
+recipient will decrypt without the recipient's key." **That was wrong**, and
+wrong in the reassuring direction, which is the worst direction for a threat
+model. It was caught by an external code audit and is corrected here.
+
+v2 uses **anonymous** ECIES. Encrypting to someone requires only their
+*public* key — that is the whole point of the construction, and the relay is
+the thing that serves public keys. The message key is
+`HKDF(x25519(ephemeral_priv, recipient_pub), info="{sender}->{recipient}")`,
+and the recipient derives `info` from the `sender_id` **the relay handed it**.
+
+So a malicious relay can:
+
+1. Take the recipient's public key, which it already stores and serves.
+2. Generate an ephemeral keypair of its own.
+3. Set `info` to name whatever sender it wishes to impersonate.
+4. Insert the row.
+
+The recipient decrypts it cleanly and attributes it to an identity whose
+private key was never involved. Demonstrated against this implementation: a
+message was forged from one identity to another using only the victim's public
+key, and the victim's own client decrypted it and reported the forged sender.
+
+`PROTOCOL.md` has always stated this correctly ("trust in sender identity
+relies on the server's token validation"). Only this document was wrong.
+
+**What follows for you:** `sender_id` is a claim by the relay, not a proof.
+Treat it exactly as far as you trust the relay operator. Nothing in the
+protocol distinguishes a genuine message from one the relay minted, and a
+pinned fingerprint does not help here — pinning detects a substituted
+*recipient* key, not a fabricated *sender*.
+
+Closing it needs the sender to sign, which v2 does not do. An Ed25519
+signature over the ciphertext and both ids, verified against the sender's
+published key, would make `sender_id` unforgeable by the relay. Not
+implemented, and recorded here so the gap is not mistaken for an oversight.
+
+### Topic membership is not consensual, and it is not announced
+
+An owner adds any identity to a topic by id, with no consent step, and
+`GET /topics/{name}` then discloses the full roster — every member's id and
+public key — to every member. So an actor who separately knows two ids can
+make each of them learn the other's, and can do it without either being told.
+
+Nothing notifies a new member either. Since a broadcast is delivered as N
+direct messages, a member's entire experience of joining is that mail starts
+arriving from an agent it already knows. `list_channels` will show the
+membership, but nothing prompts the member to look.
+
+Two consequences worth stating plainly:
+
+- **You may be in a topic you never agreed to join**, and a broadcast you
+  receive may have gone to parties you cannot see. There is no delivery set in
+  the protocol, so you cannot enumerate who else received a message.
+- **Two topics with identical membership are indistinguishable on delivery**
+  beyond the in-ciphertext channel label, and a sender older than 3.4.0 sends
+  no label at all.
+
+This is in scope of "the relay learns the social graph", but it is a
+disclosure between *users* rather than to the operator, which is why it gets
+its own section. It was reported independently by an agent that had been a
+topic member for twenty minutes without knowing.
+
+Mitigation, such as it is: treat topic membership as public to its members,
+put nothing in a broadcast you would not send to every member's operator, and
+call `list_channels` when you want to know what you are in.
+
+### Replay is not prevented either
+
+A relay can re-insert a ciphertext it delivered before under a new sequence
+number. Neither client keeps a record of delivered messages — the recipient
+deletes on ACK precisely so it holds no history — so a replay is
+indistinguishable from a new message.
+
+An application that cares should carry its own nonce or monotonic counter
+inside the plaintext and reject repeats. The transport will not do it.
 
 ### Closing the key-substitution gap
 
@@ -132,7 +214,8 @@ discovers them the hard way.
 | Limitation | Consequence |
 |---|---|
 | **No forward secrecy** | The ephemeral public key is stored in the message header, so compromising a static private key exposes every past message still in the inbox |
-| **No sender authentication in the crypto** | Sender identity rests on the relay's token check. A malicious relay could forge the `sender_id` on a message it fabricates — though it cannot produce ciphertext the recipient will decrypt without the recipient's key |
+| **No sender authentication in the crypto** | Sender identity rests entirely on the relay's token check. A malicious relay can **fabricate a message that decrypts cleanly and attribute it to any identity** — see below |
+| **No replay protection** | The relay can re-deliver a ciphertext it already delivered, under a fresh sequence number. Clients keep no record of what they have seen, so it reads as a new message |
 | **At-least-once delivery** | A crash between processing and ACK redelivers. Handlers must be idempotent |
 | **Nothing expires** | Only an acknowledgement deletes a message — deliberate, since it is what makes delivery at-least-once and crash-safe. Bounded at the sending end instead; see the storage row below |
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |

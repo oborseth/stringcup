@@ -724,6 +724,13 @@ def encrypt(sender_id: str, recipient_id: str, recipient_pub_b64: str, plaintext
     # which is the layout the protocol expects.
     ct = AESGCM(msg_key).encrypt(iv, plaintext.encode(), None)
 
+    # Drops the last reference so the object becomes collectable sooner. It
+    # does NOT zero the key material: `cryptography` holds the scalar inside
+    # an OpenSSL object Python cannot overwrite, and immutable bytes cannot be
+    # wiped in place either. An earlier comment here implied more than the
+    # line does. Forward secrecy is not what this buys -- the ephemeral public
+    # key is stored in the header, so a compromised static key exposes past
+    # messages regardless. Noted by an external code audit.
     del eph_priv
 
     return {

@@ -404,6 +404,17 @@ class MessageController extends BaseController
             // sender is never told the recipient's — that would leak the
             // recipient's lifetime received count to anyone who can write to
             // them.
+            //
+            // Both numbers are claimed before the insert, so a failure between
+            // here and the insert() below burns a sequence in each party's
+            // space and leaves a gap. That is deliberate and harmless: the
+            // inbox cursor is a `>` range over recipient_seq, so a missing
+            // value is skipped rather than waited for, and neither number is
+            // promised to be gapless anywhere. Claiming after a successful
+            // insert would need a second write, and claiming inside a
+            // transaction would reintroduce the row lock claimSequence()
+            // exists to avoid. The quota check above runs first for the same
+            // reason -- a refused send should not burn a number at all.
             $recipientSeq = $identityModel->claimSequence($recipientId, IdentityModel::SEQ_RECEIVED);
             $senderSeq    = $identityModel->claimSequence($senderExternalId, IdentityModel::SEQ_SENT);
 
@@ -658,6 +669,19 @@ class MessageController extends BaseController
                 ];
             }
 
+            // Both of these were on the single-send path and missing here,
+            // so fan-out traffic was invisible on the public dashboard and a
+            // relay used only for broadcasts never swept at all -- the two
+            // omissions compounded, because a channel-based deployment takes
+            // this path almost exclusively. Counted per delivered message, to
+            // match what a batch actually is: N sends in one request.
+            // Found by an external code audit.
+            if ($sent !== []) {
+                Stats::bump(Stats::MESSAGES_RELAYED, count($sent));
+            }
+
+            (new RetentionSweeper())->maybeRun();
+
             $this->logWithContext('info', 'V2 batch send processed', [
                 'sender_id' => $senderExternalId,
                 'requested' => count($req['messages']),
@@ -894,8 +918,11 @@ class MessageController extends BaseController
                 return $this->failUnauthorized('Missing or invalid token');
             }
 
+            // Projected for the same reason as ackBatch below: there is no
+            // need to read a 256 KiB blob to delete the row it lives in.
             $msgModel = new MessageModel();
             $message  = $msgModel
+                ->select('id, recipient_seq, created_at')
                 ->where('recipient_id', $currentIdentity['external_id'])
                 ->where('recipient_seq', $id)
                 ->where('api_version', 2)
@@ -988,8 +1015,18 @@ class MessageController extends BaseController
             // Scoped to the caller, so an id belonging to another identity is
             // simply absent — indistinguishable from one that never existed,
             // which is what removes the oracle. See ack() above.
+            // select() is not an optimisation, it is what keeps this endpoint
+            // able to run. `ciphertext` is a LONGBLOB up to MAX_MESSAGE_BYTES
+            // (256 KiB); without the projection, acknowledging a full page of
+            // MAX_LIMIT (200) pulled up to ~51 MiB of blob into a buffered
+            // result to read three integers off it. Past memory_limit the ACK
+            // 500s, the messages stay pending, and the recipient's inbox can
+            // never drain -- a full inbox that cannot be emptied. Only
+            // recipient_seq, id and created_at are read below. Found by an
+            // external code audit.
             $msgModel = new MessageModel();
             $rows     = $msgModel
+                ->select('id, recipient_seq, created_at')
                 ->where('recipient_id', $recipientExternalId)
                 ->whereIn('recipient_seq', $ids)
                 ->where('api_version', 2)

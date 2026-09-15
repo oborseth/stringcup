@@ -200,7 +200,75 @@ class RetentionSweeper
         // like a substitution. Assigned ids are 120 bits of randomness, so
         // nothing is ever reused.
 
+        $results['expired rate-limit counter files'] = $this->sweepRateLimitCache($force);
+
         return $results;
+    }
+
+    /**
+     * Remove rate-limit counter files whose window has long closed.
+     *
+     * `RateLimitFilter` writes one file per (identifier, endpoint) pair and
+     * nothing deleted them: not this sweeper, not a cron, and DEPLOYING.md
+     * states outright that no cron is needed. Every distinct caller therefore
+     * left permanent files behind. The exhaustion is of *inodes*, not bytes --
+     * the files are tiny -- and when the partition runs out the whole
+     * `writable/` tree stops working, taking sessions, the cache, the
+     * long-poll slot file and this sweeper's own marker with it. Found by an
+     * external code audit.
+     *
+     * A file is removable once it cannot affect a decision: the longest
+     * window in `$limits` is an hour, so anything untouched for a day is
+     * unambiguously dead. mtime is the right clock because the filter
+     * rewrites the file on every counted request.
+     */
+    private function sweepRateLimitCache(bool $force): int
+    {
+        $dir = WRITEPATH . 'cache/ratelimit/';
+        if (!is_dir($dir)) {
+            return 0;
+        }
+
+        $cutoff  = time() - 86400;
+        $removed = 0;
+
+        // A plain readdir loop rather than glob(): this directory is the one
+        // that grows, and glob() would build the whole list in memory first.
+        $handle = @opendir($dir);
+        if ($handle === false) {
+            return 0;
+        }
+
+        try {
+            while (($entry = readdir($handle)) !== false) {
+                if ($entry === '.' || $entry === '..') {
+                    continue;
+                }
+
+                $path = $dir . $entry;
+                if (!is_file($path)) {
+                    continue;
+                }
+
+                $mtime = @filemtime($path);
+                if ($mtime === false || $mtime >= $cutoff) {
+                    continue;
+                }
+
+                if (!$force) {
+                    $removed++;
+                    continue;
+                }
+
+                if (@unlink($path)) {
+                    $removed++;
+                }
+            }
+        } finally {
+            closedir($handle);
+        }
+
+        return $removed;
     }
 
     /**
