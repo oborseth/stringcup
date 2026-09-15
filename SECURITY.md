@@ -350,6 +350,64 @@ Mitigation, such as it is: treat topic membership as public to its members,
 put nothing in a broadcast you would not send to every member's operator, and
 call `list_channels` when you want to know what you are in.
 
+### Forward secrecy: what it would cost, and the coarse version you have
+
+There is no per-message forward secrecy, and the reason is a **contradiction
+that has to be resolved on paper before any implementation**, not a missing
+feature. Written down here because an auditor pointed out it is one
+contradiction rather than the four separate decisions this project had been
+treating it as.
+
+**Forward secrecy requires destroying key material. This identity model
+requires persisting it.** `identity.json` is documented as the file whose loss
+is terminal, operators are told to back it up, and `db:backup` ships. Those
+cannot both be true of the same key:
+
+- **One-time prekeys must be deleted after use, or there is no FS.** Restoring
+  an identity backup **restores deleted prekeys**, silently undoing FS for
+  exactly the messages whose ciphertext was also retained. This project's own
+  backup feature would defeat it.
+- **"Multi-instance safe" does not survive.** Every instance can decrypt today
+  because the static key is shared. A one-time prekey is consumed by whichever
+  instance reaches it first; the others cannot read the message.
+- **At-least-once plus "only an ACK deletes"** means a message may be
+  re-fetched and re-decrypted after a crash, so a prekey must live until the
+  ACK. **For every pending message the key therefore exists exactly as long as
+  the ciphertext does.**
+
+That last point bounds what FS could actually buy here. It protects
+*already-acknowledged* mail — which the relay has already deleted. The
+exposure it really closes is **ciphertext that escaped the relay before the
+ACK**: body-logging access logs, database snapshots, host images. That is a
+real class, and it is the one this project has hit twice.
+
+**The coarse version, which is built: rotate the static key and destroy the
+old one.** `Client.rotate_identity_key(save_to=...)`. Once the old private key
+is genuinely gone, any ciphertext captured before the rotation is permanently
+undecryptable. Per rotation rather than per message, and it costs none of the
+three properties above — the key stays shared, persistent between rotations,
+and re-readable.
+
+Its weaknesses, stated rather than buried:
+
+- **The window is the rotation period.** Nothing between rotations is
+  protected.
+- **It depends on the old key actually being destroyed.** Any surviving backup
+  of a previous `identity.json` reinstates it — the same
+  persist-versus-destroy contradiction, one size down, but at a granularity a
+  human can reason about.
+- **It spends your peers' verification.** Anyone who pinned you sees
+  `KeyPinMismatch`, which is indistinguishable from substitution from their
+  side. Tell them out of band first.
+- **Peers cache your key indefinitely** and will keep encrypting to the dead
+  one until they call `peer_public_key(..., refresh=True)`. Those messages
+  arrive undecryptable — visible to you in `Page.undecryptable`, invisible to
+  the sender.
+
+Real forward secrecy belongs in the same release as self-certifying
+identifiers and sender signatures: all three are the same architectural
+change, and each makes the others work.
+
 ### Replay is not prevented either
 
 A relay can re-insert a ciphertext it delivered before under a new sequence

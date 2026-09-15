@@ -73,7 +73,7 @@ class MessageController extends BaseController
      * message each.
      */
     public const MAX_PENDING_PER_SENDER = 200;
-    public const MAX_PENDING_BYTES_PER_SENDER = 16777216;     // 64 MiB
+    public const MAX_PENDING_BYTES_PER_SENDER = 16777216;     // 16 MiB
 
     /**
      * Longest a client may park on an empty inbox, in seconds.

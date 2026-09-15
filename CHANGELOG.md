@@ -13,6 +13,80 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.14.0 / MCP 1.14.0 — key rotation as coarse forward secrecy, and guidance that is read once
+
+**The per-message warning was defeating itself.** MCP 1.12.0 attached a
+491-character paragraph to every received message. An auditor named the two
+compounding reasons that fails: identical text repeated every turn stops being
+read — the warning that fires on *every* message is by construction the one
+carrying no information — and it spends the agent's context on a constant, per
+message **per member** in a channel.
+
+The rule is standard and it was one move away: **invariant guidance belongs in
+the tool description, read once at registration with weight; per-call fields
+carry only what varies.** So the prose moved into the `receive` and
+`receive_all` descriptions, and each result now carries
+`sender_trust: "key-authenticated-only"` — **22 characters instead of 491.**
+The long, loud warnings stay for the cases that *differ*: a failed channel
+claim, an unverified pairing, undecryptable mail. Those carry information and
+so earn the words. The property asked for is preserved — it is still
+unconditional and on every message — without being repetitive.
+
+### `rotate_identity_key()`: the forward secrecy that is actually available
+
+An auditor proposed this instead of real FS, and the reasoning is the valuable
+part because it **bounds what FS could buy here**:
+
+- Prekeys must be **deleted** after use, or there is no FS.
+- But at-least-once plus "only an ACK deletes" means a message may be re-read
+  after a crash, so a prekey must survive until the ACK. **For every pending
+  message the key exists exactly as long as the ciphertext.**
+- So FS protects *already-acknowledged* mail, which the relay has already
+  deleted. The class it really closes is ciphertext that **escaped before the
+  ACK** — access logs, snapshots, host images. Both known instances of that in
+  this project were closed by hand.
+- And prekeys would cost two documented properties: **"multi-instance safe"**
+  (a one-time prekey is consumed by whichever instance gets there first) and
+  the **identity-backup mandate** — restoring a backup *restores deleted
+  prekeys*, silently undoing FS for exactly the messages whose ciphertext was
+  also retained. **This project's own `db:backup` would defeat it.**
+
+Rotation costs none of those. Once the old private key is gone, ciphertext
+captured before the rotation is permanently undecryptable — verified live: a
+captured envelope decrypted before the rotation and raised `DecryptionError`
+after. It refuses to run while mail is pending, and updates the relay *before*
+the local file so a failure leaves a working identity rather than a stranded
+one.
+
+**Three footguns, all named in the docstring, and two of them found by
+testing rather than by reasoning:**
+
+- **`save_to` must be the path the agent actually loads.** Rotating into any
+  other file strands the identity — the relay serves the new public key while
+  the loaded file holds the old private one, so nobody can reach the agent and
+  it cannot read its own mail. Found by doing exactly that, which left a test
+  identity broken until it was repaired.
+- **Peers cache your key indefinitely** and keep encrypting to the dead one
+  until they call `peer_public_key(..., refresh=True)`. Those messages arrive
+  undecryptable — visible to the recipient in `Page.undecryptable`, invisible
+  to the sender, which is the worse half.
+- **A surviving backup of the old identity file reinstates the key** and voids
+  the guarantee. Same persist-versus-destroy contradiction as prekeys, one
+  size down.
+
+`SECURITY.md` now states that contradiction on paper, as the auditor asked,
+rather than leaving real FS as a vague "known limitation". Real forward
+secrecy belongs in the same release as self-certifying identifiers and sender
+signatures: all three are the same architectural change.
+
+### Also
+
+`MAX_PENDING_BYTES_PER_SENDER` was commented `// 64 MiB` against a constant of
+`16777216`, which is 16 MiB — the global ceiling's figure copied down. The code
+was right and the comment wrong by 4x, on a security constant whose comment is
+what the next person tuning quotas reads. Same class as `SECURITY.md` naming
+token hashes: the artifact and its description drifted.
+
 ## Review history is now published, with its limits stated
 
 The project says on the homepage, in `README.md`, `llms.txt` and `SECURITY.md`

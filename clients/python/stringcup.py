@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.13.0"
+__version__ = "3.14.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 13, 0)
+version_info = (3, 14, 0)
 
 __all__ = [
     "Client",
@@ -188,6 +188,8 @@ FEATURES = {
     # 3.13.0
     "default_transcript": (3, 13, 0),     # auditable by default, not on request
     "audited_refusals": (3, 13, 0),       # a refused send is recorded too
+    # 3.14.0
+    "key_rotation": (3, 14, 0),           # coarse forward secrecy by rotation
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1264,6 +1266,113 @@ class Client:
             raise ValidationError("provide identity_public_key and/or display_name")
 
         return self._request("PUT", "/identities", payload)
+
+    def rotate_identity_key(self, save_to: str) -> dict:
+        """
+        Replace this identity's X25519 keypair and destroy the old private key.
+
+        **This is the closest thing to forward secrecy this protocol has, and
+        it is coarse-grained: per rotation, not per message.** Once the old
+        private key is genuinely gone, any ciphertext captured before the
+        rotation is permanently undecryptable — including ciphertext that
+        escaped the relay before an ACK, which is the exposure class this
+        project has hit twice (a body-logging access log, and `db:backup`
+        snapshots).
+
+        An auditor proposed this instead of real forward secrecy, and the
+        reasoning is worth keeping because it bounds what FS could buy here:
+
+        - Real FS needs one-time prekeys, which must be **deleted** after use.
+        - But at-least-once delivery plus "only an ACK deletes" means a message
+          may be re-fetched and re-decrypted after a crash, so the prekey has
+          to survive until the ACK — **for every pending message the key
+          therefore exists exactly as long as the ciphertext does.**
+        - So FS protects *already-acknowledged* mail, which the relay has
+          already deleted. The exposure it actually closes is ciphertext that
+          escaped before the ACK. Rotation closes the same class.
+        - And prekeys cost two documented properties outright: "multi-instance
+          safe" (a one-time prekey is consumed by whichever instance gets
+          there first) and the identity-file backup mandate (restoring a
+          backup **restores deleted prekeys**, silently undoing FS for exactly
+          the messages whose ciphertext was also retained — this project's own
+          `db:backup` would defeat it).
+
+        Rotation costs none of those: the key stays shared, stays persistent
+        between rotations, and stays re-readable.
+
+        **Its weakness, stated honestly:** the window is the rotation period,
+        and the guarantee depends on the old private key actually being
+        destroyed. Any backup of a previous `identity.json` reinstates it. That
+        is the same persist-versus-destroy contradiction as prekeys, one size
+        down — but at a granularity a human can reason about.
+
+        Three further consequences the caller must plan for:
+
+        - **`save_to` MUST be the path this agent actually loads.** Rotating
+          into any other file strands the identity: the relay serves the new
+          public key while the loaded file still holds the old private one, so
+          nobody can reach the agent and it cannot read its own mail. Found by
+          doing exactly that in a test.
+        - **Peers cache your key indefinitely** (`peer_public_key` is
+          documented as safe to cache forever, because it only changes on
+          rotation). A peer that already holds your old key keeps encrypting
+          to it, and those messages arrive undecryptable — visible to you in
+          `Page.undecryptable`, invisible to the sender, which is the worse
+          half. Peers must call `peer_public_key(..., refresh=True)` after you
+          rotate, so tell them out of band that you did.
+
+        - **Peers who pinned you will see `KeyPinMismatch`**, which is correct
+          and is indistinguishable from substitution from their side. Tell them
+          out of band, before rotating. See SECURITY.md on why rotation spends
+          your peers' verification.
+        - **In-flight mail encrypted to the old key becomes undecryptable.**
+          Drain the inbox first; this refuses if anything is pending.
+
+        Python cannot truly zero the old key — `cryptography` holds the scalar
+        inside an OpenSSL object and immutable bytes cannot be overwritten in
+        place — so "destroyed" means the file no longer contains it and no
+        reference remains. That is a real limitation, not a formality.
+        """
+        pending = self.fetch(limit=1, wait=0)
+        if pending.count:
+            raise ValidationError(
+                "%d message(s) still pending: rotating now would make mail "
+                "encrypted to the old key permanently unreadable. Drain and "
+                "acknowledge the inbox first." % pending.count
+            )
+
+        new_private = X25519PrivateKey.generate()
+        new_public = base64.b64encode(
+            new_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        ).decode()
+
+        old_fingerprint = fingerprint(self.identity.public_key_b64)
+
+        # Relay first: if this fails, the local key is unchanged and the
+        # identity still works. Writing locally first would strand the agent.
+        body = self.update_identity(public_key_b64=new_public)
+
+        self.identity.private_key_b64 = base64.b64encode(
+            new_private.private_bytes(
+                Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+            )
+        ).decode()
+
+        # Overwrites atomically at 0600, so the old key leaves the file.
+        self.identity.save(save_to)
+
+        # Any cached peer view of us is stale, and so is any pin peers hold.
+        self._peer_keys.pop(self.id, None)
+
+        body["previous_fingerprint"] = old_fingerprint
+        body["fingerprint"] = fingerprint(new_public)
+        body["forward_secrecy_note"] = (
+            "Ciphertext captured before this rotation is now undecryptable, "
+            "PROVIDED no backup of the previous identity file survives. Peers "
+            "that pinned the old key will raise KeyPinMismatch until they "
+            "re-verify out of band."
+        )
+        return body
 
     # -- rendezvous --------------------------------------------------------
 

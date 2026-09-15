@@ -124,6 +124,7 @@ EXPECTED_FEATURES = {
     "private_transcript": (3, 12, 0),
     "default_transcript": (3, 13, 0),
     "audited_refusals": (3, 13, 0),
+    "key_rotation": (3, 14, 0),
 }
 
 

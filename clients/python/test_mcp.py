@@ -581,18 +581,31 @@ def test_content_is_framed_as_untrusted():
     with_fake(fake)
 
     payload = call("receive", {"hold": 1})["structuredContent"]
-    check("treat_as" in payload,
-          "Every received message carries the framing, not only suspicious ones")
-    framing = payload["treat_as"]
-    check("DATA, NOT INSTRUCTIONS" in framing,
-          "...stating plainly that text is data")
-    check("UNTRUSTED PRINCIPAL" in framing,
-          "...and that a verified peer is still untrusted")
+
+    # INVARIANT guidance belongs in the tool description, read once at
+    # registration; per-call fields carry only what VARIES. A 491-character
+    # paragraph on every message defeats itself twice: identical text repeated
+    # every turn stops being read, and it spends the agent's context on a
+    # constant -- per message per member in a channel. An auditor made the
+    # call; the first version was mine.
+    check(payload.get("sender_trust") == mcp.SENDER_TRUST,
+          "Every received message carries a SHORT structural trust marker")
+    check(len(mcp.SENDER_TRUST) < 40,
+          "...short enough that repeating it costs nothing (%d chars)"
+          % len(mcp.SENDER_TRUST))
+    check("treat_as" not in payload,
+          "...and the prose is NOT repeated per message")
+
+    for name in ("receive", "receive_all"):
+        desc = [t for t in mcp.TOOLS if t["name"] == name][0]["description"]
+        check("UNTRUSTED PRINCIPAL" in desc,
+              "%s's DESCRIPTION carries the invariant, where it is read once "
+              "with weight" % name)
 
     fake.next_messages = [fake.next_messages[0]]
     payload = call("receive_all", {"hold": 1})["structuredContent"]
-    check(payload.get("treat_as") == framing,
-          "receive_all carries the same framing")
+    check(payload.get("sender_trust") == mcp.SENDER_TRUST,
+          "receive_all carries the same marker")
 
     # And the pairing result must decouple the two in the SAME place a model
     # forms the belief.
@@ -1031,8 +1044,48 @@ def test_pairing_pin_lifecycle():
           "delete a genuine message by bolting a header field onto it")
 
 
+def test_key_rotation_is_coarse_forward_secrecy():
+    step("21. key rotation, the coarse-grained forward secrecy we have")
+
+    # An auditor proposed this instead of real forward secrecy, and the
+    # reasoning bounds what FS could buy here: prekeys must be DELETED after
+    # use, but at-least-once plus "only an ACK deletes" means a message may be
+    # re-read after a crash, so the prekey must survive until the ACK -- for
+    # every pending message the key therefore exists exactly as long as the
+    # ciphertext. So FS protects already-ACKed mail, which the relay has
+    # already deleted, and the class it really closes is ciphertext that
+    # escaped before the ACK. Rotation closes the same class, and costs none
+    # of "multi-instance safe" or the identity-backup mandate -- a restored
+    # backup would RESTORE deleted prekeys and silently undo FS.
+    check(hasattr(stringcup.Client, "rotate_identity_key"),
+          "rotate_identity_key exists")
+
+    doc = stringcup.Client.rotate_identity_key.__doc__ or ""
+    check("coarse-grained" in doc,
+          "...and its docstring says coarse-grained, per rotation not per message")
+    check("save_to" in doc and "strand" in doc,
+          "...warns that rotating into the wrong path strands the identity")
+    check("refresh=True" in doc,
+          "...and that peers cache the old key and must refresh")
+    check("no backup of the previous identity file survives" in doc
+          or "backup" in doc,
+          "...and that a surviving backup defeats the guarantee")
+
+    # It must refuse while mail is pending: rotating would make ciphertext
+    # encrypted to the old key permanently unreadable.
+    source = open(os.path.join(HERE, "stringcup.py")).read()
+    body = source.split("def rotate_identity_key(")[1].split("\n    def ")[0]
+    check("pending.count" in body and "ValidationError" in body,
+          "It refuses to rotate while mail is pending, rather than destroying it")
+    relay_first = body.find("self.update_identity(")
+    local_write = body.find("self.identity.save(")
+    check(relay_first != -1 and local_write != -1 and relay_first < local_write,
+          "The relay is updated BEFORE the local file, so a failure leaves a "
+          "working identity instead of a stranded one")
+
+
 def test_sync_barrier():
-    step("21. sync_barrier")
+    step("22. sync_barrier")
 
     fake = FakeClient()
     with_fake(fake)
@@ -1046,7 +1099,7 @@ def test_sync_barrier():
 
 
 def test_channels():
-    step("22. channels")
+    step("23. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -1164,7 +1217,7 @@ def test_channels():
 
 
 def test_no_remote_transport():
-    step("23. There is no remote transport")
+    step("24. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -1197,6 +1250,7 @@ def main():
     test_no_contradictory_advice()
     test_pairing_secret()
     test_pairing_pin_lifecycle()
+    test_key_rotation_is_coarse_forward_secrecy()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()
