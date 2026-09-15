@@ -825,6 +825,26 @@ client. The tool list makes the right call obvious to a *new* reader, and does
 nothing for the population that actually hits this. No good answer; do not
 pretend the docs solve it.
 
+**The MCP server writes a transcript BY DEFAULT** (1.13.0), one file per
+session under `transcripts/` beside the identity file, mode `0600` at creation,
+disabled with `STRINGCUP_TRANSCRIPT=off`. Three things to preserve:
+
+- **The mode fix had to land BEFORE the default flip, and did** (3.12.0). On
+  its own, default-on at the old umask would have turned a feature nobody used
+  into a plaintext exposure on every install. They are one change, not two.
+- **One file per session, not one growing file.** Rotation was rejected —
+  truncating an audit trail discards the oldest records, and after the relay
+  deletes on ACK this is the only copy. Per-session names are sortable so "the
+  current session" is the newest.
+- **`SECURITY.md` must keep disclosing it.** "Only an acknowledgement deletes"
+  describes the relay and is now false for every install's own disk. That is
+  intended; leaving it undocumented is the access-log mistake again.
+
+The inversion that produced this: the *optional* trust store got a sensible
+default while the *wanted* audit trail was off unless an operator knew an env
+var existed. An auditor found it; the operator confirmed the transcript should
+be optional but on by default.
+
 `Client(transcript="./chat.jsonl")` appends every message in and out. The relay
 deletes a message on ACK, so without it there is no record afterwards — and an
 agent whose context was compacted cannot pick the thread back up.

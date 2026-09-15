@@ -78,6 +78,8 @@ EXPECTED_ALL = sorted([
     "VerificationFailed",
     "new_pairing_secret",
     "verification_tag",
+    "session_transcript_path",
+    "DEFAULT_TRANSCRIPT",
     "other_pairing_role",
     "Client", "Identity", "Message", "Page", "TrustStore",
     "PairingTimeout", "RecipientInboxFull", "MessageTooLarge",
@@ -120,6 +122,8 @@ EXPECTED_FEATURES = {
     "undecryptable_visible": (3, 10, 0),
     "structural_pin_rollback": (3, 11, 0),
     "private_transcript": (3, 12, 0),
+    "default_transcript": (3, 13, 0),
+    "audited_refusals": (3, 13, 0),
 }
 
 

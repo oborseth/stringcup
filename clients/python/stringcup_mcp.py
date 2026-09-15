@@ -27,7 +27,11 @@ Environment:
     STRINGCUP_IDENTITY    identity file path (default ~/.stringcup/identity.json)
     STRINGCUP_BASE_URL    relay base URL (default https://stringcup.com/api/v2)
     STRINGCUP_TRUST_STORE pinned peer fingerprints (default alongside identity)
-    STRINGCUP_TRANSCRIPT  JSONL log of every message in and out (optional)
+    STRINGCUP_TRANSCRIPT  JSONL log of every message in and out. ON BY DEFAULT:
+                          one file per session under <identity dir>/transcripts/,
+                          mode 0600. Set an explicit path to move it, or
+                          STRINGCUP_TRANSCRIPT=off to disable. It holds PLAINTEXT
+                          and deliberately outlives the ACK.
 
 Why this exists: every integration failure observed from real agents was a
 client problem, not a protocol problem — a stale library copy, a callback that
@@ -43,8 +47,10 @@ Licensed under the Apache License, Version 2.0.
 from __future__ import annotations
 
 import json
+import binascii
 import os
 import sys
+import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
@@ -72,7 +78,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.12.0"
+__version__ = "1.13.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -107,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 11, 0)
+BUILT_AGAINST = (3, 13, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -168,10 +174,64 @@ def _log(message: str) -> None:
 
 _client: Optional[Client] = None
 
+#: Resolved once, at import, so a whole session shares one file.
+_TRANSCRIPT: Optional[str] = None
+
 
 def _identity_path() -> str:
     return os.environ.get("STRINGCUP_IDENTITY") or DEFAULT_IDENTITY
 
+
+#: Set STRINGCUP_TRANSCRIPT to this to turn the transcript off.
+TRANSCRIPT_OFF = ("off", "0", "none", "no", "false", "disabled")
+
+
+def _transcript_path() -> Optional[str]:
+    """
+    Where this session's transcript goes. **On by default.**
+
+    It used to be `os.environ.get("STRINGCUP_TRANSCRIPT")` with no default, so
+    the audit trail was OFF unless an operator knew to set a variable -- while
+    the *trust store*, which is optional, did get a default. The optional thing
+    was configured and the wanted thing was not. An auditor spotted the
+    inversion; the operator confirmed the transcript should be optional but
+    **done by default**.
+
+    ONE FILE PER SESSION, named for when it started. The alternative was one
+    file growing forever, and rotation was rejected: truncating an audit trail
+    discards the oldest records, which is its own failure mode, and after the
+    relay deletes on ACK this is the only copy. Per-session files keep
+    everything, bound each file naturally, and stay navigable. The name is
+    sortable so "the current session" is simply the newest.
+
+    A short random suffix, because two servers starting in the same second
+    would otherwise share a file.
+
+    Under `transcripts/` rather than beside `identity.json`: the identity file
+    often lives in a project directory, and a plaintext archive of every
+    conversation dropped next to it is one `git add -A` from being published.
+    A single directory is also one `.gitignore` line.
+
+    Returns None when disabled.
+    """
+    configured = os.environ.get("STRINGCUP_TRANSCRIPT")
+
+    if configured is not None:
+        if configured.strip().lower() in TRANSCRIPT_OFF or configured.strip() == "":
+            return None
+        return configured
+
+    base = os.path.dirname(_identity_path()) or "."
+    directory = os.path.join(base, "transcripts")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    suffix = binascii.hexlify(os.urandom(2)).decode()
+
+    return os.path.join(directory, "session-%s-%s.jsonl" % (stamp, suffix))
+
+
+_TRANSCRIPT = _transcript_path()
 
 _startup_note = _version_note()
 if _startup_note:
@@ -206,9 +266,14 @@ def client() -> Client:
         path,
         base_url=os.environ.get("STRINGCUP_BASE_URL", stringcup.DEFAULT_BASE_URL),
         trust_store=TrustStore(store_path),
-        transcript=os.environ.get("STRINGCUP_TRANSCRIPT"),
+        transcript=_TRANSCRIPT,
     )
     _log("identity %s (%s)" % (_client.id, _client.my_fingerprint_short))
+    if _TRANSCRIPT:
+        _log("transcript %s (0600; set STRINGCUP_TRANSCRIPT=off to disable)"
+             % _TRANSCRIPT)
+    else:
+        _log("transcript DISABLED: no local record will survive an ACK")
     return _client
 
 
@@ -248,6 +313,11 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # identity. An agent reported using this field for exactly that. Do not
         # remove it.
         "identity_file": _identity_path(),
+        # Load-bearing for the same reason as identity_file: an operator needs
+        # to know a plaintext archive is being written, and WHERE, without
+        # reading source. It is on by default now, so most holders of one will
+        # not have chosen it. null means disabled.
+        "transcript_file": _TRANSCRIPT,
     }
 
 

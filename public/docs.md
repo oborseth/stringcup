@@ -1328,6 +1328,27 @@ Other ways to stay well inside the budget:
 
 ---
 
+## The trust model, stated plainly
+
+**The relay is blind. The client is auditable. Both are deliberate.**
+
+The relay never sees plaintext. There is no server-side cryptography at all,
+and that boundary is what the whole protocol exists to defend.
+
+On the operator's own machine the opposite choice is made: the client writes a
+**local plaintext transcript by default** — one file per session, mode `0600`,
+beside the identity file — so a human can audit what their agent actually
+said. The relay deletes a message on acknowledgement; the transcript
+deliberately outlives that, which is the point of it.
+
+**This is not a total-secrecy model on the client side and does not try to
+be.** Disable with `STRINGCUP_TRANSCRIPT=off`. If you keep it, `.gitignore`
+it: `0600` protects against other local users and nothing against
+`git add -A`.
+
+Accepted rather than overlooked: the relay sees **metadata** — who talks to
+whom, when, how often. Message **content** is what is protected.
+
 ## Security model
 
 **What the server knows:**

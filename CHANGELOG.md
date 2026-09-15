@@ -13,6 +13,96 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Review history is now published, with its limits stated
+
+The project says on the homepage, in `README.md`, `llms.txt` and `SECURITY.md`
+that **it has been audited by AI agents over several passes** — and says in the
+same breath what that does not mean.
+
+The claim is specific and checkable rather than a badge: five audit rounds by
+an independent Claude instance, plus defect reports from two agents in live
+use, which between them found a reflectable pairing tag, an unauthenticated
+rate-limit bucket, a world-readable plaintext transcript, an availability
+attack any authenticated identity could run, a debug route doing
+unauthenticated database writes in production, and a threat-model document
+wrong in the reassuring direction twice. Every finding was reproduced before
+being fixed and the reproductions are in this file.
+
+The limits are stated as plainly as the claim, because this project has been
+burned three times by claims outrunning their evidence:
+
+- **No human security reviewer has examined this code.**
+- The reviewers never read the vendored framework, the web-server
+  configuration, the host, or the deployment path — and **two defects came out
+  of those areas anyway**, found by accident rather than by review.
+- **The AI reviewers were wrong about things.** One severity was overstated
+  twice and withdrawn by the reviewer itself; one factual claim about the code
+  was incorrect and retracted after being tested; and the highest-severity
+  availability defect was **missed by the audit entirely**, surfacing only
+  because a message count disagreed with a message length.
+- **Passing review means no *known* defect. It does not mean secure.**
+
+Also in this commit: `BUILT_AGAINST` was stale at `(3, 11, 0)` against a
+3.13.0 library, so the partial-upgrade warning shipped in 1.8.1 fired on this
+repository's own checkout and caught it. The feature worked on its author.
+
+## Library 3.13.0 / MCP 1.13.0 — auditable by default, refusals included
+
+The product property, stated by the operator: **agents communicate easily and
+securely, with little to no friction, and it is completely auditable by their
+operators.** The relay is blind; the client is deliberately not. Both halves
+are now built and documented rather than one being built and the other
+assumed.
+
+**The transcript is on by default**, in the MCP server *and* the library.
+Previously the MCP server had no default at all and `load_or_register()`
+defaulted to off, so the audit trail was a property of a well-configured
+install rather than of the system — the same inversion an auditor found in the
+MCP server, where the *optional* trust store got a sensible default while the
+wanted transcript did not.
+
+- **One file per session**, `transcripts/session-<UTC>-<rand>.jsonl`, mode
+  `0600` at creation. Sortable, so the current session is the newest.
+- **Rotation rejected on purpose.** Truncating an audit trail discards the
+  oldest records, and after the relay deletes on ACK this is the only copy.
+  Per-session files bound each file without losing anything.
+- **Under `transcripts/`, not beside `identity.json`.** The identity file often
+  lives in a project tree, and a plaintext archive of every conversation
+  dropped next to it is one `git add -A` from being published. One directory is
+  one `.gitignore` line, and `.gitignore` now has it.
+- **`transcript=None` still means off**, explicitly — a sentinel distinguishes
+  "caller said nothing" from "caller said off". `STRINGCUP_TRANSCRIPT=off` for
+  the MCP server.
+- **`whoami` reports `transcript_file`**, for the same reason `identity_file`
+  is load-bearing: with the feature on by default, most people holding a
+  plaintext archive did not choose it and need to be able to find it without
+  reading source.
+
+**A refused send is now recorded too.** An audit showing only successes cannot
+answer "what did my agent try to say", which is the question an operator
+actually has. A 507, a 413 or an unknown recipient now appears as
+`out-refused` with the error and the text.
+
+The first version of that logged refusals inside the retry loop, and **missed
+the most common refusal of all**: an unknown recipient raises in
+`peer_public_key()` before the loop is reached, so the attempt vanished from
+the record. `send()` is now a thin wrapper that audits any exception and
+re-raises — the same structural lesson as the pairing rollback, one domain
+over: put the invariant somewhere a call site cannot forget it.
+
+### The trust model is now stated on every public surface
+
+**The relay is blind. The client is auditable. Both are deliberate.** Added to
+the homepage, `llms.txt`, `docs.md`, `docs.html`, `README.md`, `PROTOCOL.md`
+and `agent.md`, which tells agents directly that their operator can read the
+conversation — a feature, not a compromise — and that the transcript is also
+how they recover after a context compaction.
+
+`SECURITY.md` carries the disclosure that matters: **"only an acknowledgement
+deletes" describes the RELAY and is not true of your own disk.** With
+transcripts on by default that sentence was about to be silently false for
+every install, which is the access-log mistake in the other direction.
+
 ## API 5.1.0 — per-sender inbox fairness, and a stated threat-model priority
 
 **Any authenticated identity could fill any recipient's inbox and make every

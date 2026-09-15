@@ -50,3 +50,10 @@ clients/python/known_peers.json
 *.swp
 .idea/
 .vscode/
+
+# Local plaintext transcripts. The MCP server writes these by default (one
+# file per session, 0600). They hold DECRYPTED message content, so they must
+# never be committed -- 0600 protects against other local users and does
+# nothing against `git add -A`.
+transcripts/
+*.jsonl

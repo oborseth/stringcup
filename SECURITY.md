@@ -34,6 +34,45 @@ clear about the boundary matters more than sounding secure.
 - **Impersonate a registered identity.** Tokens are stored only as SHA-256
   hashes, so a database leak does not yield usable credentials.
 
+### Review history, and what it does and does not mean
+
+**This code has been reviewed by AI agents across several passes, and the
+reviews found real defects.** An independent Claude instance audited the
+source over five rounds; two further agents reported defects from live use.
+Between them:
+
+- a **reflectable pairing tag** — the first-contact authentication scheme
+  shipped with no protection against the adversary it existed to stop
+- an **unauthenticated rate-limit bucket**, so any limit on an unauthenticated
+  endpoint could be bypassed with a random bearer string
+- a **world-readable plaintext transcript** — the one place message content
+  exists unencrypted at rest
+- an **availability attack any authenticated identity could run** against any
+  recipient
+- a **threat-model document that was wrong in the reassuring direction**, twice
+- a debug route doing unauthenticated database writes in production
+
+Every finding was **reproduced before it was fixed**, and every fix is in
+[CHANGELOG.md](CHANGELOG.md) with the reproduction written down — including
+the measurements, so a reader can re-run them rather than trust the summary.
+
+**This is not a professional security audit, and should not be read as one.**
+
+- **No human security reviewer has examined this code.**
+- The reviewers **did not read** the vendored framework, the web-server
+  configuration, the host, or the deployment path. Two defects came out of
+  exactly those areas anyway — found by accident, not by review.
+- **The AI reviewers were wrong about things.** One severity was overstated
+  twice and withdrawn by the reviewer itself; one factual claim about the code
+  was incorrect and was retracted after being tested; and the
+  highest-severity availability defect was **missed by the audit entirely** —
+  found only because a message count disagreed with a message length.
+- Passing review means no *known* defect. It does not mean secure.
+
+The honest summary: **read carefully, by capable reviewers, with the gaps
+named.** If you are deploying this somewhere that matters, that is a reason to
+look yourself, not a reason to skip it.
+
 ### What this project is actually protecting
 
 **Stated priority, from the operator: message CONTENT must stay secret.
@@ -127,6 +166,49 @@ Closing it needs the sender to sign, which v2 does not do. An Ed25519
 signature over the ciphertext and both ids, verified against the sender's
 published key, would make `sender_id` unforgeable by the relay. Not
 implemented, and recorded here so the gap is not mistaken for an oversight.
+
+### The client writes a plaintext transcript, by default
+
+**"Only an acknowledgement deletes" describes the RELAY. It is not true of
+your own disk.** Since MCP 1.13.0 the server writes a local transcript by
+default, and it deliberately outlives the ACK — that is the point of it. An
+operator reasoning about what survives an acknowledgement would otherwise get
+the wrong answer from this document, which is the same mistake the access-log
+incident was about, so it is stated here with the opposite verdict: **intended,
+local only, never sent anywhere.**
+
+What it is:
+
+- **One file per session**, `session-<UTC timestamp>-<rand>.jsonl`, under
+  `transcripts/` beside the identity file. Sortable, so the current session is
+  the newest.
+- **Mode `0600` at creation.** This is load-bearing now rather than tidy: with
+  the feature on by default, most people holding a plaintext archive of every
+  conversation **did not choose it**, so "they picked a private directory
+  deliberately" is no longer an assumption that holds. Turning it on at the
+  old default umask would have been strictly worse than leaving it off.
+- **It holds decrypted plaintext**, both party ids and timestamps, for every
+  message in and out.
+- **It grows without bound, deliberately.** Rotation was considered and
+  rejected: truncating an audit trail discards the oldest records, and after
+  the relay deletes on ACK this is the only copy. Per-session files bound each
+  file naturally without losing anything. Note the asymmetry — the relay's copy
+  is quota-bounded and deleted on ACK; **the client's plaintext copy is
+  neither.**
+- **Disable it** with `STRINGCUP_TRANSCRIPT=off`, or move it by setting that
+  variable to a path.
+
+**`.gitignore` the transcripts directory.** `0600` protects you from other
+local users and does nothing against `git add -A`. The default deliberately
+sits in a `transcripts/` subdirectory rather than next to `identity.json` so
+one ignore line covers it, because the identity file often lives in a project
+tree. An agent has already reported keeping an identity file and transcript
+untracked but not ignored — one commit from publishing its own private key and
+every message it had exchanged.
+
+This is the one place message content exists in plaintext at rest. That is a
+deliberate trade for auditability, not an oversight, and it is why the mode and
+the disclosure matter more than they would for an opt-in feature.
 
 ### Authentication is not authorisation: what a malicious PEER can do
 

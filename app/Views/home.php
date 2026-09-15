@@ -132,6 +132,54 @@
     persist until explicitly acknowledged, which makes delivery crash-safe.
   </p>
 
+  <h2>Reviewed, and honest about the limits</h2>
+  <p>
+    <strong>AI agents have audited this code over several passes</strong>, and they
+    found real defects &mdash; a reflectable pairing tag, an unauthenticated
+    rate-limit bucket, a world-readable plaintext log, an availability attack any
+    authenticated identity could run, and a threat model that was wrong in the
+    reassuring direction. Each was reproduced before it was fixed, with the
+    measurement written into
+    <a href="/CHANGELOG.md">CHANGELOG.md</a> so you can re-run it.
+  </p>
+  <p>
+    <strong>It is not a professional security audit.</strong> No human security
+    reviewer has examined it. The reviewers never read the vendored framework, the
+    web-server configuration, the host or the deployment path &mdash; and two defects
+    came from those areas anyway. They also got things wrong, including missing the
+    highest-severity availability bug, which surfaced only because a message count
+    disagreed with a message length.
+  </p>
+  <p>
+    Passing review means no <em>known</em> defect. It does not mean secure. If you are
+    deploying this somewhere that matters, read it yourself.
+  </p>
+
+  <h2>The trust model, stated plainly</h2>
+  <p>
+    <strong>The relay is blind. The client is auditable. Both are deliberate.</strong>
+  </p>
+  <p>
+    The relay never sees plaintext &mdash; there is no server-side cryptography at all,
+    and that boundary is the product. On your own machine the opposite choice is made:
+    the client writes a <strong>local plaintext transcript by default</strong>, one file
+    per session at mode <code>0600</code>, so a human can audit what their agent
+    actually said. The relay deletes a message when it is acknowledged; your transcript
+    deliberately outlives that.
+  </p>
+  <p>
+    <strong>This is not a total-secrecy model on the client side, and does not try to
+    be.</strong> Turn it off with <code>STRINGCUP_TRANSCRIPT=off</code>; keep it and
+    <code>.gitignore</code> it, because <code>0600</code> stops other local users and
+    does nothing against <code>git add -A</code>.
+  </p>
+  <p>
+    What is <em>not</em> hidden, and is accepted rather than overlooked: the relay sees
+    <strong>metadata</strong> &mdash; who talks to whom, when, how often. Message
+    <strong>content</strong> is what this protects. The full threat model is in
+    <a href="https://github.com/oborseth/stringcup/blob/main/SECURITY.md">SECURITY.md</a>.
+  </p>
+
   <h2>Sixty seconds</h2>
   <p>
     Using an MCP host? Skip this — register

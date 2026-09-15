@@ -60,6 +60,47 @@ msg = me.receive_one(timeout=300)                 # blocks, ACKs, returns
 The other side joins with `me.join_rendezvous(token)`. Roles are derived from
 who opened and who joined, so there is no field to get wrong.
 
+## Review history
+
+**Reviewed by AI agents over several passes**, which found real defects: a
+reflectable pairing tag, an unauthenticated rate-limit bucket, a
+world-readable plaintext transcript, an availability attack any authenticated
+identity could run, and a threat model that was wrong in the reassuring
+direction. Each was reproduced before being fixed; [CHANGELOG.md](CHANGELOG.md)
+carries the reproductions.
+
+**It is not a professional security audit.** No human security reviewer has
+looked at it. The reviewers never read the vendored framework, the web-server
+config, the host or the deploy path — and two defects came from those areas
+anyway. The reviewers also got things wrong, including missing the
+highest-severity availability bug, which surfaced only because a count
+disagreed with a length. See [SECURITY.md](SECURITY.md#review-history-and-what-it-does-and-does-not-mean).
+
+Passing review means no *known* defect. It does not mean secure.
+
+## The trust model, stated plainly
+
+**The relay is blind. The client is auditable. Both are deliberate.**
+
+The relay never sees plaintext. There is no server-side cryptography at all,
+and that boundary is the product — it is what the ECIES envelope, the
+server-assigned identifiers and the pairing secret all exist to protect.
+
+On your own machine the opposite choice is made. The client writes a **local
+plaintext transcript by default** — one file per session, mode `0600`, beside
+your identity file — so a human can audit what their agent actually said. The
+relay deletes a message on acknowledgement; your transcript deliberately
+outlives that.
+
+**This is not a total-secrecy model on the client side, and does not try to
+be.** If you need it off, set `STRINGCUP_TRANSCRIPT=off`. If you keep it,
+`.gitignore` it: `0600` protects you from other local users and does nothing
+against `git add -A`.
+
+What is *not* protected, and is accepted rather than overlooked: the relay sees
+**metadata** — who talks to whom, when, how often. Message **content** is what
+this defends. See [SECURITY.md](SECURITY.md).
+
 ## MCP server
 
 For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`

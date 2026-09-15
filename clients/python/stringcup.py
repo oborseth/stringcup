@@ -38,6 +38,7 @@ Protocol reference: https://stringcup.com/PROTOCOL.md
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -74,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.12.0"
+__version__ = "3.13.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 12, 0)
+version_info = (3, 13, 0)
 
 __all__ = [
     "Client",
@@ -106,6 +107,8 @@ __all__ = [
     "new_pairing_secret",
     "verification_tag",
     "other_pairing_role",
+    "session_transcript_path",
+    "DEFAULT_TRANSCRIPT",
 ]
 
 #: Capability name -> the version that introduced it.
@@ -182,6 +185,9 @@ FEATURES = {
     "structural_pin_rollback": (3, 11, 0),  # every pairing exit cleans up
     # 3.12.0
     "private_transcript": (3, 12, 0),     # the plaintext log is created 0600
+    # 3.13.0
+    "default_transcript": (3, 13, 0),     # auditable by default, not on request
+    "audited_refusals": (3, 13, 0),       # a refused send is recorded too
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -277,6 +283,37 @@ VERIFY_BODY = "[stringcup] pairing verification"
 #: The pre-3.10.0 in-band form, still ACCEPTED so a peer on 3.8/3.9 can still
 #: complete a pairing. Never sent. Remove once those versions are gone.
 VERIFY_PREFIX = "[stringcup:verify="
+
+
+#: Distinguishes "caller said nothing" from "caller said off".
+#:
+#: `transcript=None` has always meant off, so a default cannot be expressed by
+#: changing that. This sentinel lets `load_or_register()` default the audit
+#: trail ON while `transcript=None` still turns it off explicitly.
+DEFAULT_TRANSCRIPT = object()
+
+
+def session_transcript_path(identity_path: str) -> str:
+    """
+    Where this session's transcript goes, derived from the identity path.
+
+    One file per session rather than one growing file: rotation would discard
+    the oldest records, and after the relay deletes on ACK this is the only
+    copy. The name is sortable, so the current session is the newest.
+
+    Under `transcripts/` rather than beside the identity file, because the
+    identity file often lives in a project tree and a plaintext archive of
+    every conversation dropped next to it is one `git add -A` from being
+    published. One directory is also one `.gitignore` line.
+    """
+    base = os.path.dirname(identity_path) or "."
+    directory = os.path.join(base, "transcripts")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    suffix = binascii.hexlify(os.urandom(2)).decode()
+
+    return os.path.join(directory, "session-%s-%s.jsonl" % (stamp, suffix))
 
 
 def new_pairing_secret() -> str:
@@ -499,6 +536,9 @@ FEATURE_OF = {
     "new_pairing_secret": "pairing_secret",
     "verification_tag": "pairing_secret",
     "other_pairing_role": "directional_pairing_tag",
+    # 3.13.0 — auditable by default.
+    "session_transcript_path": "default_transcript",
+    "DEFAULT_TRANSCRIPT": "default_transcript",
 }
 
 
@@ -1169,6 +1209,7 @@ class Client:
         path: str,
         base_url: str = DEFAULT_BASE_URL,
         display_name: Optional[str] = None,
+        transcript=DEFAULT_TRANSCRIPT,
         **kwargs,
     ) -> "Client":
         """
@@ -1179,6 +1220,22 @@ class Client:
         you the same identity back — an agent that registers on every start
         both locks itself out and becomes unreachable at the id its peer knows.
         """
+        # AUDITABLE BY DEFAULT, not on request.
+        #
+        # The product property is that agents communicate with little friction
+        # and their operators can audit it completely. An audit trail that
+        # only exists when someone passes an argument is a property of a
+        # well-configured install, not of the system -- and the same inversion
+        # was already found in the MCP server, where the *optional* trust store
+        # got a sensible default while the wanted transcript did not.
+        #
+        # `transcript=None` still means off, explicitly. Only the unspecified
+        # case changes.
+        if transcript is DEFAULT_TRANSCRIPT:
+            transcript = session_transcript_path(path)
+
+        kwargs["transcript"] = transcript
+
         if os.path.exists(path):
             return cls(Identity.load(path), base_url=base_url, **kwargs)
 
@@ -1708,6 +1765,36 @@ class Client:
         header_extra: Optional[Dict[str, str]] = None,
     ) -> int:
         """
+        Encrypt and send, recording the attempt either way.
+
+        A thin wrapper so that EVERY failure is audited, not the subset that
+        happens to pass through one `except` block. The first version of this
+        logged refusals inside the retry loop, which missed the most common
+        refusal of all: an unknown recipient raises in `peer_public_key()`
+        before the loop is reached, so the attempt vanished from the record.
+        Same lesson as the pairing rollback -- put the invariant somewhere a
+        call site cannot forget it.
+
+        An audit that shows only what succeeded cannot answer "what did my
+        agent try to say", which is the question an operator actually has.
+        """
+        try:
+            return self._send_attempt(
+                recipient_id, text, idempotency_key, retries, header_extra)
+        except BaseException as exc:
+            self._log_transcript(
+                "out-refused", recipient_id, None, text, error=str(exc))
+            raise
+
+    def _send_attempt(
+        self,
+        recipient_id: str,
+        text: str,
+        idempotency_key: Optional[str] = None,
+        retries: int = 3,
+        header_extra: Optional[Dict[str, str]] = None,
+    ) -> int:
+        """
         Encrypt and send. Returns **your own** outbound sequence number.
 
         There is no shared message id. Each party numbers a message in its own
@@ -1783,6 +1870,7 @@ class Client:
                     last_exc = exc
                     time.sleep(_backoff(attempt))
                     continue
+
                 raise
             except (urllib.error.URLError, OSError) as exc:
                 if attempt < retries:
@@ -2601,7 +2689,8 @@ class Client:
         self._maybe_throttle(bucket)
         return json.loads(raw) if raw else {}
 
-    def _log_transcript(self, direction: str, peer: str, msg_id, text: str) -> None:
+    def _log_transcript(self, direction: str, peer: str, msg_id, text: str,
+                        error: Optional[str] = None) -> None:
         """
         Append one JSONL record. Never raises — logging must not break a send.
 
@@ -2639,6 +2728,11 @@ class Client:
                 "sent_seq" if direction == "out" else "inbox_seq": msg_id,
                 "text": text,
             }
+            if error is not None:
+                # A refused attempt is part of the record. An audit that shows
+                # only what succeeded cannot answer "what did my agent try to
+                # say", which is the question an operator actually has.
+                record["error"] = error
             fd = os.open(
                 self.transcript,
                 os.O_WRONLY | os.O_CREAT | os.O_APPEND,
