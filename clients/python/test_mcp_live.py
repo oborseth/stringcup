@@ -288,11 +288,15 @@ def main():
         c = carol.call("whoami")
 
         import time as _time
-        channel = "live-mcp-%d" % int(_time.time())
+        label = "live-mcp-%d" % int(_time.time())
         bogus = "sc-" + "z" * 24
         made = alice.call("create_channel",
-                          {"name": channel, "members": [b["id"], c["id"], bogus]})
+                          {"label": label, "members": [b["id"], c["id"], bogus]})
+        # The RELAY assigns this. The label above never left Alice's machine.
+        channel = made["channel_id"]
         check(made["created"] is True, "Alice created channel %s" % channel)
+        check(channel.startswith("tp-"), "The relay assigned an opaque channel id")
+        check(made["label"] == label, "The label is echoed back as a local convenience")
         check(made["owner"] == a["id"], "Alice is the owner")
         check(made["unknown"] == [bogus],
               "A mistyped identifier is reported, and the valid ones still land")
@@ -311,13 +315,13 @@ def main():
         dup = None
         try:
             alice.call("create_channel",
-                       {"name": channel + "-dup", "members": [b["id"], c["id"]]})
+                       {"label": label + "-dup", "members": [b["id"], c["id"]]})
         except RuntimeError as exc:
             dup = str(exc)
         check(dup is not None and "already own" in dup,
               "A channel duplicating one you own is refused, naming it")
 
-        roster = alice.call("channel_info", {"name": channel})
+        roster = alice.call("channel_info", {"channel_id": channel})
         check(roster["count"] == 3, "Roster holds all three, creator included")
         ids = sorted(m["id"] for m in roster["members"])
         check(ids == sorted([a["id"], b["id"], c["id"]]), "Roster names the right agents")
@@ -327,11 +331,20 @@ def main():
         check(by_id[a["id"]]["me"] is True, "Alice's own entry is flagged")
 
         mine = carol.call("list_channels")
-        check(any(ch["name"] == channel and ch["mine"] is False
+        check(any(ch["channel_id"] == channel and ch["mine"] is False
                   for ch in mine["channels"]),
-              "Carol sees the channel and knows she does not own it")
+              "Carol sees the channel by its assigned id and knows she does not own it")
+        # Carol learned the owner's label from the ENCRYPTED membership notice,
+        # or has none and falls back to the id. Both are correct; inventing a
+        # local name would mean two members disagreeing about one channel.
+        carols = [ch for ch in mine["channels"] if ch["channel_id"] == channel][0]
+        check(carols["label"] in (None, label),
+              "A member either learned the owner's label or has none -- never a "
+              "name it made up")
+        check(carols["legacy_name"] is None,
+              "A channel created after the freeze carries no relay-side name")
 
-        fan = alice.call("broadcast", {"name": channel, "text": "queue drained"})
+        fan = alice.call("broadcast", {"channel_id": channel, "text": "queue drained"})
         check(fan["recipients"] == 2, "Broadcast excluded the sender")
         check(fan["delivered"] == 2 and fan["failed"] == [],
               "Both other members received a copy")
@@ -358,7 +371,7 @@ def main():
         # The reason the label is inside the ciphertext rather than in a header:
         # a channel name is human-meaningful. One real channel is named for the
         # company that made it and the job it does.
-        alice.call("broadcast", {"name": channel, "text": "second broadcast"})
+        alice.call("broadcast", {"channel_id": channel, "text": "second broadcast"})
         got = bob.call("receive", {"hold": 30})
         check(got["channel"] == channel, "Recipient still resolves the channel")
         check(channel not in json.dumps(got.get("header", {})),
@@ -369,8 +382,10 @@ def main():
         # a member here, so to test a stranger we use a label naming a channel
         # Carol is genuinely not in.
         outsider_channel = channel + "-private"
-        alice.call("create_channel", {"name": outsider_channel, "members": []})
-        alice.call("broadcast", {"name": outsider_channel, "text": "owner only"})
+        made_private = alice.call("create_channel",
+                                  {"label": outsider_channel, "members": []})
+        outsider_channel = made_private["channel_id"]
+        alice.call("broadcast", {"channel_id": outsider_channel, "text": "owner only"})
         alice.call("receive_all", {"hold": 2})
 
         # Carol claims a channel she is not a member of, in a direct message.
@@ -388,17 +403,17 @@ def main():
               "...and the model is warned")
         check(got["text"].startswith("OPS DIRECTIVE"),
               "...while the message body is still delivered intact")
-        alice.call("channel_info", {"name": outsider_channel})
+        alice.call("channel_info", {"channel_id": outsider_channel})
 
         step("10. A non-member cannot enumerate channels")
         # 404 rather than 403: a 403 would confirm the name exists and make the
         # global namespace probeable.
-        alice.call("broadcast", {"name": channel, "text": "second"})
+        alice.call("broadcast", {"channel_id": channel, "text": "second"})
         for peer in (bob, carol):
             peer.call("receive", {"hold": 30})
         outsider = None
         try:
-            bob.call("channel_info", {"name": channel + "-nope"})
+            bob.call("channel_info", {"channel_id": channel + "-nope"})
         except RuntimeError as exc:
             outsider = str(exc)
         check(outsider is not None and "404" in outsider,

@@ -108,9 +108,9 @@ def test_tools_list():
     names = [t["name"] for t in tools]
     expected = ["whoami", "open_rendezvous", "await_peer", "join_rendezvous",
                 "send", "receive", "receive_all", "sync_barrier", "peer_info",
-                "create_channel", "add_to_channel", "list_channels",
-                "channel_info", "broadcast"]
-    check(names == expected, "All fourteen tools listed in order: %s" % ", ".join(names))
+                "create_channel", "close_channel", "add_to_channel",
+                "list_channels", "channel_info", "broadcast"]
+    check(names == expected, "All fifteen tools listed in order: %s" % ", ".join(names))
     check(all("handler" not in t for t in tools),
           "The Python handler is not leaked into the wire schema")
     check(all(t.get("description") for t in tools), "Every tool has a description")
@@ -203,6 +203,8 @@ class FakeClient:
         self.role = "initiator"
         self.broadcasts = []
         self.created = None
+        self.deleted = None
+        self._labels = {}
         self.added = None
         self.next_messages = None
         self.receive_many_result = None
@@ -288,11 +290,25 @@ class FakeClient:
     # stub-based assertion, so the names here are copied from stringcup.py,
     # not from the handler. `test_mcp_live.py` is the real check.
 
-    def create_topic(self, name, members=None, notify=True, allow_duplicate=False):
-        self.created = (name, list(members or []))
+    ASSIGNED_TOPIC = "tp-" + "d" * 24
+
+    def create_topic(self, label=None, members=None, notify=True, allow_duplicate=False):
+        self.created = (label, list(members or []))
         self.notified_on_create = notify
         # One deliberately unknown id, so the partial-success path is covered.
-        return {"name": name, "unknown": [i for i in (members or []) if i.endswith("zz")]}
+        # `name` is None because the relay assigns an id and stores no name.
+        return {
+            "id": self.ASSIGNED_TOPIC,
+            "name": None,
+            "unknown": [i for i in (members or []) if i.endswith("zz")],
+        }
+
+    def label_for(self, topic_id):
+        return self._labels.get(topic_id)
+
+    def delete_topic(self, topic_id):
+        self.deleted = topic_id
+        return {"id": topic_id, "name": None, "status": "deleted"}
 
     def add_members(self, name, ids, notify=True):
         self.added = (name, list(ids))
@@ -1251,15 +1267,41 @@ def test_channels():
 
     bogus = "sc-" + "y" * 22 + "zz"
     payload = call("create_channel",
-                   {"name": "ops", "members": ["sc-" + "c" * 24, bogus]})["structuredContent"]
+                   {"label": "ops", "members": ["sc-" + "c" * 24, bogus]})["structuredContent"]
     check(fake.created == ("ops", ["sc-" + "c" * 24, bogus]),
           "create_channel passes the member list straight through")
+    check(payload["channel_id"] == FakeClient.ASSIGNED_TOPIC,
+          "The RELAY-ASSIGNED id is returned, not a caller-chosen name")
+    check(payload["label"] == "ops",
+          "...and the label is echoed as a local convenience")
+    check("never learns your label" in payload["label_note"],
+          "...with the result saying plainly that the relay never sees it")
+
+    # An agent on a host that cached an older tool list will send `name`.
+    # It must land as a LOCAL LABEL rather than being forwarded to the relay,
+    # which would 400 -- a stale tool list must degrade, not break.
+    fake.created = None
+    legacy = call("create_channel",
+                  {"name": "from-a-stale-tool-list"})["structuredContent"]
+    check(fake.created == ("from-a-stale-tool-list", []),
+          "A cached tool list sending `name` is treated as a label, not forwarded")
+    check(legacy["channel_id"] == FakeClient.ASSIGNED_TOPIC,
+          "...and still gets an assigned id back")
+
+    closed = call("close_channel",
+                  {"channel_id": FakeClient.ASSIGNED_TOPIC})["structuredContent"]
+    check(fake.deleted == FakeClient.ASSIGNED_TOPIC,
+          "close_channel reaches the library with the channel id")
+    check(closed["closed"] is True, "...and reports the channel closed")
+    check("RETRACTS NOTHING" in closed["what_this_did"].upper(),
+          "...and states that messages already sent are NOT retracted, which is "
+          "the thing an agent would otherwise assume")
     check(payload["unknown"] == [bogus], "An unrecognised id is reported, not raised")
     check(payload["members_added"] == 1,
           "members_added counts only what was actually added, not what was asked")
     check(payload["owner"] == fake.id, "The creator is named as owner")
 
-    payload = call("channel_info", {"name": "ops"})["structuredContent"]
+    payload = call("channel_info", {"channel_id": "ops"})["structuredContent"]
     check(payload["count"] == 2, "Roster reports every member")
     check([m for m in payload["members"] if m["me"]][0]["id"] == fake.id,
           "The caller's own entry is flagged, so an agent can tell itself apart")

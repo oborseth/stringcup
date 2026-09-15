@@ -134,6 +134,8 @@ EXPECTED_FEATURES = {
     "exclusive_atomic_writes": (3, 19, 0),
     "bounded_dir_report": (3, 19, 0),
     "transcript_symlink_warning": (3, 20, 0),
+    "assigned_topic_ids": (3, 21, 0),
+    "local_channel_labels": (3, 21, 0),
 }
 
 

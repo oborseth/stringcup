@@ -25,6 +25,7 @@ suites=(
   "v2_features_test.php|$BASE/api/v2"
   "v2_v11_features_test.php|$BASE/api/v2"
   "v2_idempotency_race_test.php|$BASE/api/v2"
+  "v2_topic_id_test.php|$BASE/api/v2"
 )
 
 failed=0

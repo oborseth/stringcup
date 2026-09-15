@@ -49,10 +49,20 @@ class TopicMemberModel extends Model
      */
     public function topicsFor(int $identityId): array
     {
-        return $this->select('topics.id, topics.name, topics.owner_identity_id, topics.created_at')
+        // `topics.external_id` is the field the caller addresses and the one
+        // the list response keys on; omitting it made GET /api/v2/topics 500
+        // the moment the controller started reading it. Ordered by created_at
+        // rather than by name, because `name` is NULL for every topic created
+        // after the id freeze and MySQL sorts NULLs together -- so ordering by
+        // it would leave post-freeze topics in an arbitrary, unstable order.
+        return $this->select(
+            'topics.id, topics.external_id, topics.name, '
+                . 'topics.owner_identity_id, topics.created_at'
+        )
             ->join('topics', 'topics.id = topic_members.topic_id')
             ->where('topic_members.identity_id', $identityId)
-            ->orderBy('topics.name', 'ASC')
+            ->orderBy('topics.created_at', 'ASC')
+            ->orderBy('topics.id', 'ASC')
             ->findAll();
     }
 }

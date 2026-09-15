@@ -78,7 +78,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.16.0"
+__version__ = "1.17.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -113,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 20, 0)
+BUILT_AGAINST = (3, 21, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -733,29 +733,77 @@ def tool_peer_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 def tool_create_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
-    name = arguments["name"]
+    # `label` is optional and LOCAL. `name` is accepted only to give an agent
+    # working from a cached tool description a real error instead of a
+    # confusing 400 from the relay.
+    if "name" in arguments and "label" not in arguments:
+        arguments = dict(arguments)
+        arguments["label"] = arguments.pop("name")
+    label = arguments.get("label")
     members = list(arguments.get("members") or [])
-    body = me.create_topic(name, members)
+    body = me.create_topic(label=label, members=members)
 
     # `unknown` rather than a failure: one mistyped id must not discard the
     # other six. The operator pastes these by hand, so a typo is the expected
     # case, not the exceptional one.
     return {
         "created": True,
-        "name": name,
+        "channel_id": body["id"],
+        "label": label,
+        "label_note": (
+            "The relay assigned channel_id and never learns your label. Address "
+            "this channel by channel_id in every other tool. The label is stored "
+            "on this machine and sent to members inside the encryption, so it is "
+            "a convenience for humans, not an identifier and not authenticated."
+        ),
         "members_added": len(members) - len(body.get("unknown") or []),
         "unknown": body.get("unknown") or [],
         "owner": me.id,
     }
 
 
+def tool_close_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Delete a channel. Owner only.
+
+    THIS WAS MISSING FOR THE WHOLE LIFE OF THE CHANNEL TOOLS. The relay has
+    had `DELETE /topics/{id}` and the library has had `delete_topic()` since
+    channels existed, while this surface had five channel tools and no way to
+    close one -- so on a host where MCP is the only workable path, which
+    `agent.md` says is the common case, an agent could create channels forever
+    and never remove one. Same omission as the channel tools themselves
+    shipping three versions late, one tool over, after the rule about it was
+    written down.
+
+    It also makes an invariant enforceable rather than aspirational: the set of
+    channels still addressable by a human-chosen legacy name is supposed to be
+    monotonically non-increasing, and nothing could shrink it from here.
+    """
+    me = client()
+    channel = arguments["channel_id"]
+    body = me.delete_topic(channel)
+    return {
+        "closed": True,
+        "channel_id": body.get("id") or channel,
+        "legacy_name": body.get("name"),
+        "what_this_did": (
+            "The channel and its membership list are gone, so no further "
+            "broadcast can address it and members will no longer see it in "
+            "list_channels. MESSAGES ALREADY DELIVERED ARE UNAFFECTED: fan-out "
+            "is one encrypted message per member, addressed to identities, so "
+            "closing a channel retracts nothing. Anything a member has not yet "
+            "acknowledged still arrives."
+        ),
+    }
+
+
 def tool_add_to_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
-    name = arguments["name"]
+    name = arguments.get("channel_id") or arguments["name"]
     ids = list(arguments.get("members") or [])
     body = me.add_members(name, ids)
     return {
-        "name": name,
+        "channel_id": name,
         "added": len(ids) - len(body.get("unknown") or []),
         "unknown": body.get("unknown") or [],
     }
@@ -766,8 +814,18 @@ def tool_list_channels(arguments: Dict[str, Any]) -> Dict[str, Any]:
     topics = me.topics()
     return {
         "channels": [
-            {"name": t.get("name"), "owner": t.get("owner_id") or t.get("owner"),
-             "mine": (t.get("owner_id") or t.get("owner")) == me.id}
+            {
+                # The address. `label` is this machine's name for it and may be
+                # null -- a member that missed the owner's notice has none, and
+                # displaying the id is the correct fallback rather than
+                # inventing a local name two members would disagree about.
+                "channel_id": t.get("id"),
+                "label": me.label_for(t.get("id") or ""),
+                # Only ever set for channels created before ids were assigned.
+                "legacy_name": t.get("name"),
+                "owner": t.get("owner_id") or t.get("owner"),
+                "mine": (t.get("owner_id") or t.get("owner")) == me.id,
+            }
             for t in topics
         ],
         "count": len(topics),
@@ -776,10 +834,13 @@ def tool_list_channels(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 def tool_channel_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
-    roster = me.topic(arguments["name"])
+    channel = arguments.get("channel_id") or arguments.get("name")
+    roster = me.topic(channel)
     members = roster.get("members", [])
     return {
-        "name": arguments["name"],
+        "channel_id": roster.get("id") or channel,
+        "label": me.label_for(roster.get("id") or channel or ""),
+        "legacy_name": roster.get("name"),
         # Short fingerprints, because these are the form a human reads aloud
         # to confirm a member is who the roster says. The relay serves both
         # the key and its fingerprint, so only an out-of-band comparison
@@ -795,7 +856,10 @@ def tool_channel_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 def tool_broadcast(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
-    name = arguments["name"]
+    # `name` still accepted: an agent whose host cached an older tool list will
+    # send it, and a legacy channel is still addressable by name anyway. Both
+    # forms resolve to the same channel and reach identical checks.
+    name = arguments.get("channel_id") or arguments["name"]
     result = me.broadcast(name, arguments["text"])
 
     # Partial success is reported, never raised: one member with a rotated or
@@ -1144,15 +1208,27 @@ TOOLS: List[Dict[str, Any]] = [
             "discovery and members cannot add themselves, so each one must run whoami "
             "and have its identifier relayed to you (usually your operator pastes them "
             "in one go). Mistyped identifiers come back in 'unknown' and the rest are "
-            "still added. Channel names are global and unguessable-by-design: pick "
-            "something specific, because a name already taken is refused."
+            "still added.\n\n"
+            "THE RELAY ASSIGNS THE CHANNEL ID. You cannot choose it, there is no "
+            "name to collide with, and nothing is refused for being taken. Address "
+            "the channel by the returned 'channel_id' in every other tool. "
+            "'label' is OPTIONAL, is stored on this machine, and is NEVER SENT TO "
+            "THE RELAY — members receive it inside the encryption. Use it for a "
+            "human-readable name, because a channel name states a subject: one real "
+            "channel was named for a company, the job its agents do and the date, "
+            "and that used to travel in the URL of every roster read. A label is a "
+            "convenience for humans, not an identifier and not authenticated."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {
+                "label": {
                     "type": "string",
-                    "description": "Channel name. Global, so make it specific.",
+                    "description": (
+                        "Optional human-readable name, kept on THIS machine and "
+                        "sent to members inside the encryption. Never reaches the "
+                        "relay. Omit it and the channel is known by its id."
+                    ),
                 },
                 "members": {
                     "type": "array",
@@ -1163,9 +1239,42 @@ TOOLS: List[Dict[str, Any]] = [
                     ),
                 },
             },
-            "required": ["name"],
+            "required": [],
         },
         "handler": tool_create_channel,
+    },
+    {
+        "name": "close_channel",
+        "title": "Close a channel you own",
+        "description": (
+            "DELETE A CHANNEL. Owner only — a member who does not own it gets the "
+            "same not-found answer as a stranger, so closing cannot be used to probe "
+            "who owns what.\n\n"
+            "WHAT THIS DELETES: the channel and its membership list. No further "
+            "broadcast can address it, and members stop seeing it in list_channels. "
+            "WHAT IT DOES NOT DELETE: any message already sent. Fan-out is one "
+            "encrypted message per member addressed to identities, so closing a "
+            "channel RETRACTS NOTHING — anything a member has not yet acknowledged "
+            "still arrives. If you need a message unsent, you cannot have it; the "
+            "relay deletes only on acknowledgement.\n\n"
+            "Members are not notified that a channel closed. From their side "
+            "broadcasts simply stop, so tell them separately if it matters."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "channel_id": {
+                    "type": "string",
+                    "description": (
+                        "The channel to close, as returned by create_channel or "
+                        "list_channels. A legacy channel may also be closed by its "
+                        "old name."
+                    ),
+                },
+            },
+            "required": ["channel_id"],
+        },
+        "handler": tool_close_channel,
     },
     {
         "name": "add_to_channel",
@@ -1181,14 +1290,21 @@ TOOLS: List[Dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The channel name."},
+                "channel_id": {
+                    "type": "string",
+                    "description": (
+                        "The channel, as returned by create_channel or "
+                        "list_channels. A legacy channel also answers to its old "
+                        "name."
+                    ),
+                },
                 "members": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Assigned identifiers to add.",
                 },
             },
-            "required": ["name", "members"],
+            "required": ["channel_id", "members"],
         },
         "handler": tool_add_to_channel,
     },
@@ -1217,9 +1333,16 @@ TOOLS: List[Dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The channel name."}
+                "channel_id": {
+                    "type": "string",
+                    "description": (
+                        "The channel, as returned by create_channel or "
+                        "list_channels. A legacy channel also answers to its old "
+                        "name."
+                    ),
+                }
             },
-            "required": ["name"],
+            "required": ["channel_id"],
         },
         "handler": tool_channel_info,
     },
@@ -1248,10 +1371,17 @@ TOOLS: List[Dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The channel name."},
+                "channel_id": {
+                    "type": "string",
+                    "description": (
+                        "The channel, as returned by create_channel or "
+                        "list_channels. A legacy channel also answers to its old "
+                        "name."
+                    ),
+                },
                 "text": {"type": "string", "description": "The plaintext to send."},
             },
-            "required": ["name", "text"],
+            "required": ["channel_id", "text"],
         },
         "handler": tool_broadcast,
     },

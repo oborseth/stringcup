@@ -70,7 +70,17 @@ class TopicController extends BaseController
      */
     private function requireMembership(string $name, array $identity): array
     {
-        $topic = (new TopicModel())->findByName($name);
+        // THE SINGLE RESOLUTION SITE FOR BOTH ADDRESSING FORMS.
+        //
+        // A topic is addressable by its server-assigned `tp-` id and, if it
+        // predates the freeze, by its legacy human-chosen name. Two ways to
+        // name one object is the shape that produced the rate limiter's
+        // IP-only-bucket bypass, so the invariant is that both forms reach
+        // IDENTICAL checks. Keeping resolution here rather than in each of
+        // the six handlers makes that structural instead of six fixes that
+        // have to agree. `v2_topic_id_test.php` asserts it anyway, because a
+        // future handler could resolve for itself and bypass this.
+        $topic = (new TopicModel())->findAddressable($name);
 
         if (!$topic) {
             return [null, $this->failNotFound('Topic not found')];
@@ -98,19 +108,45 @@ class TopicController extends BaseController
             }
 
             $req = $this->request->getJSON(true);
-            if (!is_array($req) || empty($req['name'])) {
-                return $this->failValidationErrors('name is required');
+            if ($req !== null && !is_array($req)) {
+                return $this->failValidationErrors('Request body must be a JSON object');
+            }
+            $req = is_array($req) ? $req : [];
+
+            // A CALLER MAY NO LONGER CHOOSE A TOPIC NAME.
+            //
+            // Same refusal as `POST /identities` rejecting a caller-supplied
+            // external_id, and for the same reason: a value a caller chooses
+            // is a value an attacker can predict or squat. A channel name is
+            // also human-meaningful -- one real channel names a company, a
+            // function and a date -- and it travelled in the request line of
+            // every roster read, which is logged by every access log format
+            // there is.
+            //
+            // The exposure alone would NOT justify this: a client could pass
+            // `secrets.token_hex(16)` and keep the human name locally, with no
+            // server change at all. What assignment buys is that no caller can
+            // choose a WEAK id, because a client-side convention decays into
+            // "project-alpha" the first time somebody debugs it. An auditor
+            // made that correction; justifying it by the log would have been
+            // overbuilding.
+            //
+            // A 400 rather than silently ignoring the field, because a client
+            // that believes it named a channel and finds it did not is worse
+            // off than one told plainly.
+            if (array_key_exists('name', $req)) {
+                return $this->failValidationErrors(
+                    'name is assigned by the server and cannot be chosen. Omit it; '
+                        . 'the response carries the assigned id. Keep any human-readable '
+                        . 'label on your own side -- the relay never needs it.'
+                );
             }
 
-            $name = $req['name'];
-            if (!preg_match(self::NAME_PATTERN, $name)) {
-                return $this->failValidationErrors('name must be 1-64 characters: letters, digits, hyphens, underscores');
-            }
+            $topicModel  = new TopicModel();
+            $assignedId  = $topicModel->assignExternalId();
 
-            $topicModel = new TopicModel();
-            if ($topicModel->findByName($name)) {
-                // Names are a global namespace, like external_id.
-                return $this->fail('A topic with this name already exists', 409);
+            if ($assignedId === null) {
+                return $this->failServerError('Could not assign a topic id');
             }
 
             $seed = [];
@@ -143,8 +179,25 @@ class TopicController extends BaseController
             }
 
             $now     = date('Y-m-d H:i:s');
+            // `name` IS LEFT NULL, DELIBERATELY. The first draft stored the
+            // assigned id here too, to keep the unique index and existing
+            // queries working. An auditor rejected that: it puts two different
+            // KINDS of thing in one column distinguished only by row age, and
+            // renaming the column would have preserved exactly that. NULL
+            // keeps `name` meaning what it always meant -- a human-chosen
+            // legacy name -- and makes the grandfathered set self-describing:
+            //
+            //     SELECT COUNT(*) FROM topics WHERE name IS NOT NULL
+            //
+            // is precisely the set still addressable by a meaningful name,
+            // monotonically non-increasing. "Frozen, not growing" stops being
+            // an argument and becomes a number, which is the difference
+            // between a justification and an invariant. `php spark
+            // topics:audit` prints it. MySQL does not treat NULL as equal to
+            // NULL, so the UNIQUE index tolerates any number of them.
             $topicId = $topicModel->insert([
-                'name'              => $name,
+                'external_id'       => $assignedId,
+                'name'              => null,
                 'owner_identity_id' => (int) $identity['id'],
                 'created_at'        => $now,
             ], true);
@@ -169,13 +222,17 @@ class TopicController extends BaseController
             }
 
             $this->logWithContext('info', 'Topic created', [
-                'topic'   => $name,
+                'topic'   => $assignedId,
                 'owner'   => $identity['external_id'],
                 'members' => count($added),
             ]);
 
             return $this->respondCreated([
-                'name'         => $name,
+                'id'           => $assignedId,
+                // `name` is null for every topic created from here. Returned
+                // rather than omitted so a client can tell "assigned, no name"
+                // from a field this version does not know about.
+                'name'         => null,
                 'owner'        => $identity['external_id'],
                 'members'      => $added,
                 'member_count' => count($added),
@@ -213,6 +270,7 @@ class TopicController extends BaseController
                 $owner = $identityModel->find($topic['owner_identity_id']);
 
                 $out[] = [
+                    'id'           => $topic['external_id'],
                     'name'         => $topic['name'],
                     'owner'        => $owner['external_id'] ?? null,
                     'is_owner'     => (int) $topic['owner_identity_id'] === (int) $identity['id'],
@@ -264,6 +322,7 @@ class TopicController extends BaseController
             $owner = (new IdentityModel())->find($topic['owner_identity_id']);
 
             return $this->respond([
+                'id'           => $topic['external_id'],
                 'name'         => $topic['name'],
                 'owner'        => $owner['external_id'] ?? null,
                 'is_owner'     => (int) $topic['owner_identity_id'] === (int) $identity['id'],
@@ -345,6 +404,7 @@ class TopicController extends BaseController
             ]);
 
             return $this->respond([
+                'id'           => $topic['external_id'],
                 'name'         => $topic['name'],
                 'added'        => $added,
                 'unknown'      => $unknown,
@@ -416,6 +476,7 @@ class TopicController extends BaseController
             ]);
 
             return $this->respond([
+                'id'           => $topic['external_id'],
                 'name'         => $topic['name'],
                 'removed'      => $externalId,
                 'member_count' => $memberModel->where('topic_id', $topic['id'])->countAllResults(),
@@ -470,7 +531,15 @@ class TopicController extends BaseController
 
             $this->logWithContext('info', 'Topic deleted', ['topic' => $name]);
 
-            return $this->respond(['name' => $name, 'status' => 'deleted']);
+            // Echo the ASSIGNED id plus whatever legacy name the row had, so
+            // a caller that deleted by either form gets an unambiguous answer
+            // about which topic went. `name` is null for anything created
+            // after the freeze.
+            return $this->respond([
+                'id'     => $topic['external_id'],
+                'name'   => $topic['name'],
+                'status' => 'deleted',
+            ]);
         } catch (\Exception $e) {
             $this->logWithContext('error', 'Topic deletion failed: {message}', [
                 'message'   => $e->getMessage(),

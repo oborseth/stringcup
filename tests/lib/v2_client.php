@@ -238,6 +238,32 @@ function reset_rate_limits(): bool {
     return true;
 }
 
+/**
+ * Attach a legacy human name to an unnamed topic, when running ON the relay.
+ *
+ * The API can no longer create a named topic -- that is the id freeze -- so
+ * the only way to exercise the LEGACY addressing form is to attach one
+ * directly. Returns false when `php spark` is not reachable, i.e. when the
+ * suite is run from another host, so the caller can SKIP those steps with a
+ * note rather than fail for a reason nobody can diagnose from the output.
+ * Same constraint as reset_rate_limits().
+ */
+function attach_legacy_name(string $topicId, string $name): bool {
+    $spark = __DIR__ . '/../../spark';
+    if (!is_file($spark)) {
+        return false;
+    }
+
+    $cmd = 'php ' . escapeshellarg($spark) . ' topics:setname '
+        . escapeshellarg($topicId) . ' ' . escapeshellarg($name) . ' 2>&1';
+
+    $out  = [];
+    $code = 0;
+    @exec($cmd, $out, $code);
+
+    return $code === 0;
+}
+
 function register_identity(string $apiBase, string $pub, string $displayName): array {
     $res = api('POST', "$apiBase/identities", [
         'identity_public_key' => base64_encode($pub),

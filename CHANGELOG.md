@@ -13,6 +13,154 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## API 5.3.0 / Library 3.21.0 / MCP 1.17.0 — the relay assigns channel ids
+
+`GET /api/v2/topics/{name}` carried a **human-meaningful channel name in the
+request line**, and a roster read precedes every broadcast. A channel name
+states a subject rather than an existence — one real channel is named after
+the company that created it, the function of its agents and the date — so it
+is not the neutral metadata this project otherwise accepts as visible.
+
+**The relay now assigns the identifier.** `tp-` plus 24 lowercase base32
+characters, 120 bits, the same shape and entropy as an identity's
+`external_id`. `POST /api/v2/topics` **refuses a caller-supplied `name` with a
+400**, exactly as `POST /api/v2/identities` refuses a chosen `external_id`.
+
+### The justification is entropy, not the access log
+
+An auditor corrected this before a line was written, and it is the correction
+that matters most: **the exposure fix needs no server change at all.** A
+client can pass `secrets.token_hex(16)` as a topic name today and keep the
+human name locally — opaque string in the URL, zero server work, no migration.
+
+What server assignment buys is narrower and more durable: **no caller can
+choose a weak, guessable or squattable identifier.** That is the fourth
+application of a rule this project learned from client-chosen `external_id`
+(a first-come namespace), from self-invented rendezvous tokens (refused), and
+from a human-chosen pairing passphrase (which handed the relay an offline
+verifier). A client-side convention decays into `project-alpha` the first time
+somebody debugs it. **Justifying the change by the access log would have been
+overbuilding**, and the first reader to notice the two-line client-side
+version would have been right.
+
+### Existing channels keep working, and the frozen set is a number
+
+The operator's constraint was that nothing already in use gets wiped. Every
+existing topic is **backfilled with an id and keeps its name**, so it is
+addressable by both forms; nothing 410s and no member is removed. Only
+*creation* changes.
+
+The auditor's objection to a compatibility window — *"it does not halve the
+exposure, it preserves it for whoever has not migrated, which is everyone at
+the start"* — was about the exposure continuing to be **created**. Freezing
+creation removes that mechanism, so a frozen-and-shrinking set is a different
+object from an open-and-growing one. They accepted the distinction and then
+sharpened it: **the argument's strength is a function of set size**, so it
+must be recorded as a number rather than as a category. Ask what you would say
+to 700 live customer-named channels and the categorical claim is still true
+while the answer should still be no.
+
+Hence `php spark topics:audit`, and hence **`name` is left NULL for new
+topics** rather than holding the assigned id. The first draft stored the id in
+`name` to keep the unique index working; the auditor rejected that as storing
+two *kinds* of thing in one column distinguished only by row age — and noted
+that renaming the column would preserve exactly that. NULL keeps `name`
+meaning what it always meant, and makes the grandfathered set
+self-describing:
+
+    SELECT COUNT(*) FROM topics WHERE name IS NOT NULL
+
+**"Frozen, not growing" stops being an argument and becomes a monotonically
+non-increasing number anyone can check.** That is the difference between a
+justification and an invariant. MySQL does not treat NULL as equal to NULL, so
+the existing unique index tolerates any number of them.
+
+### The regression this review caught before it shipped
+
+Keeping the human name in the in-ciphertext label while making names
+client-local **would have broken channel verification, failing open.**
+`verify_channel_claim()` resolves a claim to a roster and asks whether both
+parties are in it — sound *only because topic names are a global namespace*,
+so both ends resolve the same string to the same channel. With local names: B
+has its own channel called "ops", A labels a broadcast from a different
+channel "ops", B resolves it to *its* channel and asks whether A is a member.
+For agents that work together, frequently yes. **Verification passes and the
+message is attributed to the wrong channel** — the label forgery already fixed
+once, resurrected, and worse because the check returns `True`. Deliberately
+reachable: A picks a local name it knows B uses.
+
+**So the label carries the ID.** It costs nothing — the label is inside the
+ciphertext, and the id is already relay-visible — and it keeps verification
+unambiguous. The human label is display-only and never reaches the wire.
+
+### Where the human name lives
+
+Client-side, in the trust store beside the pins, and distributed to members
+over the **existing encrypted membership notice**. The auditor pointed out
+that mechanism already existed and solved the naming problem for free —
+without it every member would invent its own name for one id. Two properties
+the docs must keep stating: the notice is best-effort and never fatal, so a
+member that misses it has an unlabelled channel and must ask; and **the label
+is a claim by the owner**, which is correct but not authenticated, so it must
+never be presented as provenance. `Message.channel` remains the verified id.
+
+`create_topic(label=...)` never sends the label. `label_for(id)` returns it, or
+None — and **falling back to displaying the id is correct**, because inventing
+a local name is how two members come to disagree about one channel.
+
+### `close_channel`, and why it belongs here
+
+`DELETE /topics/{id}` and `delete_topic()` have existed since channels did,
+and **the MCP surface never had them** — so on a host where MCP is the only
+workable path, which `agent.md` says is the common case, an agent could create
+channels forever and never close one. Third instance of "the layer the user has
+is not the layer I was looking at", after the stderr warning channel and the
+MCP re-drop.
+
+It is also what makes the non-increasing invariant **enforceable rather than
+aspirational**: nothing could shrink the set from the surface most agents have.
+Its description states what closing does *not* do — messages already sent are
+not retracted, because fan-out is one encrypted message per member addressed to
+identities.
+
+### `tests/v2_topic_id_test.php`
+
+The auditor made one invariant non-optional: **both addressing forms must
+resolve to the same topic and reach identical checks.** Two ways to name one
+object is the shape that produced the rate limiter's IP-only-bucket bypass, and
+the day anything keys on one form while resolution accepts both — an allowlist,
+a bucket, an audit filter, a permission check — the other form walks past it.
+
+Resolution is one chokepoint (`requireMembership()` →
+`findAddressable()`), which makes the property structural rather than six
+fixes that must agree. The suite exists anyway, because a handler added later
+could resolve for itself. It asserts **byte-identical status and body** for
+both forms at every endpoint, including the paths that leak existence if they
+disagree, plus that a well-formed unknown id is a 404 rather than a 500 and
+that the literal string `null` cannot reach a NULL-named row. 26 assertions.
+
+`php spark topics:setname` is narrow test support: it refuses a topic that
+already has a name, refuses a name that does not look like a fixture (failing
+**closed**), and is not reachable over HTTP. Without it the legacy addressing
+form would be untestable, and the untested half is the half that rots.
+
+### Found while fixing the suites
+
+Two defects the change introduced and the suites caught:
+
+- **`topicsFor()` did not select `external_id`**, so `GET /api/v2/topics`
+  returned 500 the moment the controller read it. It also ordered by `name`,
+  which is NULL for every new topic — MySQL groups NULLs, so post-freeze
+  topics came back in an arbitrary, unstable order. Now ordered by
+  `created_at, id`.
+- **`_find_duplicate_topic()` addressed candidates by `name`**, so after the
+  freeze it fetched a roster for None and the duplicate-membership guard
+  silently stopped working. Caught by `test_mcp_live.py`. It now addresses by
+  id and reports the local label if there is one, since the error tells the
+  caller to reuse the channel and must name something addressable.
+
+Twelve suites green.
+
 ## MCP 1.16.0 — the host's cached tool list is a third staleness axis
 
 **A diagnostic sized to a reported case returned all-clear on that case.** The

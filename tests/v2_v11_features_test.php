@@ -105,20 +105,28 @@ api('PUT', "$API_BASE/identities", ['identity_public_key' => base64_encode($bob[
 // ============================================================
 step('4. Topics');
 // ============================================================
-$topic = 'p11-topic-' . $suffix;
-$res = api('POST', "$API_BASE/topics", ['name' => $topic, 'members' => [$bobId, $caroId]], $aliceToken);
-assert_code(201, $res, 'Topic created');
+// THE SERVER ASSIGNS THE ID. A caller may no longer choose a name -- same
+// refusal as POST /identities rejecting a chosen external_id, and for the same
+// reason: a value a caller picks is a value an attacker can predict or squat.
+$res = api('POST', "$API_BASE/topics", ['members' => [$bobId, $caroId]], $aliceToken);
+assert_code(201, $res, 'Topic created with no caller-supplied name');
+$topic = $res['body']['id'];
+assert_true((bool) preg_match('/^tp-[a-z2-7]{24}$/', $topic), 'Assigned id is tp- plus 24 base32');
+assert_same(null, $res['body']['name'], 'name is NULL for a topic created after the freeze');
 assert_same($aliceId, $res['body']['owner'], 'Creator is owner');
 assert_same(3, $res['body']['member_count'], 'Owner plus two seeds');
 assert_same([], $res['body']['unknown'], 'No unknown seeds');
 
-$res = api('POST', "$API_BASE/topics", ['name' => $topic], $aliceToken);
-assert_code(409, $res, 'Duplicate topic name conflicts');
+// Two creates in a row must not collide, which is the whole point of assigning.
+$res2 = api('POST', "$API_BASE/topics", [], $aliceToken);
+assert_code(201, $res2, 'A second create needs no name and does not conflict');
+assert_true($res2['body']['id'] !== $topic, 'Assigned ids differ');
+api('DELETE', "$API_BASE/topics/{$res2['body']['id']}", null, $aliceToken);
 
-$res = api('POST', "$API_BASE/topics", ['name' => 'bad name!'], $aliceToken);
-assert_code(400, $res, 'Invalid topic name rejected');
+$res = api('POST', "$API_BASE/topics", ['name' => 'chosen-by-me'], $aliceToken);
+assert_code(400, $res, 'Supplying a name is refused, not silently ignored');
 
-$res = api('POST', "$API_BASE/topics", ['name' => 'p11-noauth-' . $suffix], null);
+$res = api('POST', "$API_BASE/topics", [], null);
 assert_code(401, $res, 'Topic creation requires auth');
 
 step('4b. Roster carries keys and fingerprints');
@@ -172,11 +180,15 @@ assert_code(403, $res, 'A member cannot remove someone else');
 step('4f. Listing memberships');
 $res = api('GET', "$API_BASE/topics", null, $bobToken);
 assert_code(200, $res, 'Topic list fetched');
-$names = array_column($res['body']['topics'], 'name');
-assert_true(in_array($topic, $names, true), 'Member sees the topic');
+// Keyed on the ASSIGNED id, not on `name`, which is NULL for every topic
+// created after the freeze -- so array_column(..., 'name') would be a list of
+// nulls and the membership assertion would pass vacuously.
+$ids = array_column($res['body']['topics'], 'id');
+assert_true(in_array($topic, $ids, true), 'Member sees the topic by its assigned id');
 foreach ($res['body']['topics'] as $t) {
-    if ($t['name'] === $topic) {
+    if ($t['id'] === $topic) {
         assert_same(false, $t['is_owner'], 'Member is not marked owner');
+        assert_same(null, $t['name'], 'A post-freeze topic lists a NULL name');
     }
 }
 

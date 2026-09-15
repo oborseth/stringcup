@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.20.0"
+__version__ = "3.21.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 20, 0)
+version_info = (3, 21, 0)
 
 __all__ = [
     "Client",
@@ -205,6 +205,9 @@ FEATURES = {
     "bounded_dir_report": (3, 19, 0),       # the mode report is bounded, not guessed
     # 3.20.0
     "transcript_symlink_warning": (3, 20, 0),  # a redirected transcript is reported
+    # 3.21.0
+    "assigned_topic_ids": (3, 21, 0),       # the relay assigns tp- ids; names are local
+    "local_channel_labels": (3, 21, 0),     # label_for(), stored client-side only
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1035,6 +1038,8 @@ class TrustStore:
     def __init__(self, path: str):
         self.path = path
         self._peers: Dict[str, str] = {}
+        #: Human labels for channel ids. Display only, never authenticated.
+        self._labels: Dict[str, str] = {}
         self._load()
 
     def _load(self) -> None:
@@ -1044,6 +1049,9 @@ class TrustStore:
             with open(self.path) as fh:
                 data = json.load(fh)
             self._peers = {str(k): str(v) for k, v in (data.get("peers") or {}).items()}
+            # Absent in stores written before 3.21.0, and absent in any store
+            # whose owner never labelled a channel.
+            self._labels = {str(k): str(v) for k, v in (data.get("labels") or {}).items()}
         except (OSError, ValueError):
             # A corrupt store must not silently become an empty one: that would
             # downgrade every pin back to first-use trust.
@@ -1051,7 +1059,12 @@ class TrustStore:
 
     def _save(self) -> None:
         tmp = f"{self.path}.tmp"
-        payload = json.dumps({"peers": self._peers}, indent=2, sort_keys=True)
+        record: Dict[str, object] = {"peers": self._peers}
+        # Omitted when empty, so a store from a client that never labelled a
+        # channel is byte-identical to what earlier versions wrote.
+        if self._labels:
+            record["labels"] = self._labels
+        payload = json.dumps(record, indent=2, sort_keys=True)
         fd = _open_new_private(tmp)
         try:
             with os.fdopen(fd, "w") as fh:
@@ -1060,6 +1073,29 @@ class TrustStore:
             os.unlink(tmp)
             raise
         os.replace(tmp, self.path)
+
+    def set_label(self, topic_id: str, label: str) -> None:
+        """
+        Remember a human label for a channel id. **Display only.**
+
+        This is the half of opaque channel ids that lives on the client. The
+        relay assigns `tp-…` and never learns the label, which is the point —
+        a channel name states a subject ("a company, a function, a date"), so
+        it stays on machines the operator controls.
+
+        **It is a CLAIM BY THE CHANNEL OWNER, never an authenticated fact.**
+        It arrives over the encrypted membership notice, so the relay cannot
+        read or forge it, but any member can relabel a channel on its own
+        side and nothing verifies agreement. Never authorise on it, and never
+        present it to a model as provenance — `Message.channel` carries the
+        verified id, and that is the field that means something.
+        """
+        self._labels[topic_id] = label
+        self._save()
+
+    def label(self, topic_id: str) -> Optional[str]:
+        """The local label for a channel id, or None. Falling back to the id is correct."""
+        return self._labels.get(topic_id)
 
     def get(self, peer_id: str) -> Optional[str]:
         return self._peers.get(peer_id)
@@ -1518,6 +1554,10 @@ class Client:
         #: Warnings raised since the last page was returned. Drained onto
         #: Page.warnings so they reach the agent, not only the host log.
         self._queued_warnings: List[str] = []
+
+        #: Human labels for channel ids, in memory. Persisted in the trust
+        #: store when there is one. Never sent to the relay.
+        self._labels: Dict[str, str] = {}
 
         # Anything raised by a module-level helper before this Client existed.
         while _PENDING_DIR_WARNINGS:
@@ -2944,13 +2984,27 @@ class Client:
 
     def create_topic(
         self,
-        name: str,
+        label: Optional[str] = None,
         members: Optional[Iterable[str]] = None,
         notify: bool = True,
         allow_duplicate: bool = False,
     ) -> dict:
         """
-        Create a topic owned by this identity, optionally seeding members.
+        Create a channel owned by this identity, optionally seeding members.
+
+        **The relay assigns the id; you cannot choose it.** The return carries
+        `id` (a `tp-` identifier) and `name: None`. `label` is optional, is
+        **never sent to the relay**, and is only a human-readable string this
+        client remembers locally and shows you — pass it or leave it out.
+
+        Same rule as `external_id` on an identity, and for the same reason: a
+        value a caller chooses is a value an attacker can predict or squat, and
+        a channel name is human-meaningful — one real channel names a company,
+        the function of its agents, and a date — so it used to travel in the
+        request line of every roster read. Supplying `label` as the old
+        positional `name` argument no longer reaches the server; supplying an
+        explicit `name=` to this method is a `TypeError`, and a relay that
+        receives one answers 400.
 
         Unknown ids come back in `unknown` rather than failing the call.
 
@@ -2981,20 +3035,80 @@ class Client:
                     "reuse it, or pass allow_duplicate=True" % clash
                 )
 
-        payload: Dict[str, object] = {"name": name}
+        # No `name` key at all. The relay refuses one, and sending it anyway
+        # would put a human-meaningful string in a request body for nothing.
+        payload: Dict[str, object] = {}
         if members:
             payload["members"] = members
 
         body = self._request("POST", "/topics", payload)
-        self._forget_roster(name)
+
+        topic_id = body.get("id")
+        if not topic_id:
+            raise StringcupError(
+                "relay did not return a topic id. A relay older than API 5.3.0 "
+                "assigns no id and expects a caller-chosen name; this client "
+                "cannot address such a relay."
+            )
+
+        self._forget_roster(topic_id)
+
+        # The label is remembered HERE and nowhere else. Kept beside the trust
+        # store when there is one, so it survives a restart with the pins.
+        if label:
+            self._remember_label(topic_id, label)
+            body["label"] = label
 
         if notify and members:
             unknown = set(body.get("unknown") or [])
             recipients = [m for m in members if m not in unknown and m != self.id]
             if recipients:
-                self._notify_added(recipients, name)
+                # Carries the id AND the label, because the id is what the peer
+                # must address and the label is what its operator will
+                # recognise. The notice is encrypted, so the label reaches
+                # members without reaching the relay -- which is what makes a
+                # client-side name workable at all rather than each member
+                # inventing its own. An auditor pointed out this mechanism
+                # already existed and solved the naming problem for free.
+                self._notify_added(recipients, topic_id, label=label)
 
         return body
+
+    #: Human labels for channels, keyed by assigned id. Local only.
+    #:
+    #: **A label is a CLAIM BY THE OWNER, not an authenticated fact**, and it
+    #: must never be treated as one. It arrives over the encrypted notice, so
+    #: the relay never sees it — but any member could relabel a channel on its
+    #: own side, and nothing verifies it. It is for display. `Message.channel`
+    #: remains the verified id.
+    def _remember_label(self, topic_id: str, label: str) -> None:
+        self._labels[topic_id] = label
+        if self.trust_store is not None:
+            try:
+                self.trust_store.set_label(topic_id, label)
+            except Exception:
+                # A label is a convenience. Failing to persist one must never
+                # break creating or joining a channel.
+                pass
+
+    def label_for(self, topic_id: str) -> Optional[str]:
+        """
+        The local human label for a channel id, if this client knows one.
+
+        Returns None when it does not — which is the ordinary case for a
+        member that missed the notice, or one whose operator never set a
+        label. **Falling back to displaying the id is correct**; inventing a
+        name locally would mean two members disagreeing about what a channel
+        is called, which is how a label stops being useful.
+        """
+        if topic_id in self._labels:
+            return self._labels[topic_id]
+        if self.trust_store is not None:
+            try:
+                return self.trust_store.label(topic_id)
+            except Exception:
+                return None
+        return None
 
     def _find_duplicate_topic(self, members: Iterable[str]) -> Optional[str]:
         """
@@ -3016,28 +3130,64 @@ class Client:
             return None
 
         for candidate in candidates:
+            # ADDRESS BY THE ASSIGNED ID, NOT BY `name`. After topic ids were
+            # assigned, `name` is NULL for every new topic, so reading it here
+            # fetched a roster for None -- the guard raised or silently matched
+            # nothing, and the duplicate-membership protection was gone. The
+            # live suite caught it. Legacy topics still have a name, but the
+            # id is present on every row, so the id is the only field that
+            # always addresses.
+            address = candidate.get("id") or candidate.get("name")
+            if not address:
+                continue
+
             try:
-                roster = self.topic(candidate["name"], verify_pins=False)
+                roster = self.topic(address, verify_pins=False)
             except StringcupError:
                 continue
 
             if {m["id"] for m in roster.get("members", [])} == wanted:
-                return candidate["name"]
+                # Return something a human can act on: the local label if this
+                # client knows one, else the id. The error message says "reuse
+                # it", so it has to name a channel the caller can address.
+                return self.label_for(address) or address
 
         return None
 
-    def _notify_added(self, recipients: List[str], topic: str) -> None:
+    def _notify_added(self, recipients: List[str], topic: str,
+                      label: Optional[str] = None) -> None:
         """
         Tell new members they were added. Best effort, never fatal.
 
         Labelled with the channel like any broadcast, so a recipient on 3.4.0+
         sees it as `Message.channel` rather than an unexplained direct message.
+
+        **This notice is how a human channel label reaches members without
+        reaching the relay.** The message is encrypted, so the owner can name
+        the channel here and the relay learns nothing. An auditor pointed out
+        this mechanism already existed and solved the naming problem for free
+        — without it every member would invent its own name for the same id,
+        which is how a label stops being useful.
+
+        Two consequences the docs must keep stating. It is **best effort and
+        never fatal**, so a member that misses it has an unlabelled channel
+        and must ask; and the label is **a claim by the owner** — correct,
+        since the owner names the channel, but not authenticated, and it must
+        not be presented as though it were.
         """
+        described = "%r (%s)" % (label, topic) if label else repr(topic)
         text = label_for_channel(
             topic,
-            "You were added to channel %r by %s. Broadcasts to it will arrive as "
+            "You were added to channel %s by %s. Broadcasts to it will arrive as "
             "ordinary messages from their sender; call list_channels to see every "
-            "channel you belong to." % (topic, self.id),
+            "channel you belong to.%s" % (
+                described,
+                self.id,
+                "" if not label else
+                " The name %r is the owner's label for this channel, carried "
+                "inside the encryption so the relay never sees it. Treat it as "
+                "a label, not as proof of anything." % label,
+            ),
         )
 
         try:

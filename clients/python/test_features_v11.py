@@ -245,9 +245,13 @@ try:
     # ================================================================
     step("4. Topics")
     # ================================================================
-    topic = f"v11-topic-{sfx}"
-    created = a.create_topic(topic, members=[bid, cid])
-    same(topic, created["name"], "Topic created")
+    # The relay assigns the id; the label is LOCAL and never sent.
+    label = f"v11 channel {sfx}"
+    created = a.create_topic(label=label, members=[bid, cid])
+    topic = created["id"]
+    check(re.match(r"^tp-[a-z2-7]{24}$", topic), "Assigned id is tp- plus 24 base32")
+    same(None, created["name"], "name is NULL for a topic created after the freeze")
+    same(label, a.label_for(topic), "The human label is remembered client-side")
     same(aid, created["owner"], "Creator owns it")
     same(3, created["member_count"], "Owner is a member alongside the two seeds")
     same([], created["unknown"], "No unknown seeds")
@@ -272,12 +276,22 @@ try:
     except NotFoundError:
         ok("Non-member gets 404, so topics cannot be enumerated")
 
-    step("4d. Duplicate and unknown handling")
+    step("4d. Assignment removes the name namespace, and unknown handling")
+    # There is no duplicate-name conflict to test any more: a caller cannot
+    # choose a name, so there is nothing to collide. That is the 409
+    # topic-existence oracle closing structurally rather than being
+    # documented away -- for everything created from here. Legacy named
+    # topics stay probeable, which is why this is narrowed rather than
+    # claimed closed outright.
+    second = a.create_topic(label="second", members=[bid])
+    check(second["id"] != topic, "Two creates in a row get different ids")
+    same(None, second["name"], "...and neither carries a name")
+    a.delete_topic(second["id"])
     try:
-        a.create_topic(topic)
-        fail("Duplicate topic name should conflict")
-    except StringcupError as exc:
-        same(409, exc.status, "Duplicate name returns 409")
+        a.create_topic(name=topic)
+        fail("Supplying a name must not be accepted")
+    except TypeError:
+        ok("The library has no `name` parameter at all -- it cannot be sent by accident")
 
     res = a.add_members(topic, [bid, f"ghost-{sfx}"])
     same([], res["added"], "Existing member is not re-added")
@@ -305,10 +319,18 @@ try:
         same(409, exc.status, "Owner cannot be removed (delete the topic instead)")
 
     step("4f. topics() lists memberships")
-    names = [t["name"] for t in b.topics()]
-    check(topic in names, "Member sees the topic in its list")
-    same(False, [t for t in b.topics() if t["name"] == topic][0]["is_owner"],
-         "Member is not marked owner")
+    # Keyed on `id`, not `name`: name is NULL after the freeze, so a list
+    # comprehension over names would be a list of Nones and this assertion
+    # would pass vacuously while testing nothing.
+    listed = b.topics()
+    ids = [t["id"] for t in listed]
+    check(topic in ids, "Member sees the topic in its list, by assigned id")
+    mine = [t for t in listed if t["id"] == topic][0]
+    same(False, mine["is_owner"], "Member is not marked owner")
+    same(None, mine["name"], "A post-freeze topic lists a NULL name")
+    # The member was told the label over the ENCRYPTED notice, not by the relay.
+    check(b.label_for(topic) in (None, label),
+          "A member either learned the owner's label from the notice, or has none")
 
     # ================================================================
     step("5. Fan-out broadcast")

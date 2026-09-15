@@ -440,8 +440,12 @@ def property_relay_never_receives_plaintext(work):
     check(any(canary in m.text for m in page.messages),
           "The canary made the round trip, so this run really exercised send")
 
-    topic = "wire-" + binascii.hexlify(os.urandom(6)).decode()
-    a.create_topic(topic, members=[b.id])
+    # The relay ASSIGNS the id now, so the canary check below no longer has a
+    # caller-chosen name to look for -- and that is the point of the change.
+    # A local label is passed to prove it never reaches the wire.
+    local_label = "wire-label-" + binascii.hexlify(os.urandom(6)).decode()
+    created = a.create_topic(label=local_label, members=[b.id])
+    topic = created["id"]
     a.broadcast(topic, canary + " via broadcast")
     b.receive_many(limit=10, timeout=30)
     a.channel_members(topic)
@@ -470,18 +474,32 @@ def property_relay_never_receives_plaintext(work):
               % (label, len(needles)),
               "LEAKED IN: %s" % ", ".join(sorted(set(hits))))
 
-    # THE KNOWN EXPOSURE, asserted rather than excluded.
+    # THE GAP THIS ASSERTION RECORDED IS NOW CLOSED, and the assertion
+    # inverted with it -- which is exactly why it was written to fail rather
+    # than to be excluded. It used to read "KNOWN AND DOCUMENTED: the channel
+    # name reaches the relay in the URL path", and closing the gap forced this
+    # file and the docs to change together instead of one drifting.
     #
-    # The channel name IS in the request line, necessarily: the relay must
-    # resolve it to answer a roster read. This assertion exists so the gap is
-    # a recorded fact with a test attached rather than a paragraph, and so
-    # that closing it (opaque tp- ids) makes this assertion fail and forces
-    # the docs to be updated with it.
+    # What reaches the relay is the ASSIGNED id, which is opaque and which the
+    # relay minted, so it discloses nothing. The human label must appear in NO
+    # request, in any encoding.
+    needles = _encodings(local_label)
+    leaked = []
+    for call in captured:
+        blob = ("%s %s %s" % (call["method"], call["path"], call["body"])).encode()
+        for needle in needles:
+            if needle in blob:
+                leaked.append("%s %s" % (call["method"], call["path"]))
+                break
+    check(not leaked,
+          "The human channel LABEL reaches the relay in no request, in any of "
+          "%d encodings -- it lives only on the client" % len(needles),
+          "LEAKED IN: %s" % ", ".join(sorted(set(leaked))))
+
     in_path = [c["path"] for c in captured if topic in c["path"]]
     check(bool(in_path),
-          "KNOWN AND DOCUMENTED: the channel name reaches the relay in the "
-          "URL path (%d request(s)) -- see SECURITY.md, 'The relay sees "
-          "channel names'" % len(in_path))
+          "The relay sees only the id it assigned (%d request(s)), which "
+          "discloses nothing about the conversation" % len(in_path))
     # BE EXACT ABOUT WHAT IS BOUGHT. The first version of this assertion
     # claimed the name is never in any request body, and the property
     # immediately failed: `POST /topics` carries it, necessarily, because the
@@ -496,17 +514,9 @@ def property_relay_never_receives_plaintext(work):
         and (topic in c["body"] or topic in c["path"])
     ]
     check(not on_messages,
-          "The channel name never rides a MESSAGE send -- not in a header, "
-          "not in a path -- so it is never stored per-message beside "
-          "ciphertext in rows an ACK deletes",
+          "Even the opaque id never rides a MESSAGE send, so nothing is "
+          "stored per-message beside ciphertext in rows an ACK deletes",
           "LEAKED IN: %s" % ", ".join(sorted(set(on_messages))))
-
-    admin = [c["path"] for c in captured
-             if topic in c["body"] and not
-             any(c["path"].startswith(mp) for mp in message_paths)]
-    check(bool(admin),
-          "KNOWN AND DOCUMENTED: the name is in the body of channel "
-          "administration (%s), which the relay must be told" % ", ".join(sorted(set(admin))))
 
     for cl in (a, b):
         try:
