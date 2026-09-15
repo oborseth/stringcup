@@ -74,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.8.0"
+__version__ = "3.9.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 8, 0)
+version_info = (3, 9, 0)
 
 __all__ = [
     "Client",
@@ -172,6 +172,8 @@ FEATURES = {
     "pairing_secret": (3, 7, 0),          # authenticate first contact off-relay
     # 3.8.0
     "directional_pairing_tag": (3, 8, 0),  # pairing tag is not reflectable
+    # 3.9.0
+    "verified_pairing_pins": (3, 9, 0),   # a verified pairing pins durably
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -973,6 +975,10 @@ class Client:
     budget reported by the server so callers can pace themselves.
     """
 
+    #: Warn at most once per process that a verified pairing was not pinned.
+    _warned_unpinned = False
+
+
     def __init__(
         self,
         identity: Identity,
@@ -1001,6 +1007,10 @@ class Client:
         self.transcript = transcript
 
         self._peer_keys: Dict[str, str] = {}
+
+        #: Peer whose pin THIS client created during the current rendezvous,
+        #: so a failed verification can remove it again. See _verify_pairing.
+        self._pin_created_for: Optional[str] = None
 
         # name -> (monotonic_time, member_ids | None). Verifying an inbound
         # channel label needs the roster; without a cache that is one extra
@@ -1161,7 +1171,17 @@ class Client:
             if peer_id:
                 self._peer_keys[peer_id] = key
                 if self.trust_store is not None:
-                    self.trust_store.verify(peer_id, body["peer_fingerprint"])
+                    # verify() returns True when this was a FIRST SIGHT, i.e.
+                    # when it created the pin rather than matching one. Recorded
+                    # so a failed verification can roll back exactly the pin
+                    # this pairing added -- and nothing else.
+                    #
+                    # Capturing it here is the only correct place: by the time
+                    # _verify_pairing runs, the pin already exists, so asking
+                    # "was it pinned before?" there always answers yes and the
+                    # rollback is inert. That was the first attempt at this.
+                    created = self.trust_store.verify(peer_id, body["peer_fingerprint"])
+                    self._pin_created_for = peer_id if created else None
 
         return body
 
@@ -1270,12 +1290,28 @@ class Client:
         expected = verification_tag(
             secret, other_pairing_role(role), ids, keys, token)
 
+        # A failed verification must not leave a poisoned pin.
+        #
+        # `rendezvous()` pins on first sight, BEFORE verification has decided
+        # anything. So a substituted key gets pinned, verification fails, and
+        # the NEXT attempt -- against the genuine key -- raises
+        # KeyPinMismatch, which reads as an attack when it is really poison
+        # from a failed pairing. `rendezvous()` records whether it was the one
+        # that created the pin, which is the only way to roll back exactly
+        # that pin and not a pre-existing one.
+        def _unpoison() -> None:
+            if (self.trust_store is not None
+                    and self._pin_created_for == peer_id):
+                self.trust_store.forget(peer_id)
+                self._pin_created_for = None
+
         self.send(peer_id, VERIFY_PREFIX + mine + "]")
 
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                _unpoison()
                 raise VerificationFailed(
                     "peer never sent a verification tag within %.0fs. It may be "
                     "running a client older than 3.8.0, whose tag construction was "
@@ -1295,6 +1331,7 @@ class Client:
                 theirs = msg.text[len(VERIFY_PREFIX):].rstrip("]").strip()
 
                 if hmac.compare_digest(theirs, mine):
+                    _unpoison()
                     # Our own tag, echoed back at us. Nothing legitimate does
                     # this: the peer holds the other role and cannot produce
                     # this value. This is the reflection attack, caught.
@@ -1307,6 +1344,7 @@ class Client:
                     )
 
                 if not hmac.compare_digest(theirs, expected):
+                    _unpoison()
                     raise VerificationFailed(
                         "the pairing secret did not authenticate this peer. The tag "
                         "it sent does not match the one expected for its role over "
@@ -1317,7 +1355,35 @@ class Client:
                         "do not send, and report it to your operator."
                     )
 
+                # A verified pairing is worth more than a cache entry, so
+                # record it durably.
+                #
+                # Without this, verification lasted only as long as the
+                # process: the key sat in the in-memory `_peer_keys` cache, and
+                # after a restart `send()` re-fetched it from the relay with
+                # nothing to compare against. An operator who carried a secret
+                # by hand had bought one process's worth of assurance.
+                #
+                # Pinning is the natural composition: the secret gives the same
+                # assurance an out-of-band fingerprint comparison would, and
+                # that is exactly what a pin is for.
                 info["verified"] = True
+                info["pinned"] = False
+
+                if self.trust_store is not None:
+                    self.trust_store.pin(peer_id, fingerprint(peer_pub))
+                    info["pinned"] = True
+                elif not Client._warned_unpinned:
+                    Client._warned_unpinned = True
+                    sys.stderr.write(
+                        "[stringcup] pairing with %s verified, but NOT pinned: no "
+                        "trust_store is configured, so this assurance is lost when "
+                        "the process exits and a later substitution would go "
+                        "undetected. Pass trust_store=\"./known_peers.json\".\n"
+                        % peer_id
+                    )
+                    sys.stderr.flush()
+
                 return info
 
     def await_peer(self, token: str, timeout: float = 300.0,

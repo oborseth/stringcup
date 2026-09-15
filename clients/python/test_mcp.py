@@ -754,8 +754,125 @@ def test_pairing_secret():
           "(checked per call, not per line)")
 
 
+def test_pairing_pin_lifecycle():
+    step("19. a verified pairing pins durably, a failed one leaves nothing")
+
+    # Two wrinkles found by self-audit after the reflection fix:
+    #
+    #  1. Verification was PER-PROCESS. The verified key sat only in the
+    #     in-memory _peer_keys cache, so after a restart send() re-fetched it
+    #     from the relay with nothing to compare against. An operator who
+    #     carried a secret by hand bought one process's worth of assurance.
+    #  2. A FAILED pairing left a POISONED pin. rendezvous() pins on first
+    #     sight, before verification decides, so a substituted key got pinned
+    #     and the next attempt against the genuine key raised KeyPinMismatch
+    #     -- reading as an attack when it was really poison.
+    #
+    # The first attempt at (2) was inert: it asked "was this pinned before?"
+    # inside _verify_pairing, where the answer is always yes because
+    # rendezvous() has already pinned. rendezvous() now records whether IT
+    # created the pin.
+    import tempfile
+
+    GOOD = FakeClient.PUB
+    peer = "sc-" + "c" * 24
+    secret = stringcup.new_pairing_secret()
+
+    class _Ident:
+        external_id = "sc-" + "a" * 24
+        public_key_b64 = GOOD
+
+    def _client(pre_pin=None, pin_created=False, store=True, inbox=()):
+        # Unique directory per case: an earlier ad-hoc harness shared temp
+        # paths between cases and produced a spurious failure, which is its
+        # own small lesson about trusting a throwaway script.
+        store_obj = None
+        if store:
+            store_obj = stringcup.TrustStore(
+                os.path.join(tempfile.mkdtemp(), "pins.json"))
+            if pre_pin:
+                store_obj.pin(peer, pre_pin)
+
+        c = stringcup.Client.__new__(stringcup.Client)
+        c.trust_store = store_obj
+        c._pin_created_for = peer if pin_created else None
+        c.identity = _Ident()
+        c.send = lambda *a, **k: 1
+        c.ack = lambda ids: None
+        c.fetch = lambda **k: stringcup.Page(
+            messages=list(inbox), count=len(inbox), has_more=False,
+            next_since_id=None)
+        return c, store_obj
+
+    info = {"peer_id": peer, "peer_identity_public_key": GOOD,
+            "role": "initiator"}
+
+    # -- a verified pairing PINS --
+    their_tag = stringcup.verification_tag(
+        secret, "responder", (_Ident.external_id, peer), (GOOD, GOOD), "rv-x")
+    good_msg = stringcup.Message(
+        id=1, sender_id=peer, recipient_id=_Ident.external_id,
+        text=stringcup.VERIFY_PREFIX + their_tag + "]", created_at="x")
+
+    c, store_obj = _client(inbox=(good_msg,))
+    out = c._verify_pairing(dict(info), secret, "rv-x", 5)
+    check(out["verified"] is True, "A matching peer tag verifies the pairing")
+    check(out["pinned"] is True, "...and the result says it was pinned")
+    check(store_obj.get(peer) == stringcup.fingerprint(GOOD),
+          "...with the locally computed fingerprint of the verified key, so "
+          "the assurance survives a restart")
+
+    # -- a pairing that CREATED the pin rolls it back on failure --
+    c, store_obj = _client(pin_created=True)
+    store_obj.pin(peer, stringcup.fingerprint(GOOD))   # as rendezvous() would
+    raised = False
+    try:
+        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+    except stringcup.VerificationFailed:
+        raised = True
+    check(raised, "A silent peer fails verification")
+    check(store_obj.get(peer) is None,
+          "...and the pin THIS pairing created is rolled back, so a retry "
+          "against the genuine key is not mistaken for an attack")
+
+    # -- a PRE-EXISTING pin must never be removed --
+    c, store_obj = _client(pre_pin=stringcup.fingerprint(GOOD),
+                           pin_created=False)
+    try:
+        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+    except stringcup.VerificationFailed:
+        pass
+    check(store_obj.get(peer) == stringcup.fingerprint(GOOD),
+          "A pin that pre-dated this pairing is left alone")
+
+    # -- reflection also rolls back, and no trust store must not crash --
+    my_tag = stringcup.verification_tag(
+        secret, "initiator", (_Ident.external_id, peer), (GOOD, GOOD), "rv-x")
+    echo = stringcup.Message(
+        id=2, sender_id=peer, recipient_id=_Ident.external_id,
+        text=stringcup.VERIFY_PREFIX + my_tag + "]", created_at="x")
+    c, store_obj = _client(pin_created=True, inbox=(echo,))
+    store_obj.pin(peer, stringcup.fingerprint(GOOD))
+    reflected = None
+    try:
+        c._verify_pairing(dict(info), secret, "rv-x", 5)
+    except stringcup.VerificationFailed as exc:
+        reflected = str(exc)
+    check(reflected is not None and "OUR OWN" in reflected,
+          "A reflected tag is rejected and named as reflection")
+    check(store_obj.get(peer) is None, "...and rolls the pin back too")
+
+    c, _ = _client(store=False)
+    raised = False
+    try:
+        c._verify_pairing(dict(info), secret, "rv-x", 0.01)
+    except stringcup.VerificationFailed:
+        raised = True
+    check(raised, "With no trust store at all, failure still raises cleanly")
+
+
 def test_sync_barrier():
-    step("19. sync_barrier")
+    step("20. sync_barrier")
 
     fake = FakeClient()
     with_fake(fake)
@@ -769,7 +886,7 @@ def test_sync_barrier():
 
 
 def test_channels():
-    step("20. channels")
+    step("21. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -887,7 +1004,7 @@ def test_channels():
 
 
 def test_no_remote_transport():
-    step("21. There is no remote transport")
+    step("22. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -918,6 +1035,7 @@ def main():
     test_backlog_is_visible()
     test_no_contradictory_advice()
     test_pairing_secret()
+    test_pairing_pin_lifecycle()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()

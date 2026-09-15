@@ -1215,6 +1215,28 @@ The server never encrypts or decrypts. It only:
     message path. Any future proof-of-possession here must be tested against
     an adversary that echoes, not merely one that tampers.
 
+  **A verified pairing PINS, and a failed one leaves nothing behind.** Two
+  wrinkles found by self-audit after the reflection fix, both in the feature
+  as shipped:
+
+  - Verification was **per-process**. The verified key sat only in the
+    in-memory `_peer_keys` cache, so after a restart `send()` re-fetched it
+    from the relay with nothing to compare against — an operator who carried
+    a secret by hand bought one process's worth of assurance. A successful
+    verification now pins the locally computed fingerprint, which is the
+    natural composition: the secret gives what an out-of-band comparison
+    would, and that is what a pin records. With no trust store it warns once
+    on stderr and reports `pinned: false` rather than implying durability.
+  - A **failed** pairing left a **poisoned pin**. `rendezvous()` pins on first
+    sight, before verification decides, so a substituted key got pinned and
+    the next attempt against the *genuine* key raised `KeyPinMismatch` —
+    reading as an attack when it was poison. **The first attempt at this fix
+    was inert**: it asked "was this pinned before?" inside `_verify_pairing`,
+    where the answer is always yes because `rendezvous()` has already pinned.
+    `rendezvous()` now records whether *it* created the pin
+    (`_pin_created_for`), which is the only place that can know. A pin that
+    pre-dated the pairing is never touched.
+
   Four further properties to preserve. **The secret must never reach the relay** — a
   value the relay knows proves nothing about a key it served, and
   `test_mcp.py` asserts against the source that no `_request()` passes it.
@@ -1290,7 +1312,7 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 163 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp.py` | 172 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 

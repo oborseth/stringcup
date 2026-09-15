@@ -63,14 +63,15 @@ from stringcup import (  # noqa: E402
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.8.0")
+stringcup.require_version("3.9.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "receive_many", "backlog_visible", "sync_barrier",
                            "channel_labels", "membership_notice",
                            "duplicate_channel_guard", "verified_channel_labels",
-                           "pairing_secret", "directional_pairing_tag")
+                           "pairing_secret", "directional_pairing_tag",
+                           "verified_pairing_pins")
 
-__version__ = "1.9.0"
+__version__ = "1.10.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -105,7 +106,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 8, 0)
+BUILT_AGAINST = (3, 9, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -338,14 +339,25 @@ def _paired(me: Client, info: Dict[str, Any], role: str) -> Dict[str, Any]:
         )
 
     verified = bool(info.get("verified"))
+    pinned_now = bool(info.get("pinned"))
     result["verified"] = verified
+
+    result["pinned"] = bool(info.get("pinned"))
 
     if verified:
         result["verify"] = (
             "AUTHENTICATED. The pairing secret matched, so neither public key was "
-            "substituted: the tag is computed over both keys and only matches if each "
-            "of you was served the other's genuine key. No out-of-band fingerprint "
-            "comparison is needed for this pairing."
+            "substituted: each side's tag is bound to its own role over both keys, so "
+            "it matches only if each of you was served the other's genuine key. No "
+            "out-of-band fingerprint comparison is needed for this pairing."
+            + (
+                " The key is also PINNED, so this assurance survives a restart and a "
+                "later substitution will be refused."
+                if pinned_now else
+                " NOT PINNED, though: no trust store is configured, so this assurance "
+                "is lost when the process exits and a later substitution would go "
+                "undetected. Tell your operator to set STRINGCUP_TRUST_STORE."
+            )
         )
     else:
         result["verify"] = (

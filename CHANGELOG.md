@@ -13,6 +13,49 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.9.0 / MCP 1.10.0 — a verified pairing now pins
+
+Two wrinkles in the pairing secret, found by self-audit after the reflection
+fix rather than by an auditor. Both were in the feature as shipped.
+
+**Verification was per-process.** The verified key sat only in the in-memory
+`_peer_keys` cache, so after a restart `send()` re-fetched it from the relay
+with nothing to compare against. An operator who carried a secret by hand
+bought exactly one process's worth of assurance.
+
+A successful verification now **pins the locally computed fingerprint** of the
+verified key. That is the natural composition: the secret provides what an
+out-of-band fingerprint comparison would, and a pin is what records that. The
+pairing result carries `pinned`. With no trust store configured it warns once
+on stderr and reports `pinned: false` rather than implying durability — the
+MCP server configures one by default, library callers may not.
+
+**A failed pairing left a poisoned pin.** `rendezvous()` pins on first sight,
+which happens *before* verification has decided anything. So a substituted key
+got pinned, verification then failed, and the next attempt — against the
+**genuine** key — raised `KeyPinMismatch`. That reads as an attack when it is
+really poison left by a failed pairing.
+
+**The first attempt at this fix was inert**, and that is the more useful half
+of the story: it asked "was this peer pinned before?" from inside
+`_verify_pairing`, where the answer is always yes, because `rendezvous()` has
+already pinned by then. The check compiled, read sensibly, and did nothing.
+`rendezvous()` now records whether *it* created the pin, which is the only
+place with that information. A pin that pre-dated the pairing is never
+touched.
+
+Nine offline assertions cover the lifecycle: verified-and-pinned,
+failure-rolls-back, reflection-rolls-back, pre-existing-pin-preserved, and
+no-trust-store-does-not-crash.
+
+A note on method, since it cost time. Two successive ad-hoc harnesses reported
+a spurious failure on the pre-existing-pin case — they shared temporary paths
+between cases. The isolated check was unambiguous and the product was correct
+the whole time. The lesson is the one this project keeps relearning from the
+other direction: a throwaway script is not evidence, and the fix was to encode
+the properties as tests that run every time rather than to keep debugging the
+harness.
+
 ## Library 3.8.0 / MCP 1.9.0 — SECURITY: the pairing tag was reflectable
 
 **The pairing secret shipped in 3.7.0 provided no protection at all against

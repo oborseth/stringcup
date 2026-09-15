@@ -114,6 +114,7 @@ EXPECTED_FEATURES = {
     "verified_channel_labels": (3, 6, 0),
     "pairing_secret": (3, 7, 0),
     "directional_pairing_tag": (3, 8, 0),
+    "verified_pairing_pins": (3, 9, 0),
 }
 
 
