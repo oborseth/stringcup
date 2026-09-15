@@ -1138,7 +1138,32 @@ The server never encrypts or decrypts. It only:
 - **No forward secrecy:** the ephemeral public key is stored in the header, so compromising a static private key exposes past messages
 - **No sender-identity binding in the crypto:** sender authenticity rests on the token check, not the ciphertext. A malicious relay could substitute a key — which is why fingerprints must be verified out of band
 - **Key distribution is trust-on-first-use:** the relay serves both the key and its fingerprint, so only an out-of-band comparison rules out substitution
-- **A first contact between two autonomous agents is unauthenticated.** Out-of-band comparison assumes a human is present, and for the audience this project targets one usually is not. **The rendezvous token is not a usable substitute — the relay issues it, so the relay knows it**, and it therefore proves nothing about a key the relay served. Do not write docs implying the token authenticates anything. Closing it needs a secret the relay never sees. **The scheme recorded here previously was weak and must not be implemented as written:** `HMAC(passphrase, both public keys sorted)` gives the relay an *offline verifier* — it holds both public keys and sees the tag, so a human-chosen passphrase falls to a dictionary attack (demonstrated: recovered in 29 guesses, sub-millisecond). Two sound forms: a **high-entropy client-generated secret carried in the existing handoff block**, which the relay never sees and which HMAC binds safely because there is nothing to guess; or a **PAKE** (SPAKE2/CPace) if the secret must be human-memorable. Not implemented; recorded in SECURITY.md so the gap is not mistaken for an oversight
+- **First contact is authenticated when a secret rides the handoff** (library
+  3.7.0). `open_rendezvous()` mints 128 bits the client generates and **never
+  sends to the relay**; it travels in the handoff block the operator was
+  already pasting, and both sides compare `HMAC(secret, both public keys
+  sorted)` over the ordinary message path. Each side hashes its **own real**
+  key with the key it was **served**, so the tags match only if neither was
+  substituted. Verified against a simulated malicious relay: one substituted
+  key made both sides raise `VerificationFailed`; the same substitution
+  without a secret paired silently with `verified: false`.
+
+  Four properties to preserve. **The secret must never reach the relay** — a
+  value the relay knows proves nothing about a key it served, and
+  `test_mcp.py` asserts against the source that no `_request()` passes it.
+  **A mismatch must stay terminal, not retryable** — retrying cannot fix
+  substitution, and an agent reading "call again" would loop into an
+  unauthenticated conversation. **Absence of a secret must be reported**, not
+  defaulted away: `verified: false` plus a statement that substitution would
+  be undetectable. And **it costs one message in each direction**, so it
+  spends a sequence number, a send-rate slot and a dashboard count — which is
+  why a test asserting the first conversation message is sequence 1 broke, and
+  was rewritten to assert the increment instead.
+
+  It does **not** fix two *fully autonomous* agents with no human in the loop;
+  nothing does without a pre-shared trust root. What changed is that
+  authentication is free exactly when a human is already carrying the handoff.
+- **A first contact between two autonomous agents with no human present is unauthenticated.** Out-of-band comparison assumes a human is present, and for the audience this project targets one usually is not. **The rendezvous token is not a usable substitute — the relay issues it, so the relay knows it**, and it therefore proves nothing about a key the relay served. Do not write docs implying the token authenticates anything. Closing it needs a secret the relay never sees. **The scheme recorded here previously was weak and must not be implemented as written:** `HMAC(passphrase, both public keys sorted)` gives the relay an *offline verifier* — it holds both public keys and sees the tag, so a human-chosen passphrase falls to a dictionary attack (demonstrated: recovered in 29 guesses, sub-millisecond). Two sound forms: a **high-entropy client-generated secret carried in the existing handoff block**, which the relay never sees and which HMAC binds safely because there is nothing to guess; or a **PAKE** (SPAKE2/CPace) if the secret must be human-memorable. Not implemented; recorded in SECURITY.md so the gap is not mistaken for an oversight
 - **At-least-once delivery:** ACK follows processing, so a crash in between causes redelivery. Handlers must be idempotent
 - **Nothing expires, by design.** Only an ACK deletes a message. The store is bounded at the *sending* end instead — see [Retention](#retention-and-inbox-limits). A consumer that stops acknowledging causes its senders to see 507, which is intentional backpressure rather than data loss
 - **Message numbering is per-party** (see [Message identifiers](#message-identifiers)). Fixed; formerly one global counter that leaked platform-wide volume
@@ -1198,8 +1223,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 133 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 80 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
+| `test_mcp.py` | 149 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -73,10 +74,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.6.0"
+__version__ = "3.7.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 6, 0)
+version_info = (3, 7, 0)
 
 __all__ = [
     "Client",
@@ -101,6 +102,9 @@ __all__ = [
     "ValidationError",
     "DecryptionError",
     "KeyPinMismatch",
+    "VerificationFailed",
+    "new_pairing_secret",
+    "verification_tag",
 ]
 
 #: Capability name -> the version that introduced it.
@@ -163,6 +167,8 @@ FEATURES = {
     "duplicate_channel_guard": (3, 5, 0), # refuse a channel duplicating one you own
     # 3.6.0
     "verified_channel_labels": (3, 6, 0), # Message.channel is checked, not trusted
+    # 3.7.0
+    "pairing_secret": (3, 7, 0),          # authenticate first contact off-relay
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -211,6 +217,52 @@ def split_channel_label(text: str):
     if match is None:
         return None, text
     return match.group(1), text[match.end():]
+
+
+#: Bytes of client-generated entropy in a pairing secret.
+#:
+#: 16 bytes = 128 bits, machine-chosen. The size is the whole point: the
+#: scheme originally recorded for this used a *human* passphrase with plain
+#: HMAC, which hands the relay an offline verifier -- it holds both public
+#: keys, so it can guess and check locally. A six-word list broke it in 29
+#: guesses. At 128 bits there is nothing to guess, so HMAC is sound and no
+#: PAKE is needed.
+PAIRING_SECRET_BYTES = 16
+
+#: Marker for the verification message exchanged during an authenticated
+#: pairing. Distinct so it is never confused with agent content, and consumed
+#: inside the pairing call so the agent never sees it.
+VERIFY_PREFIX = "[stringcup:verify="
+
+
+def new_pairing_secret() -> str:
+    """
+    Mint a pairing secret. **This never goes to the relay.**
+
+    It travels in the handoff block the operator already pastes alongside the
+    rendezvous token, which is what makes it a secret the relay cannot know --
+    the relay issues the token, so the token alone authenticates nothing.
+    """
+    return "ps-" + base64.urlsafe_b64encode(
+        os.urandom(PAIRING_SECRET_BYTES)
+    ).decode().rstrip("=")
+
+
+def verification_tag(secret: str, pub_a: str, pub_b: str) -> str:
+    """
+    `HMAC(secret, both public keys in sorted order)`.
+
+    Sorted so both sides derive the same value without agreeing who is who.
+    Each side hashes its **own real** public key together with the peer key it
+    was **served**, so the tags match only if neither key was substituted:
+    for the two sets to be equal when the identities differ, the served keys
+    must be the genuine ones.
+    """
+    raw_a = base64.b64decode(pub_a)
+    raw_b = base64.b64decode(pub_b)
+    joined = b"".join(sorted([raw_a, raw_b]))
+
+    return hmac.new(secret.encode(), joined, hashlib.sha256).hexdigest()
 
 
 MAX_PAGE = 200
@@ -275,6 +327,10 @@ FEATURE_OF = {
     "require_features": "require_features",
     "FEATURES": "FEATURES",
     "FEATURE_OF": "feature_map",
+    # 3.7.0 — authenticating first contact with a secret the relay never sees.
+    "VerificationFailed": "pairing_secret",
+    "new_pairing_secret": "pairing_secret",
+    "verification_tag": "pairing_secret",
 }
 
 
@@ -386,6 +442,17 @@ class RateLimited(StringcupError):
     def __init__(self, message: str, retry_after: int = 60, body=None):
         super().__init__(message, status=429, body=body)
         self.retry_after = retry_after
+
+
+class VerificationFailed(StringcupError):
+    """
+    A pairing secret was supplied and the peer's key did not authenticate.
+
+    **Treat this as key substitution until proven otherwise.** It means the
+    tag your peer computed over the two public keys does not match the one you
+    computed, which is exactly what a relay serving one of you a different key
+    produces. Do not fall back to an unverified pairing.
+    """
 
 
 class KeyPinMismatch(StringcupError):
@@ -989,7 +1056,7 @@ class Client:
 
         return body
 
-    def open_rendezvous(self) -> dict:
+    def open_rendezvous(self, with_secret: bool = True) -> dict:
         """
         Open a rendezvous and return immediately with the issued token.
 
@@ -997,15 +1064,118 @@ class Client:
         the peer needs in order to show up at all — blocking before revealing
         it just delays the pairing. Follow with `await_peer()`.
 
-            info  = me.open_rendezvous()
-            print(info["token"])          # hand this to the peer
-            peer  = me.await_peer(info["token"])["peer_id"]
+            info = me.open_rendezvous()
+            print(info["token"], info["secret"])   # hand BOTH to the peer
+            peer = me.await_peer(info["token"], secret=info["secret"])
 
         You are the **initiator**: you speak first once paired.
-        """
-        return self.rendezvous(token=None, wait=0)
 
-    def await_peer(self, token: str, timeout: float = 300.0) -> dict:
+        **`secret` is what authenticates the pairing.** The relay issues the
+        token, so the token proves nothing about a key the relay served; the
+        secret is generated here and never sent to the relay. It costs the
+        operator nothing, because the same single handoff block is already
+        being pasted — see `handoff_block()`.
+
+        Pass `with_secret=False` for the old unauthenticated behaviour. The
+        pairing then reports `verified: False`, and a substituted key is
+        undetectable without an out-of-band fingerprint comparison.
+        """
+        info = self.rendezvous(token=None, wait=0)
+
+        if with_secret:
+            info["secret"] = new_pairing_secret()
+
+        return info
+
+    def handoff_block(self, info: dict, role: str = "responder") -> str:
+        """
+        The block an operator pastes to the other agent, secret included.
+
+        Exists so the secret cannot be forgotten. The handoff was already a
+        copy-paste; carrying one more line in it is the entire cost of
+        authenticating first contact.
+        """
+        lines = [
+            "STRINGCUP HANDOFF",
+            "",
+            "  YOUR ROLE: %s" % role,
+            "  TOKEN:     %s" % info["token"],
+        ]
+
+        if info.get("secret"):
+            lines += [
+                "  SECRET:    %s" % info["secret"],
+                "",
+                "  Pass BOTH to join_rendezvous. The secret never reaches the",
+                "  relay, which is what makes it able to prove the keys were not",
+                "  substituted. If pairing reports verified: false, or raises,",
+                "  stop and tell your operator.",
+            ]
+        else:
+            lines += [
+                "",
+                "  No secret: this pairing CANNOT be authenticated. A substituted",
+                "  key would be undetectable without comparing fingerprints out",
+                "  of band.",
+            ]
+
+        return "\n".join(lines)
+
+    def _verify_pairing(self, info: dict, secret: str, timeout: float) -> dict:
+        """
+        Exchange and compare verification tags with the freshly paired peer.
+
+        Runs over the ordinary message path, so the relay needs no change. The
+        tag leaks nothing — the secret is 128 bits and HMAC is a PRF — and the
+        relay cannot forge one, so the worst it can do is cause a *detected*
+        failure, which is the safe direction.
+
+        Only the peer's verification message is acknowledged; anything else
+        that arrives meanwhile is left untouched, so a real first message is
+        never swallowed here.
+        """
+        peer_id = info["peer_id"]
+        peer_pub = info["peer_identity_public_key"]
+        mine = verification_tag(secret, self.identity.public_key_b64, peer_pub)
+
+        self.send(peer_id, VERIFY_PREFIX + mine + "]")
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise VerificationFailed(
+                    "peer never sent its verification tag within %.0fs. It may be "
+                    "running a client older than 3.7.0, which does not know about "
+                    "the secret. Do not treat this pairing as authenticated."
+                    % timeout
+                )
+
+            page = self.fetch(limit=MAX_PAGE,
+                              wait=int(min(MAX_WAIT, max(0, remaining))),
+                              verify_channels=False)
+
+            for msg in page.messages:
+                if msg.sender_id != peer_id or not msg.text.startswith(VERIFY_PREFIX):
+                    continue
+
+                self.ack([msg.id])
+                theirs = msg.text[len(VERIFY_PREFIX):].rstrip("]").strip()
+
+                if not hmac.compare_digest(theirs, mine):
+                    raise VerificationFailed(
+                        "the pairing secret did not authenticate this peer. The tag "
+                        "it computed over the two public keys does not match yours, "
+                        "which is what a relay serving one of you a substituted key "
+                        "produces. Treat this as key substitution: do not send, and "
+                        "report it to your operator."
+                    )
+
+                info["verified"] = True
+                return info
+
+    def await_peer(self, token: str, timeout: float = 300.0,
+                   secret: Optional[str] = None) -> dict:
         """
         Block until the counterpart arrives, or raise `PairingTimeout`.
 
@@ -1033,19 +1203,34 @@ class Client:
             # receive_one: a short timeout must not block for a full 25s hold.
             info = self.rendezvous(token=token, wait=int(min(MAX_WAIT, max(0, remaining))))
             if info.get("peer_id"):
+                if secret:
+                    return self._verify_pairing(
+                        info, secret, max(30.0, deadline - time.monotonic()))
+
+                info["verified"] = False
                 return info
 
-    def join_rendezvous(self, token: str, timeout: float = 300.0) -> dict:
+    def join_rendezvous(self, token: str, timeout: float = 300.0,
+                        secret: Optional[str] = None) -> dict:
         """
         Join a rendezvous someone else opened, waiting until paired.
 
         You are the **responder**: do not send first: the initiator opens the
         conversation.
+
+        **Pass `secret` if the handoff block carried one.** Without it the
+        pairing reports `verified: False` and a substituted key cannot be
+        detected. With it, a mismatch raises `VerificationFailed`.
         """
         info = self.rendezvous(token=token, wait=0)
         if info.get("peer_id"):
+            if secret:
+                return self._verify_pairing(info, secret, timeout)
+
+            info["verified"] = False
             return info
-        return self.await_peer(token, timeout=timeout)
+
+        return self.await_peer(token, timeout=timeout, secret=secret)
 
     def rendezvous_release(self, token: str) -> dict:
         """Drop this identity's claim so the token can be reused immediately."""

@@ -257,6 +257,17 @@ six-word list, the passphrase was recovered in 29 guesses in under a
 millisecond. A scheme whose security rests on a human-memorable secret needs a
 primitive designed for that.
 
+**The first of these is now implemented** (library 3.7.0):
+`open_rendezvous()` mints the secret, `handoff_block()` puts it in the block
+the operator pastes, and `await_peer(secret=)` / `join_rendezvous(secret=)`
+compare the tags. A pairing reports `verified: true` only when they match; a
+mismatch raises rather than pairing. Tested against a simulated malicious
+relay substituting one key: both sides refused.
+
+It still does not help two agents with **no human in the loop** — the secret
+has to reach the peer somehow, and the handoff is the channel. Nothing closes
+that without a pre-shared trust root.
+
 Two sound constructions:
 
 - **A high-entropy secret the client generates, carried in the handoff block

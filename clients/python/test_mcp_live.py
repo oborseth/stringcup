@@ -129,18 +129,54 @@ def main():
         opened = alice.call("open_rendezvous")
         check(opened["token"].startswith("rv-"), "Relay issued a token")
         check(opened["role"] == "initiator", "Alice is the initiator by opening")
+        check(opened["secret"].startswith("ps-"),
+              "A pairing secret was minted locally, never sent to the relay")
+        check("SECRET" in opened["handoff"],
+              "The handoff block carries it, so the operator cannot drop it")
 
-        # The operator relays the token — the one step MCP does not remove.
-        joined = bob.call("join_rendezvous", {"token": opened["token"], "hold": 30})
+        # The operator relays the block — the one step MCP does not remove.
+        # Both halves travel together, which is the whole point: the token is
+        # the relay's, the secret is not.
+        secret = opened["secret"]
+
+        import threading as _th
+        results = {}
+
+        def _join():
+            results["join"] = bob.call(
+                "join_rendezvous",
+                {"token": opened["token"], "secret": secret, "hold": 40})
+
+        def _await():
+            results["await"] = alice.call(
+                "await_peer",
+                {"token": opened["token"], "secret": secret, "hold": 40})
+
+        # Verification is a two-way exchange over the message path, so both
+        # sides must be running for either to complete.
+        t_join, t_await = _th.Thread(target=_join), _th.Thread(target=_await)
+        t_join.start(); t_await.start(); t_join.join(); t_await.join()
+
+        joined, paired = results["join"], results["await"]
         check(joined["paired"] is True, "Bob joined and paired")
         check(joined["role"] == "responder", "Bob is the responder by joining")
         check(joined["peer_id"] == a["id"], "Bob learned Alice's identifier")
-
-        paired = alice.call("await_peer", {"token": opened["token"], "hold": 30})
         check(paired["paired"] is True, "Alice saw Bob arrive")
         check(paired["peer_id"] == b["id"], "Alice learned Bob's identifier")
         check(paired["role"] == "initiator",
               "Alice is still the initiator after re-polling, not flipped to responder")
+
+        step("3b. The pairing is AUTHENTICATED, not merely established")
+        check(paired["verified"] is True and joined["verified"] is True,
+              "Both sides report the pairing verified by the secret")
+        check("AUTHENTICATED" in paired["verify"],
+              "...and neither is told to go and compare fingerprints anyway")
+
+        # The verification exchange must not leave itself in either inbox.
+        for peer, who in ((alice, "Alice"), (bob, "Bob")):
+            idle = peer.call("receive", {"hold": 2})
+            check(idle["received"] is False,
+                  "%s's inbox is clean: the verification message was consumed" % who)
 
         step("4. Fingerprints agree across the pair")
         check(paired["peer_fingerprint"] == b["fingerprint"],
@@ -166,8 +202,17 @@ def main():
             # name on the surface agents read.
             check("message_id" not in sent and "message_id" not in got,
                   "Neither result uses the abolished shared name")
-            check(sent["sent_seq"] == turn + 1 and got["inbox_seq"] == turn + 1,
-                  "Each side numbers from 1 in its own space")
+            # Assert the INCREMENT, not an absolute start. Each counter
+            # advances by exactly one per message in its own space, which is
+            # the actual invariant; the starting value is not one, because an
+            # authenticated pairing legitimately spends a sequence in each
+            # direction exchanging verification tags. Hard-coding turn + 1
+            # made this test fail when that was added, for no real reason.
+            if turn == 0:
+                base_sent, base_inbox = sent["sent_seq"], got["inbox_seq"]
+            check(sent["sent_seq"] == base_sent + turn
+                  and got["inbox_seq"] == base_inbox + turn,
+                  "Each side advances its own counter by exactly one per message")
             transcript.append(got["text"])
 
             bob.call("send", {"recipient_id": a["id"], "text": "pong %d" % turn})

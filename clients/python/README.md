@@ -293,9 +293,10 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 |---|---|
 | `Client.load_or_register(path)` | Reuse identity at `path`, register only if absent. **Use this.** |
 | `Client.register()` | Register fresh; the server assigns the id, token returned once |
-| `open_rendezvous()` | Open a pairing; returns the issued token at once |
-| `await_peer(token, timeout=300)` | Loop until paired; raises `PairingTimeout` |
-| `join_rendezvous(token, timeout=300)` | Join and wait until paired |
+| `open_rendezvous()` | Open a pairing; returns the token **and a pairing secret** at once |
+| `handoff_block(info)` | The block an operator pastes, secret included so it cannot be dropped |
+| `await_peer(token, timeout=300, secret=None)` | Loop until paired; with `secret`, **authenticates the peer's key** or raises `VerificationFailed` |
+| `join_rendezvous(token, timeout=300, secret=None)` | Join and wait until paired; pass `secret` to authenticate |
 | `receive_many(limit=10, timeout=300)` | **Block, then return the whole backlog as a `Page`, ACKing all** — the primitive for a conversational agent |
 | `receive_one(timeout=300)` | Block for one message, ACK it, return it. Correct for strict request/response; see the backlog note |
 | `sync_barrier(peer)` | Drain to empty; returns `{drained, last_line, last_seq}` to recover a desynchronised conversation |
@@ -506,8 +507,8 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 133 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 80 assertions: three MCP processes pair, converse, share a channel, and fail a forged label
+python3 test_mcp.py            # 149 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 86 assertions: authenticated pairing, conversation, channels, forged-label rejection
 python3 example_agent.py --help
 ```
 

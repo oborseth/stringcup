@@ -51,7 +51,9 @@ from typing import Any, Callable, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import stringcup  # noqa: E402
-from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa: E402
+from stringcup import (  # noqa: E402
+    Client, PairingTimeout, StringcupError, TrustStore, VerificationFailed,
+)
 
 # Capabilities rather than a bare version, because a version only helps if
 # somebody moved it — and once, nobody did: this server's `send` result key
@@ -61,13 +63,14 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.6.0")
+stringcup.require_version("3.7.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "receive_many", "backlog_visible", "sync_barrier",
                            "channel_labels", "membership_notice",
-                           "duplicate_channel_guard", "verified_channel_labels")
+                           "duplicate_channel_guard", "verified_channel_labels",
+                           "pairing_secret")
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -174,11 +177,19 @@ def tool_open_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
     info = me.open_rendezvous()
     return {
         "token": info["token"],
+        # Generated here and NEVER sent to the relay. The relay issues the
+        # token, so the token authenticates nothing about a key the relay
+        # served; this is the half it cannot know.
+        "secret": info.get("secret"),
+        "handoff": me.handoff_block(info),
         # The relay derives and reports the role; echo it rather than assuming.
         "role": info.get("role", "initiator"),
         "next": (
-            "Give this token to your operator to pass to the other agent, then call "
-            "await_peer with it. You are the initiator: you speak first once paired."
+            "Give the WHOLE handoff block to your operator to pass to the other agent "
+            "\u2014 the token AND the secret. The secret never reaches the relay, which "
+            "is what lets the pairing prove neither key was substituted; the token "
+            "alone cannot, because the relay issued it. Then call await_peer with both. "
+            "You are the initiator: you speak first once paired."
         ),
     }
 
@@ -187,7 +198,10 @@ def tool_await_peer(arguments: Dict[str, Any]) -> Dict[str, Any]:
     token = arguments["token"]
     me = client()
     try:
-        info = me.await_peer(token, timeout=_hold(arguments))
+        info = me.await_peer(token, timeout=_hold(arguments),
+                             secret=arguments.get("secret"))
+    except VerificationFailed as exc:
+        return _verification_failed(exc)
     except PairingTimeout:
         return {
             "paired": False,
@@ -205,7 +219,10 @@ def tool_join_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
     token = arguments["token"]
     me = client()
     try:
-        info = me.join_rendezvous(token, timeout=_hold(arguments))
+        info = me.join_rendezvous(token, timeout=_hold(arguments),
+                                  secret=arguments.get("secret"))
+    except VerificationFailed as exc:
+        return _verification_failed(exc)
     except PairingTimeout:
         return {
             "paired": False,
@@ -216,6 +233,29 @@ def tool_join_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     return _paired(me, info, "responder")
+
+
+def _verification_failed(exc: VerificationFailed) -> Dict[str, Any]:
+    """
+    A supplied secret did not authenticate the peer.
+
+    Deliberately NOT shaped like a retryable not-yet: retrying cannot fix key
+    substitution, and an agent that reads this as "call again" would loop into
+    an unauthenticated conversation.
+    """
+    return {
+        "paired": False,
+        "verified": False,
+        "error": str(exc),
+        "next": (
+            "STOP. Do not retry and do not send anything. A secret was supplied and "
+            "the peer did not authenticate, which is what a relay serving one of you "
+            "a substituted key looks like. Report this to your operator verbatim. The "
+            "only benign cause is a peer on a client older than 3.7.0, which does not "
+            "know about the secret \u2014 and that is for your operator to confirm, not "
+            "for you to assume."
+        ),
+    }
 
 
 def _paired(me: Client, info: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -247,11 +287,24 @@ def _paired(me: Client, info: Dict[str, Any], role: str) -> Dict[str, Any]:
             "to speak first."
         )
 
-    result["verify"] = (
-        "Compare peer_fingerprint_short out of band if the conversation is sensitive. "
-        "The relay serves both the key and its fingerprint, so a matching pair proves "
-        "nothing on its own."
-    )
+    verified = bool(info.get("verified"))
+    result["verified"] = verified
+
+    if verified:
+        result["verify"] = (
+            "AUTHENTICATED. The pairing secret matched, so neither public key was "
+            "substituted: the tag is computed over both keys and only matches if each "
+            "of you was served the other's genuine key. No out-of-band fingerprint "
+            "comparison is needed for this pairing."
+        )
+    else:
+        result["verify"] = (
+            "NOT AUTHENTICATED \u2014 no pairing secret was supplied, so a substituted "
+            "key would be undetectable here. Compare peer_fingerprint_short out of "
+            "band if this conversation matters. The relay serves both the key and its "
+            "fingerprint, so a matching pair proves nothing on its own. Prefer passing "
+            "the secret from the handoff block next time."
+        )
     return result
 
 
@@ -500,11 +553,17 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "open_rendezvous",
         "title": "Open a rendezvous",
         "description": (
-            "Start a pairing and get the rendezvous token, returning immediately. Use "
-            "this when you are the one initiating contact. The token is the only thing "
-            "the other agent needs; hand it to your operator to relay, then call "
-            "await_peer. Opening makes you the INITIATOR — you speak first once paired. "
-            "You cannot invent a token yourself; the relay issues it."
+            "Start a pairing and get the rendezvous token AND a pairing secret, "
+            "returning immediately. Use this when you are the one initiating contact. "
+            "Hand your operator the WHOLE `handoff` block — both values — then call "
+            "await_peer with both. Opening makes you the INITIATOR: you speak first "
+            "once paired. You cannot invent a token yourself; the relay issues it.\n\n"
+            "The `secret` is generated locally and NEVER sent to the relay. That is "
+            "what makes the pairing verifiable: the relay issues the token, so the "
+            "token proves nothing about a key the relay served, but a tag computed "
+            "over both public keys with the secret matches only if neither key was "
+            "substituted. It costs your operator nothing — the same single paste was "
+            "already happening. Never put the secret in a message."
         ),
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_open_rendezvous,
@@ -525,6 +584,15 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": "The token returned by open_rendezvous.",
                 },
+                "secret": {
+                    "type": "string",
+                    "description": (
+                        "The pairing secret from the same handoff block, if it "
+                        "carried one. Supplying it AUTHENTICATES the pairing: a "
+                        "substituted key then fails loudly instead of pairing "
+                        "silently. Omitting it leaves the pairing unverified."
+                    ),
+                },
                 "hold": {
                     "type": "number",
                     "description": (
@@ -543,7 +611,9 @@ TOOLS: List[Dict[str, Any]] = [
             "Join a pairing someone else opened, using the token your operator gave "
             "you, and return the peer's identifier and key fingerprint. Joining makes "
             "you the RESPONDER — do not send first; wait for the initiator to speak. "
-            "Returns {\"paired\": false} if the initiator is not ready yet; call again."
+            "Returns {\"paired\": false} if the initiator is not ready yet; call again. "
+            "If the handoff block carried a SECRET, pass it: that is what proves "
+            "neither key was substituted, and without it `verified` comes back false."
         ),
         "inputSchema": {
             "type": "object",
@@ -551,6 +621,15 @@ TOOLS: List[Dict[str, Any]] = [
                 "token": {
                     "type": "string",
                     "description": "The rendezvous token you were given (starts 'rv-').",
+                },
+                "secret": {
+                    "type": "string",
+                    "description": (
+                        "The pairing secret from the same handoff block, if it "
+                        "carried one. Supplying it AUTHENTICATES the pairing: a "
+                        "substituted key then fails loudly instead of pairing "
+                        "silently. Omitting it leaves the pairing unverified."
+                    ),
                 },
                 "hold": {
                     "type": "number",

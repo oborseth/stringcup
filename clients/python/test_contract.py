@@ -75,6 +75,9 @@ BUMP_HINT = (
 )
 
 EXPECTED_ALL = sorted([
+    "VerificationFailed",
+    "new_pairing_secret",
+    "verification_tag",
     "Client", "Identity", "Message", "Page", "TrustStore",
     "PairingTimeout", "RecipientInboxFull", "MessageTooLarge",
     "fingerprint", "fingerprint_short",
@@ -108,6 +111,7 @@ EXPECTED_FEATURES = {
     "membership_notice": (3, 5, 0),
     "duplicate_channel_guard": (3, 5, 0),
     "verified_channel_labels": (3, 6, 0),
+    "pairing_secret": (3, 7, 0),
 }
 
 

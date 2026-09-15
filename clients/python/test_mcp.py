@@ -209,21 +209,35 @@ class FakeClient:
         self.notified_on_create = None
         self.notified_on_add = None
         self.verifiable_channels = set()
+        self.pair_secret = None
+        self.verification_fails = False
 
-    def open_rendezvous(self):
-        return {"token": "rv-" + "b" * 32, "token_issued": True}
+    def open_rendezvous(self, with_secret=True):
+        out = {"token": "rv-" + "b" * 32, "token_issued": True}
+        if with_secret:
+            out["secret"] = "ps-" + "s" * 22
+        return out
 
-    def await_peer(self, token, timeout=300.0):
+    def handoff_block(self, info, role="responder"):
+        return "STRINGCUP HANDOFF\n  TOKEN: %s\n  SECRET: %s" % (
+            info["token"], info.get("secret"))
+
+    def await_peer(self, token, timeout=300.0, secret=None):
         self.pair_calls += 1
+        self.pair_secret = secret
         if self.pair_calls <= self.pair_after:
             raise stringcup.PairingTimeout("not yet")
+        if secret and self.verification_fails:
+            raise stringcup.VerificationFailed("tags did not match")
         return {"peer_id": "sc-" + "c" * 24,
                 "peer_identity_public_key": self.PUB,
-                "role": self.role}
+                "role": self.role,
+                # Only a supplied secret can authenticate a pairing.
+                "verified": bool(secret)}
 
-    def join_rendezvous(self, token, timeout=300.0):
+    def join_rendezvous(self, token, timeout=300.0, secret=None):
         self.role = "responder"
-        return self.await_peer(token, timeout)
+        return self.await_peer(token, timeout, secret=secret)
 
     def send(self, recipient_id, text):
         self.sent.append((recipient_id, text))
@@ -549,8 +563,78 @@ def test_backlog_is_visible():
           "An empty inbox never claims messages are waiting")
 
 
+def test_pairing_secret():
+    step("17. pairing secret authenticates first contact")
+
+    fake = FakeClient()
+    with_fake(fake)
+
+    opened = call("open_rendezvous")["structuredContent"]
+    check(opened.get("secret", "").startswith("ps-"),
+          "open_rendezvous mints a pairing secret")
+    check("SECRET" in opened.get("handoff", ""),
+          "...and the handoff block carries it, so it cannot be forgotten")
+    check("never" in opened.get("next", "").lower()
+          and "relay" in opened.get("next", "").lower(),
+          "...and the model is told it must not reach the relay")
+
+    # Supplying it must reach the library and mark the pairing authenticated.
+    payload = call("await_peer", {"token": "rv-x", "secret": "ps-abc"})["structuredContent"]
+    check(fake.pair_secret == "ps-abc", "The secret is passed through to the library")
+    check(payload["verified"] is True, "A pairing with a matching secret is verified")
+    check("AUTHENTICATED" in payload["verify"],
+          "...and says so, rather than still demanding a fingerprint comparison")
+
+    # Omitting it must NOT claim verification.
+    fake2 = FakeClient(); with_fake(fake2)
+    payload = call("await_peer", {"token": "rv-x"})["structuredContent"]
+    check(payload["verified"] is False, "No secret means not verified")
+    check("NOT AUTHENTICATED" in payload["verify"],
+          "...stated plainly, not omitted")
+
+    # A mismatch must be terminal, not retryable: retrying cannot fix
+    # substitution, and "call again" would loop into an unauthenticated chat.
+    fake3 = FakeClient(); fake3.verification_fails = True; with_fake(fake3)
+    payload = call("join_rendezvous",
+                   {"token": "rv-x", "secret": "ps-abc"})["structuredContent"]
+    check(payload["paired"] is False and payload["verified"] is False,
+          "A failed verification does not report a pairing")
+    check("STOP" in payload["next"],
+          "...and tells the model to stop rather than retry")
+    check("substituted" in payload["next"],
+          "...naming key substitution as the thing it looks like")
+
+    # The library primitive itself: order-independent, secret-dependent.
+    A = FakeClient.PUB
+    Bk = "7+bZTYfHn+kyu4W0e61+g+LgBxD0mN28o+TQlBbFll0="
+    t1 = stringcup.verification_tag("ps-1", A, Bk)
+    check(t1 == stringcup.verification_tag("ps-1", Bk, A),
+          "verification_tag is order-independent, so neither side must be 'first'")
+    check(t1 != stringcup.verification_tag("ps-2", A, Bk),
+          "...and depends on the secret")
+    check(len(stringcup.new_pairing_secret()) > 20,
+          "A minted secret is long enough that there is nothing to guess")
+
+    # THE property the whole scheme rests on. If the secret ever reaches the
+    # relay it is worth nothing -- the relay already knows the token, and a
+    # value it knows cannot prove anything about a key it served. Asserted
+    # against the source because a runtime test would only cover the paths it
+    # happens to exercise.
+    source = open(os.path.join(HERE, "stringcup.py")).read()
+    rv = source.split("def rendezvous(")[1].split("\n    def ")[0]
+    check("secret" not in rv,
+          "rendezvous() never puts the pairing secret in a relay request")
+
+    sends_secret = [
+        line for line in source.splitlines()
+        if "_request(" in line and "secret" in line
+    ]
+    check(sends_secret == [],
+          "No _request() call anywhere passes the secret to the relay")
+
+
 def test_sync_barrier():
-    step("17. sync_barrier")
+    step("18. sync_barrier")
 
     fake = FakeClient()
     with_fake(fake)
@@ -564,7 +648,7 @@ def test_sync_barrier():
 
 
 def test_channels():
-    step("18. channels")
+    step("19. channels")
 
     fake = FakeClient()
     with_fake(fake)
@@ -682,7 +766,7 @@ def test_channels():
 
 
 def test_no_remote_transport():
-    step("19. There is no remote transport")
+    step("20. There is no remote transport")
 
     source = open(os.path.join(HERE, "stringcup_mcp.py")).read()
     check("http.server" not in source and "HTTPServer" not in source,
@@ -711,6 +795,7 @@ def main():
     test_unexpected_exception_is_contained()
     test_peer_info()
     test_backlog_is_visible()
+    test_pairing_secret()
     test_sync_barrier()
     test_channels()
     test_no_remote_transport()
