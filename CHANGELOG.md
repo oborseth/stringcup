@@ -13,6 +13,72 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Tests — the wire-level property, and a design attacked before it was written
+
+`test_properties.py` gains the fourth PROTOCOL.md B.6 property: **no message
+plaintext and no pairing secret reaches the relay, in any encoding**, across a
+full lifecycle — register, send, receive, ack, create a channel, broadcast,
+read a roster, rotate. `_request` is instrumented and every method, path, body
+and idempotency key is searched.
+
+**Every encoding, not `str(body)`.** Raw utf-8, base64 standard and urlsafe,
+both with padding stripped, hex, JSON-escaped and percent-encoded. That list
+is an auditor's, and it is the difference between a real check and an inert
+one: a canary travelling as base64 inside a JSON string passes a naive
+substring search, which is exactly how this project's earlier *line-wise* grep
+for the pairing secret missed a planted multi-line `_request()` call. Verified
+non-inert by planting a base64 copy of the plaintext in the message header:
+the property fails, naming `POST /messages` and `POST /messages/batch`.
+
+**It asserts the known channel-name exposure rather than stepping around it.**
+The name is in the URL path, necessarily, and that is now a recorded fact with
+a test attached instead of a paragraph — so closing it will make the assertion
+fail and force the docs to change with the code.
+
+**And the property immediately corrected an assertion of mine.** The first
+version claimed the channel name is never in any request body. It failed at
+once: `POST /topics` carries it, because the relay has to be told what to
+create. The accurate, narrower claim — what keeping the label inside the
+ciphertext actually buys — is that the name never rides a **message**, so it
+is never stored per-message beside ciphertext in rows an ACK deletes. It
+appears when a channel is *administered*.
+
+**What it does not retire:** the per-call paren scan in `test_mcp.py`. An
+auditor suggested it does. It does not, and this project's own rule says why —
+*"I checked" has to name what was checked.* The property sees the requests a
+lifecycle makes and is blind to a leak on an unexercised path; the scan reads
+every `_request()` call regardless of reachability. Both stay.
+
+### `DESIGN-opaque-topic-ids.md`
+
+A design sent to the reviewer to **attack before any of it was written**, on
+their offer that adversarial design review is the one mode where they are
+cheaper than the test suite. Six findings. It is recorded in full because the
+critique is worth more than the design:
+
+- **A security regression that would have shipped.** Keeping the human name in
+  the label while making names client-local breaks `verify_channel_claim()`
+  and makes it **fail open** — B resolves A's label to B's own same-named
+  channel, finds A is a member, and confidently attributes the message to the
+  wrong channel. The already-fixed label forgery, resurrected, and worse
+  because the check returns `True`. Fix is free: the label carries the id.
+- **The justification was wrong.** The exposure fix needs no server change —
+  a client can name a topic `secrets.token_hex(16)` today. What server
+  assignment buys is that **no caller can choose a weak or squattable id**,
+  which is this project's own thrice-learned rule. Justifying it by the
+  access log would have been overbuilding.
+- **Two of my stated concerns were overrated**, one with the wrong analogy: a
+  lost name map is recoverable from any member over an encrypted channel,
+  unlike a lost private key, and the owner already distributes names in-band
+  via the encrypted `_notify_added`.
+- **It kills the 409 topic-existence oracle structurally**, which was recorded
+  here as inherent to a global namespace.
+- **Migration must be a hard cutover**, or the names go straight back into the
+  request line for everyone who has not migrated.
+
+Not implemented. It is a breaking change to a live deployment and needs an
+operator decision.
+
 ## Library 3.20.0 — the relay was never blind to channel names, and the docs said it was
 
 An auditor set out to write the fourth PROTOCOL.md B.6 property — *"the relay

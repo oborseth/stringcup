@@ -1082,6 +1082,21 @@ cannot quietly become false:
   (`map $request_uri $stringcup_logged_uri`), which removes the *retention*
   and not the relay's knowledge.
 
+  **If this is ever closed with opaque topic ids, the label must carry the
+  ID, not the human name.** `verify_channel_claim()` resolves a claim to a
+  roster and asks whether both parties are in it, which is sound *only
+  because topic names are a global namespace* — both ends resolve the same
+  string to the same channel. Client-side local names destroy that invariant
+  and the check **fails open**: if B has its own channel named "ops" and A
+  labels a broadcast "ops", B resolves it to *its* channel and asks whether A
+  is a member — for agents that work together, frequently yes. Verification
+  passes and the message is attributed to the wrong channel, which is the
+  channel-label forgery already fixed once, resurrected, and worse because the
+  check now returns `True`. Deliberately reachable: A picks a local name it
+  knows B uses. The fix is free — the label is inside the ciphertext and the
+  id is already relay-visible. See `DESIGN-opaque-topic-ids.md`, which records
+  that critique and five others against a design **before** it was written.
+
   Keeping the label out of the header is **still right, for a narrower
   reason**: it avoids writing a human-meaningful name into `header_json` once
   per message, in rows deleted only by an ACK, and avoids the relay holding
@@ -1503,7 +1518,16 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_mcp.py` | 221 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
 | `test_mcp_live.py` | 86 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
-| `test_properties.py` | 30 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
+| `test_properties.py` | 37 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
+
+**The wire-level property retires nothing, and the source scan stays.** An
+auditor suggested property 4 subsumes `test_mcp.py`'s per-call paren scan for
+the pairing secret. It does not, and this file's own rule says why: *"I
+checked" has to name what was checked — source, rendered interface, or running
+behaviour.* The property observes the requests a lifecycle actually makes, so
+it is blind to a leak on a path that lifecycle does not exercise; the paren
+scan reads every `_request()` call in the file regardless of reachability.
+They fail on different things. Keep both.
 
 **`test_properties.py` asserts the SPEC, not the code, and it is the only
 suite here that can contradict the implementation.** Every other suite is

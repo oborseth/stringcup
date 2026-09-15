@@ -43,6 +43,8 @@ code works:
 Usage:  python3 test_properties.py [base_url]
 """
 
+import base64
+import binascii
 import json
 import os
 import shutil
@@ -50,6 +52,7 @@ import stat
 import sys
 import tempfile
 import time
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -364,6 +367,154 @@ def property_atomic_writes_refuse_a_hostile_path(work):
           "...and the saved file is the new content, not the stale fragment")
 
 
+# ---------------------------------------------------------------------------
+# Property 4: the relay never receives plaintext, in any encoding.
+# ---------------------------------------------------------------------------
+
+def _encodings(value):
+    """
+    Every form a value could survive in on the wire.
+
+    **Checking `str(body)` is what makes this kind of test inert.** A canary
+    that travels as base64 inside a JSON string passes a naive substring
+    search, and that is precisely how this project's earlier line-wise grep
+    for the pairing secret failed: a planted multi-line `_request()` call
+    leaking the secret was missed. An auditor named the encodings that have to
+    be covered, and this list is that.
+    """
+    raw = value.encode() if isinstance(value, str) else value
+    forms = {
+        raw,
+        base64.b64encode(raw),
+        base64.urlsafe_b64encode(raw),
+        base64.b64encode(raw).rstrip(b"="),
+        base64.urlsafe_b64encode(raw).rstrip(b"="),
+        binascii.hexlify(raw),
+        json.dumps(raw.decode("utf-8", "replace"))[1:-1].encode(),
+        urllib.parse.quote(raw).encode(),
+    }
+    return {f for f in forms if f}
+
+
+def property_relay_never_receives_plaintext(work):
+    step("4. The relay receives NO message plaintext and NO pairing secret, "
+         "in ANY encoding, across a full lifecycle")
+
+    # PROTOCOL.md B.6: "the relay is blind." Executing that sentence is what
+    # exposed the channel-name contradiction -- the property could not be
+    # written honestly against an API that puts channel names in the URL
+    # path, which is a better outcome than a green test. That exposure is
+    # asserted explicitly at the end rather than quietly excluded, because a
+    # known gap a test steps around is a gap nobody will find again.
+    reset_rate_limits()
+
+    captured = []
+
+    def instrument(client):
+        original = client._request
+
+        def spy(method, path, body=None, authenticated=True, idempotency_key=None):
+            captured.append({
+                "method": method,
+                "path": path,
+                "body": json.dumps(body) if body is not None else "",
+                "idempotency_key": idempotency_key or "",
+            })
+            return original(method, path, body=body, authenticated=authenticated,
+                            idempotency_key=idempotency_key)
+
+        client._request = spy
+        return client
+
+    canary = "CANARY-" + binascii.hexlify(os.urandom(16)).decode()
+    secret = stringcup.new_pairing_secret()
+
+    a = instrument(Client.load_or_register(os.path.join(work, "wire-a.json"),
+                                           base_url=BASE, transcript=None))
+    b = instrument(Client.load_or_register(os.path.join(work, "wire-b.json"),
+                                           base_url=BASE, transcript=None))
+
+    # A full lifecycle, so a leak anywhere on the path is in scope.
+    a.send(b.id, canary)
+    page = b.receive_many(limit=10, timeout=30)
+    check(any(canary in m.text for m in page.messages),
+          "The canary made the round trip, so this run really exercised send")
+
+    topic = "wire-" + binascii.hexlify(os.urandom(6)).decode()
+    a.create_topic(topic, members=[b.id])
+    a.broadcast(topic, canary + " via broadcast")
+    b.receive_many(limit=10, timeout=30)
+    a.channel_members(topic)
+    a.rotate_identity_key(os.path.join(work, "wire-a.json"))
+
+    check(len(captured) >= 8,
+          "Captured %d requests to search" % len(captured),
+          "too few to be a real lifecycle")
+
+    # The secret must never reach the relay at all: a value the relay knows
+    # proves nothing about a key the relay served. This subsumes the source
+    # paren-scan in test_mcp.py, which could only see the code.
+    for label, value in (("message plaintext", canary),
+                         ("pairing secret", secret)):
+        needles = _encodings(value)
+        hits = []
+        for call in captured:
+            blob = ("%s %s %s %s" % (call["method"], call["path"],
+                                     call["body"], call["idempotency_key"])).encode()
+            for needle in needles:
+                if needle in blob:
+                    hits.append("%s %s" % (call["method"], call["path"]))
+                    break
+        check(not hits,
+              "No %s in any request, in any of %d encodings"
+              % (label, len(needles)),
+              "LEAKED IN: %s" % ", ".join(sorted(set(hits))))
+
+    # THE KNOWN EXPOSURE, asserted rather than excluded.
+    #
+    # The channel name IS in the request line, necessarily: the relay must
+    # resolve it to answer a roster read. This assertion exists so the gap is
+    # a recorded fact with a test attached rather than a paragraph, and so
+    # that closing it (opaque tp- ids) makes this assertion fail and forces
+    # the docs to be updated with it.
+    in_path = [c["path"] for c in captured if topic in c["path"]]
+    check(bool(in_path),
+          "KNOWN AND DOCUMENTED: the channel name reaches the relay in the "
+          "URL path (%d request(s)) -- see SECURITY.md, 'The relay sees "
+          "channel names'" % len(in_path))
+    # BE EXACT ABOUT WHAT IS BOUGHT. The first version of this assertion
+    # claimed the name is never in any request body, and the property
+    # immediately failed: `POST /topics` carries it, necessarily, because the
+    # relay has to be told what to create. The accurate and narrower claim --
+    # the one that keeping the label inside the ciphertext actually buys -- is
+    # that the name never rides a MESSAGE. It appears when a channel is
+    # administered, not once per message in a row that outlives the request.
+    message_paths = ("/messages", "/messages/batch")
+    on_messages = [
+        c["path"] for c in captured
+        if any(c["path"].startswith(mp) for mp in message_paths)
+        and (topic in c["body"] or topic in c["path"])
+    ]
+    check(not on_messages,
+          "The channel name never rides a MESSAGE send -- not in a header, "
+          "not in a path -- so it is never stored per-message beside "
+          "ciphertext in rows an ACK deletes",
+          "LEAKED IN: %s" % ", ".join(sorted(set(on_messages))))
+
+    admin = [c["path"] for c in captured
+             if topic in c["body"] and not
+             any(c["path"].startswith(mp) for mp in message_paths)]
+    check(bool(admin),
+          "KNOWN AND DOCUMENTED: the name is in the body of channel "
+          "administration (%s), which the relay must be told" % ", ".join(sorted(set(admin))))
+
+    for cl in (a, b):
+        try:
+            cl.drain(lambda m: None)
+        except Exception:
+            pass
+
+
 def main():
     work = tempfile.mkdtemp(prefix="stringcup-props-")
 
@@ -378,6 +529,7 @@ def main():
         property_accepted_mail_is_retrievable_or_disclosed,
         property_no_world_readable_plaintext,
         property_atomic_writes_refuse_a_hostile_path,
+        property_relay_never_receives_plaintext,
     )
 
     try:
