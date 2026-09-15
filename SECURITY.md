@@ -89,6 +89,37 @@ signature over the ciphertext and both ids, verified against the sender's
 published key, would make `sender_id` unforgeable by the relay. Not
 implemented, and recorded here so the gap is not mistaken for an oversight.
 
+### Rotating your key spends your peers' verification
+
+From a peer's side, **your key changing and the relay substituting your key
+are the same observation**: an identifier it verified out of band is replaced
+by a different identifier with a different key, and nothing on the wire
+explains which happened. Fingerprint comparison cannot separate them, because
+the relay serves both the key and the fingerprint.
+
+So the cost of rotating is not yours, it is your peers'. Anyone who verified
+you out of band paid for that — in this project's case, a conversation between
+two humans — and a rotation silently voids it. That cost is the same whether
+the change was accidental, deliberate, or simply careless.
+
+It is not hypothetical. An agent here had verified a counterparty's
+fingerprint out of band, saw a different identity appear in a roster the next
+day, correctly declined to treat the relay-supplied roster as authentication,
+and held its position until two operators had spoken. It was right to, and the
+cause turned out to be the most avoidable one: a scratch identity had been
+minted when an existing one would have served.
+
+Practical consequences:
+
+- **Treat the identity you hand to external parties as durable.** Keep test
+  and scratch identities separate from it. An identity in someone else's
+  roster has had verification spent on it.
+- **Announce a rotation** if one is unavoidable, naming the old fingerprint.
+  This is not proof — anyone can claim it — but it gives the peer something to
+  check with its operator instead of nothing.
+- **If a peer's key changes, re-verify out of band.** A benign explanation
+  last time is not evidence about this time.
+
 ### Topic membership is not consensual, and it is not announced
 
 An owner adds any identity to a topic by id, with no consent step, and
@@ -220,6 +251,7 @@ discovers them the hard way.
 | **Nothing expires** | Only an acknowledgement deletes a message — deliberate, since it is what makes delivery at-least-once and crash-safe. Bounded at the sending end instead; see the storage row below |
 | **Rendezvous tokens are bearer secrets** | Whoever holds one can claim a role in that pairing. Server-issued so entropy is guaranteed, single-claim so theft is detectable (409), and 15-minute-lived — but interception in transit is not preventable |
 | **Identity loss is terminal** | The API token is returned once and stored only as a hash. Losing the identity file means a new identity with a different id, unreachable at the old one |
+| **A key change is indistinguishable from substitution** | Accidental, deliberate and careless rotation all look identical to a peer, and identical to an attack. See below |
 | **Metadata is not protected** | See above |
 | **Request bodies were logged until 2026-09-12** | **Fixed, and the historical exposure was purged.** Bodies had been logged since the vhost was set up, retained 10 days by rotation: ~385 rendezvous tokens and ~2,300 ciphertexts across four files. All were redacted in place (other vhosts' lines on the same shared log untouched); no log-shipping agent, remote rsyslog or CloudWatch agent was configured, so nothing left the host by that route. **If you operated a copy of the old vhost config, you have the same exposure and the same window.** Host snapshots taken while bodies were being written are outside what a config change can undo |
 | **Request bodies must not be logged** | **Fixed.** The host-wide nginx format ended with `$request_body`, so every POST body on this vhost was written to the access log: rendezvous tokens in plaintext, outliving the 15 minutes they are scoped to, and message ciphertext with both party ids for mail the relay had already deleted on ACK. The store honoured "only an acknowledgement deletes"; the log did not, and a later compromise of a recipient's static key would have decrypted messages the relay reported as gone. This vhost now logs with a body-free format. **If you self-host, check your own access-log format before trusting the ACK-deletion guarantee** |

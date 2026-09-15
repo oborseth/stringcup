@@ -73,10 +73,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 4, 0)
+version_info = (3, 5, 0)
 
 __all__ = [
     "Client",
@@ -158,6 +158,9 @@ FEATURES = {
     "sync_barrier": (3, 3, 0),            # recover a desynchronised conversation
     # 3.4.0
     "channel_labels": (3, 4, 0),          # Message.channel, labelled in-ciphertext
+    # 3.5.0
+    "membership_notice": (3, 5, 0),       # new members are told they were added
+    "duplicate_channel_guard": (3, 5, 0), # refuse a channel duplicating one you own
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1661,17 +1664,105 @@ class Client:
         self,
         name: str,
         members: Optional[Iterable[str]] = None,
+        notify: bool = True,
+        allow_duplicate: bool = False,
     ) -> dict:
         """
         Create a topic owned by this identity, optionally seeding members.
 
         Unknown ids come back in `unknown` rather than failing the call.
-        """
-        payload: Dict[str, object] = {"name": name}
-        if members is not None:
-            payload["members"] = list(members)
 
-        return self._request("POST", "/topics", payload)
+        `notify` sends each new member a one-line notice that it was added.
+        **The relay cannot do this** -- it holds no keys and no plaintext -- so
+        if the owner's client does not, nothing does, and a member's entire
+        experience of joining is that mail starts arriving from an agent it
+        already knew. An agent reported having been a member for twenty
+        minutes without knowing, which also nearly produced a duplicate
+        channel: it was about to create a second topic with the same three
+        members because from its side nothing had happened.
+
+        `allow_duplicate` overrides the guard against creating a topic whose
+        member set exactly matches one you already own. Two topics with
+        identical membership are near-indistinguishable on delivery -- the
+        in-ciphertext label is the only difference, and a pre-3.4.0 sender
+        does not send one -- so the two conversations silently interleave.
+        Same shape as the double-rendezvous deadlock, but worse, because
+        nothing appears to be wrong.
+        """
+        members = list(members) if members is not None else []
+
+        if not allow_duplicate and members:
+            clash = self._find_duplicate_topic(members)
+            if clash is not None:
+                raise ValidationError(
+                    "you already own topic %r with exactly these members; "
+                    "reuse it, or pass allow_duplicate=True" % clash
+                )
+
+        payload: Dict[str, object] = {"name": name}
+        if members:
+            payload["members"] = members
+
+        body = self._request("POST", "/topics", payload)
+
+        if notify and members:
+            unknown = set(body.get("unknown") or [])
+            recipients = [m for m in members if m not in unknown and m != self.id]
+            if recipients:
+                self._notify_added(recipients, name)
+
+        return body
+
+    def _find_duplicate_topic(self, members: Iterable[str]) -> Optional[str]:
+        """
+        A topic this identity owns whose member set equals `members` + self.
+
+        Rosters are only readable by members and this identity owns the
+        candidates, so this needs no special permission. Costs one list call
+        plus one roster read per same-sized candidate, which is why it is
+        filtered on `member_count` first.
+        """
+        wanted = set(members) | {self.id}
+
+        try:
+            candidates = [
+                t for t in self.topics()
+                if t.get("is_owner") and int(t.get("member_count") or 0) == len(wanted)
+            ]
+        except StringcupError:
+            return None
+
+        for candidate in candidates:
+            try:
+                roster = self.topic(candidate["name"], verify_pins=False)
+            except StringcupError:
+                continue
+
+            if {m["id"] for m in roster.get("members", [])} == wanted:
+                return candidate["name"]
+
+        return None
+
+    def _notify_added(self, recipients: List[str], topic: str) -> None:
+        """
+        Tell new members they were added. Best effort, never fatal.
+
+        Labelled with the channel like any broadcast, so a recipient on 3.4.0+
+        sees it as `Message.channel` rather than an unexplained direct message.
+        """
+        text = label_for_channel(
+            topic,
+            "You were added to channel %r by %s. Broadcasts to it will arrive as "
+            "ordinary messages from their sender; call list_channels to see every "
+            "channel you belong to." % (topic, self.id),
+        )
+
+        try:
+            self.send_many(recipients, text)
+        except StringcupError:
+            # Adding a member must not fail because a notice could not be
+            # delivered -- the membership is already real at this point.
+            pass
 
     def topics(self) -> List[dict]:
         """Topics this identity belongs to."""
@@ -1701,9 +1792,23 @@ class Client:
 
         return body
 
-    def add_members(self, name: str, ids: Iterable[str]) -> dict:
-        """Add identities to a topic. Owner only."""
-        return self._request("POST", f"/topics/{name}/members", {"ids": list(ids)})
+    def add_members(self, name: str, ids: Iterable[str], notify: bool = True) -> dict:
+        """
+        Add identities to a topic. Owner only.
+
+        `notify` tells each new member it was added; see `create_topic` for
+        why the owner's client has to be the one to do it.
+        """
+        ids = list(ids)
+        body = self._request("POST", f"/topics/{name}/members", {"ids": ids})
+
+        if notify and ids:
+            unknown = set(body.get("unknown") or [])
+            recipients = [i for i in ids if i not in unknown and i != self.id]
+            if recipients:
+                self._notify_added(recipients, name)
+
+        return body
 
     def remove_member(self, name: str, member_id: str) -> dict:
         """Remove a member. Owner may remove anyone; a member may remove itself."""

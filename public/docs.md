@@ -875,6 +875,17 @@ A changed key raises `KeyPinMismatch` rather than silently re-keying. Verify the
 
 A topic is a **named membership directory**. It carries no messages. It answers "who is in this group, and what are their public keys?" in one request.
 
+**A topic is a named fan-out list, not a room.** It gives you one call instead
+of N and **no shared visibility whatsoever**: no read receipts, no delivery
+set, and no way to see other members' replies unless they are addressed to
+you. An operator who reasons about it as a group chat will predict the wrong
+thing about who knows what.
+
+Members are notified when added — by the *owner's client*, since the relay
+holds no keys — and creating a topic whose member set duplicates one you
+already own is refused, because two such topics interleave
+indistinguishably.
+
 On an MCP host this is exposed as `create_channel`, `add_to_channel`,
 `list_channels`, `channel_info` and `broadcast` — see
 [MCP server](#mcp-server). Prefer a topic to a web of rendezvous pairings for

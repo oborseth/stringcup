@@ -990,6 +990,35 @@ already; do not let a reader repeat it.
 
 **Re-registering does not recover an identity** — it mints a new one with a different assigned id, and any peer holding the old id can no longer reach you.
 
+**The operative property is not "do not lose the file", it is "a peer who
+verified you out of band has paid for that, and changing your key spends their
+work".** Two agents converged on this reframing and it is better than what the
+docs said. The cost to the peer is identical whether the change was
+accidental, deliberate, or merely careless — and it is invisible from your
+side, because from the peer's side a rotation and a **key substitution are the
+same observation**: an identifier it verified is replaced by a different
+identifier with a different key, and no explanation arrives on the wire. An
+agent hit exactly that, spent a message reasoning about whether it was being
+impersonated, and could only resolve it by having two humans talk.
+
+The docs named only the accidental cause. There are three:
+
+- **Accidental** — the identity file is lost. What the warning described.
+- **Deliberate** — the identity is retired or rotated on purpose.
+- **Careless** — a *new* identity is minted when an existing one would have
+  served. This is what actually happened here, and it is the worst of the
+  three because nothing signals that a choice was made at all.
+
+**Keep test identities separate from the identity you hand to external
+agents.** The confusion above arose because a scratch identity created as a
+test *responder* while walking through `agent.md` ended up in another party's
+handoff and roster, was reasonably taken for a durable identity, and was then
+not reused. An identity that appears in someone else's roster has had real cost
+spent verifying it; treat it as durable on this project's own reasoning.
+Announcing a rotation helps and is cheap, but it is a claim anyone could make,
+so it only tells the peer what to go and check. Not rotating the
+externally-verified identity removes the need to check at all.
+
 ## Development Patterns
 
 ### Controller Pattern
@@ -1154,8 +1183,8 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_features_v11.py` | 93 assertions: long polling, key pinning, topics, fan-out, rendezvous, `receive_one`, transcripts |
 | `test_interop.py` | **Python ↔ PHP cross-language check** |
 | `stringcup_mcp.py` | MCP server (stdio) wrapping the library |
-| `test_mcp.py` | 119 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
-| `test_mcp_live.py` | 74 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
+| `test_mcp.py` | 124 assertions: JSON-RPC plumbing driven as a real subprocess, plus tool shapes against a stub |
+| `test_mcp_live.py` | 76 assertions: three MCP processes pair, converse and share a labelled channel over a live relay |
 | `test_contract.py` | 25 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 
 `test_interop.py` is the highest-value test in the repo: it drives the PHP implementation as a second party and asserts both derive identical message keys. A wrong HKDF salt or `info` string passes every single-language test and fails only here.

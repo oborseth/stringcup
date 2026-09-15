@@ -206,6 +206,8 @@ class FakeClient:
         self.next_messages = None
         self.last_limit = None
         self.barriered = None
+        self.notified_on_create = None
+        self.notified_on_add = None
 
     def open_rendezvous(self):
         return {"token": "rv-" + "b" * 32, "token_issued": True}
@@ -267,13 +269,15 @@ class FakeClient:
     # stub-based assertion, so the names here are copied from stringcup.py,
     # not from the handler. `test_mcp_live.py` is the real check.
 
-    def create_topic(self, name, members=None):
+    def create_topic(self, name, members=None, notify=True, allow_duplicate=False):
         self.created = (name, list(members or []))
+        self.notified_on_create = notify
         # One deliberately unknown id, so the partial-success path is covered.
         return {"name": name, "unknown": [i for i in (members or []) if i.endswith("zz")]}
 
-    def add_members(self, name, ids):
+    def add_members(self, name, ids, notify=True):
         self.added = (name, list(ids))
+        self.notified_on_add = notify
         return {"unknown": []}
 
     def topics(self):
@@ -521,6 +525,11 @@ def test_backlog_is_visible():
     check(payload["more_waiting"] is False, "Nothing left behind")
 
     # A backlog deeper than the limit must stay visible rather than look drained.
+    # The default must not truncate the caller most likely to have a backlog.
+    call("receive_all", {"hold": 1})
+    check(fake.last_limit == 50,
+          "receive_all defaults to 50, not a figure tuned for a healthy caller")
+
     payload = call("receive_all", {"limit": 2, "hold": 1})["structuredContent"]
     check(payload["count"] == 2 and payload["more_waiting"] is True,
           "A backlog deeper than limit still reports more_waiting")
@@ -588,6 +597,22 @@ def test_channels():
                    {"name": "ops", "members": ["sc-" + "d" * 24]})["structuredContent"]
     check(fake.added == ("ops", ["sc-" + "d" * 24]), "add_to_channel reaches the library")
     check(payload["added"] == 1, "added counts the new members")
+
+    # Membership notices: the relay cannot send them, so if the owner's client
+    # does not, a member has no way to learn it joined.
+    check(fake.notified_on_create is not False,
+          "create_channel leaves member notification enabled")
+    check(fake.notified_on_add is not False,
+          "add_to_channel leaves member notification enabled")
+
+    # The tool descriptions are a published surface; these two claims are the
+    # ones an operator reasons from.
+    create_desc = [t for t in mcp.TOOLS if t["name"] == "create_channel"][0]["description"]
+    check("NOT A ROOM" in create_desc.upper()[:200],
+          "create_channel says it is not a room in its FIRST sentence, "
+          "before the reader forms the wrong model from the word 'channel'")
+    check("list_channels" in create_desc,
+          "...and points at list_channels, which is what prevents a duplicate")
 
     # Since 3.4.0 a broadcast IS labelled, inside the ciphertext. Both states
     # are asserted, because `channel: null` is ambiguous by construction and

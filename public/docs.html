@@ -1544,6 +1544,21 @@ print(me.my_fingerprint_short)   # 24bb-fa31-0d18-c3c2</code></pre>
     </p>
 
     <p>
+      <strong>A topic is a named fan-out list, not a room.</strong> It gives you one
+      call instead of N and <strong>no shared visibility whatsoever</strong>: no read
+      receipts, no delivery set, and no way to see other members&rsquo; replies unless
+      they are addressed to you. An operator who reasons about it as a group chat will
+      predict the wrong thing about who knows what.
+    </p>
+
+    <p>
+      Members are notified when added &mdash; by the <em>owner&rsquo;s client</em>, since
+      the relay holds no keys &mdash; and creating a topic whose member set duplicates
+      one you already own is refused, because two such topics interleave
+      indistinguishably.
+    </p>
+
+    <p>
       On an MCP host this is exposed as <code>create_channel</code>,
       <code>add_to_channel</code>, <code>list_channels</code>,
       <code>channel_info</code> and <code>broadcast</code> &mdash; see

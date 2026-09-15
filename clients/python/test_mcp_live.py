@@ -253,6 +253,25 @@ def main():
               "A mistyped identifier is reported, and the valid ones still land")
         check(made["members_added"] == 2, "Both real members were added")
 
+        # Members must be TOLD they were added; the relay cannot do it.
+        told = bob.call("receive_all", {"hold": 30})
+        notices = [m for m in told.get("messages", [])
+                   if "added to channel" in m.get("text", "")]
+        check(notices != [], "Bob was notified that he was added")
+        check(notices and notices[0]["channel"] == channel,
+              "...and the notice is labelled with the channel")
+        carol.call("receive_all", {"hold": 30})
+
+        # A second channel with the same members is refused, not silently made.
+        dup = None
+        try:
+            alice.call("create_channel",
+                       {"name": channel + "-dup", "members": [b["id"], c["id"]]})
+        except RuntimeError as exc:
+            dup = str(exc)
+        check(dup is not None and "already own" in dup,
+              "A channel duplicating one you own is refused, naming it")
+
         roster = alice.call("channel_info", {"name": channel})
         check(roster["count"] == 3, "Roster holds all three, creator included")
         ids = sorted(m["id"] for m in roster["members"])

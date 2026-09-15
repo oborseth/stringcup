@@ -61,12 +61,13 @@ from stringcup import Client, PairingTimeout, StringcupError, TrustStore  # noqa
 #   short_timeouts  `hold` is honoured below 25s. An older copy accepts the
 #                   value and silently parks for a full server cycle.
 #   sent_seq        the send response key this server reads.
-stringcup.require_version("3.4.0")
+stringcup.require_version("3.5.0")
 stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "receive_many", "backlog_visible", "sync_barrier",
-                           "channel_labels")
+                           "channel_labels", "membership_notice",
+                           "duplicate_channel_guard")
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -314,7 +315,11 @@ def tool_receive(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def tool_receive_all(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     ack = arguments.get("ack", True)
-    limit = int(arguments.get("limit") or 10)
+    # 50, not 10. The agent most likely to have a deep backlog is precisely
+    # the one that has been calling receive once per turn and does not know
+    # it yet, so a default tuned for a healthy caller truncates exactly the
+    # unhealthy one. Reported by an agent that had just been that caller.
+    limit = int(arguments.get("limit") or 50)
     page = me.receive_many(limit=limit, timeout=_hold(arguments), ack=bool(ack))
 
     if not page.messages:
@@ -639,9 +644,11 @@ TOOLS: List[Dict[str, Any]] = [
                 "limit": {
                     "type": "integer",
                     "description": (
-                        "Maximum messages to return in one call. Default 10, "
-                        "maximum 200. Check `more_waiting` to see whether the "
-                        "backlog was deeper than this."
+                        "Maximum messages to return in one call. Default 50, "
+                        "maximum 200. ALWAYS check `more_waiting` alongside "
+                        "this: it is true when the backlog was deeper than "
+                        "`limit`, and replying before draining the rest puts "
+                        "you back in the desync this tool exists to avoid."
                     ),
                 },
                 "hold": {
@@ -718,10 +725,24 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "create_channel",
         "title": "Create a shared channel",
         "description": (
-            "Create a named channel (a topic) for group messaging, seeding it with "
-            "member identifiers. Use this instead of pairwise rendezvous when three or "
-            "more agents need to talk to each other. YOU BECOME THE OWNER: only you can "
-            "add or remove members afterwards. "
+            "A CHANNEL IS A NAMED FAN-OUT LIST, NOT A ROOM. Nothing is opened, "
+            "nobody is connected, and there is no shared visibility: you cannot see "
+            "who read a broadcast, members cannot see each other\u2019s replies unless "
+            "separately addressed, and nobody is told who else received anything. "
+            "What it buys is one call instead of N. Reason about it as a mailing "
+            "list, because an operator who reasons about it as a group chat will "
+            "make wrong predictions about who knows what \u2014 and coordination that "
+            "depends on who knows what is exactly what these get used for.\n\n"
+            "Creates the channel and seeds it with member identifiers. Use it "
+            "instead of pairwise rendezvous when three or more agents need to talk. "
+            "YOU BECOME THE OWNER: only you can add or remove members afterwards. "
+            "Each new member is sent a one-line notice that it was added, because "
+            "the relay cannot notify anyone and otherwise a member has no way to "
+            "know it joined. "
+            "If you already own a channel with exactly these members this is "
+            "REFUSED and names it: two channels with identical membership are "
+            "near-indistinguishable on delivery, so their conversations interleave "
+            "silently. Call list_channels first. "
             "You need every member's assigned identifier up front — there is no "
             "discovery and members cannot add themselves, so each one must run whoami "
             "and have its identifier relayed to you (usually your operator pastes them "
@@ -754,9 +775,11 @@ TOOLS: List[Dict[str, Any]] = [
         "title": "Add members to a channel",
         "description": (
             "Add agents to a channel you own, for when someone joins after it was "
-            "created. Owner only. You need each new member's assigned identifier, which "
-            "it gets from whoami. Already-present members are a no-op, so re-adding is "
-            "safe."
+            "created. Owner only. You need each new member\u2019s assigned identifier, "
+            "which it gets from whoami. Already-present members are a no-op, so "
+            "re-adding is safe. Each genuinely new member is sent a notice that it "
+            "was added \u2014 without that a member cannot tell it joined, since a "
+            "broadcast arrives as an ordinary message."
         ),
         "inputSchema": {
             "type": "object",

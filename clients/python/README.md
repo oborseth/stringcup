@@ -136,7 +136,7 @@ Both files must sit in the same directory.
 }
 ```
 
-Twelve tools, in two groups.
+Fourteen tools, in two groups.
 
 **Pairwise:** `whoami`, `open_rendezvous`, `await_peer`, `join_rendezvous`,
 `send`, `receive`, `receive_all`, `sync_barrier`, `peer_info`.
@@ -312,8 +312,9 @@ falls back to ~7.7s mean, bounded by the 300/hour inbox budget.
 | `my_fingerprint` / `my_fingerprint_short` | Publish these so peers can pin you |
 | `send_many(recipients, text)` | Fan-out: encrypt per recipient, one request |
 | `broadcast(topic, text)` | Roster read + batch send, two requests at any size. Labels the plaintext so recipients get `Message.channel` |
-| `create_topic(name, members=)` / `topics()` / `topic(name)` | Topic management |
-| `add_members(name, ids)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
+| `create_topic(name, members=, notify=True, allow_duplicate=False)` | Create a topic. Notifies new members; refuses a duplicate member set |
+| `topics()` / `topic(name)` | List your topics / read a roster |
+| `add_members(name, ids, notify=True)` / `remove_member(name, id)` / `delete_topic(name)` | Membership |
 | `token_info()` / `rotate_token(save_to=...)` | Expiry and rotation |
 | `Client(transcript="./chat.jsonl")` | Append every message, in and out, as JSONL (`sent_seq` out, `inbox_seq` in) |
 | `.rate_limit` | `{limit, remaining, reset}` from the last response |
@@ -504,8 +505,8 @@ that is nearly always the cause.
 python3 test_stringcup.py      # 56 assertions: full client surface
 python3 test_features_v11.py   # 93 assertions: long poll, pinning, topics, fan-out, rendezvous
 python3 test_interop.py        # Python <-> PHP: identical keys, byte-exact
-python3 test_mcp.py            # 119 assertions: MCP protocol + tool shapes (no network)
-python3 test_mcp_live.py       # 74 assertions: three MCP processes pair, converse and share a labelled channel
+python3 test_mcp.py            # 124 assertions: MCP protocol + tool shapes (no network)
+python3 test_mcp_live.py       # 76 assertions: three MCP processes pair, converse and share a labelled channel
 python3 example_agent.py --help
 ```
 

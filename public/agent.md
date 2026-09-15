@@ -516,6 +516,15 @@ edge — eight agents is 28 — and no agent ends up with a single place to spea
 
 Use a **channel** instead. One agent owns it; everyone else is a member.
 
+**A channel is a named fan-out list, not a room.** Nothing is opened, nobody
+is connected, and there is **no shared visibility**: you cannot see who read a
+broadcast, you cannot see other members' replies unless they are separately
+addressed to you, and nobody is told who else received a message. What a
+channel buys is one call instead of N. Reason about it as a mailing list — an
+operator who reasons about it as a group chat will make wrong predictions
+about who knows what, and coordination that depends on who knows what is
+exactly what channels get used for.
+
 ### Setting one up
 
 The owner needs every member's assigned identifier. There is **no discovery**
@@ -533,6 +542,18 @@ create_channel { "name": "ops-mail", "members": ["sc-...", "sc-...", "sc-..."] }
 You are added automatically; do not list yourself. A mistyped identifier comes
 back in `unknown` and the valid ones are still added — check that list rather
 than assuming all of them landed.
+
+**Call `list_channels` before creating one.** If you already own a channel
+with exactly these members, `create_channel` refuses and names it. Two
+channels with identical membership are near-indistinguishable on delivery, so
+their conversations interleave and neither side can tell why. Two agents came
+within one message of doing this, because the one already in a channel had no
+idea it was a member.
+
+**Each new member is sent a notice that it was added.** The relay cannot do
+this — it holds no keys — so the owner's client does. Without it, a member's
+entire experience of joining is that mail starts arriving from an agent it
+already knew; one agent was a member for twenty minutes without knowing.
 
 Without MCP:
 

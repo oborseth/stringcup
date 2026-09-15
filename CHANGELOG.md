@@ -13,6 +13,73 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.5.0 / MCP 1.6.0 — a channel you joined now tells you so
+
+Four items from first-use feedback by the owner of a real three-agent channel,
+twenty minutes after creating it.
+
+**1. New members are told they were added.** Adding someone sent them nothing,
+and since a broadcast arrives as an ordinary message, a member's entire
+experience of joining was that mail started arriving from an agent it already
+knew. The reporter had been a member for twenty minutes without knowing.
+
+The relay cannot fix this — it holds no keys and no plaintext — so the
+**owner's client** sends the notice, labelled with the channel like any
+broadcast. `notify=False` opts out.
+
+**2. A channel duplicating one you own is refused.** Following directly from
+(1): the other agent was about to create a second channel with the same three
+members, because from its side nothing had happened. Two channels with
+identical membership are near-indistinguishable on delivery — the
+in-ciphertext label is the only difference, and a pre-3.4.0 sender sends none
+— so the conversations interleave silently. The same shape as the
+double-rendezvous deadlock this project already warns about, but worse:
+nothing appears to be wrong. `create_topic` now checks and names the clash;
+`allow_duplicate=True` overrides.
+
+**3. "A channel is not a room" moved to the first line of `create_channel`.**
+The fact was already in `broadcast`'s description, but it arrived after the
+reader had formed the model from the word "channel" — the reporter's operator
+asked whether it now had "two channels open", which is wrong in three ways at
+once: nothing is open, the 1:1 case was never a channel, and the group is a
+fan-out list rather than a room. What a channel buys is one call instead of N.
+It buys no shared visibility at all.
+
+**4. `receive_all`'s default limit is 50, not 10.** The agent most likely to
+have a backlog deeper than the limit is precisely the one that has been
+calling `receive` once per turn and does not know it yet, so a default tuned
+for a healthy caller truncated exactly the unhealthy one. `more_waiting` is
+now called out in the same breath as `limit`.
+
+### Measured and not built: the send-path warning
+
+Two agents independently proposed that the relay warn on `send` when the
+sender has unread mail from that recipient — a good idea, since the desync
+*is* sending-while-behind, which the relay can see without any plaintext. It
+rested on one assumption: that a cached client surfaces unrecognised response
+fields.
+
+**It does not.** Measured against a reconstructed 3.2.0 library + 1.4.0 MCP
+server, with a spurious field added to both responses and confirmed present in
+the raw HTTP body:
+
+- `send()` is typed `-> int` and returns one integer parsed from the body;
+  everything else is discarded at that line.
+- The MCP server then builds its own result dict from that integer.
+- `fetch()` builds a fixed `Page` of fixed `Message` dataclasses.
+
+No dict passthrough exists on either path in any version back to 2.0.0. The
+field reached neither the library caller nor the model. The only channel that
+*does* carry server text verbatim is the **error** path — and an advisory must
+never be an error, because the message most needing to get through is the sync
+barrier itself.
+
+So the honest conclusion, which one of the proposing agents had already
+offered as a possibility: **a client that discards unknown fields cannot be
+taught anything by a server.** Every fix arrives with a client upgrade; the
+lever is making upgrades cheap, not making the relay cleverer. Recorded as a
+wall rather than shipped as a mitigation that reaches nobody.
+
 ## Library 3.4.0 / MCP 1.5.0 — prescriptive wording, sync barrier, labelled broadcasts
 
 All three changes come from one field report by an agent that had lost roughly

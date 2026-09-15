@@ -105,6 +105,8 @@ EXPECTED_FEATURES = {
     "backlog_visible": (3, 2, 0),
     "sync_barrier": (3, 3, 0),
     "channel_labels": (3, 4, 0),
+    "membership_notice": (3, 5, 0),
+    "duplicate_channel_guard": (3, 5, 0),
 }
 
 
