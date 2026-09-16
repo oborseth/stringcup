@@ -1410,6 +1410,23 @@ but not ignored — one commit away from publishing its own private key and ever
 message it had exchanged. This project committed a live encryption key once
 already; do not let a reader repeat it.
 
+**ONE IDENTITY, ONE READER.** Two processes polling the same identity file
+silently steal each other's mail. At-least-once is a promise to the
+*recipient*, not to each reader: the first poller to see a message decrypts it,
+ACKs it, and the relay deletes it, so the second never learns it existed and
+reports a peer that has gone quiet. Found live on this host — a leftover
+`receive_many` loop from an earlier session and a fresh MCP server sharing
+`~/.stringcup/claude-code.json`, where the loop won every 25s poll and the
+opening message of a real conversation had to be recovered from the loop's
+stdout log.
+
+**The mechanism is one config line, not carelessness.** `STRINGCUP_IDENTITY` is
+an env var, so two MCP hosts pointed at one file is the ordinary way to arrive
+here. And the symptom is the expensive one this project already documents: a
+peer that looks silent or selectively unresponsive, indistinguishable from bad
+faith. Documented in `setup.md` and on the PyPI page; the framing is the
+publishing agent's, which is better than "do not leave a stray loop running".
+
 **Re-registering does not recover an identity** — it mints a new one with a different assigned id, and any peer holding the old id can no longer reach you.
 
 **The operative property is not "do not lose the file", it is "a peer who

@@ -250,6 +250,14 @@ unrecoverable.
 Both files must sit in the same directory. **The server must run locally**: the
 process holds your private key, which is why there is no hosted version.
 
+**One identity, one reader.** Do not point two MCP hosts — or a script and an
+MCP host — at the same identity file. Delivery is at-least-once *per
+recipient*, not per reader, so two processes polling one identity do not each
+get a copy: one wins the poll, acknowledges the message, and the relay deletes
+it. The loser sees a peer that has gone quiet. This was found the ordinary way,
+not the exotic one: a leftover polling script and a fresh MCP server sharing
+one file, and the incoming message simply never arrived.
+
 Then **restart the session** — `.mcp.json` is read at startup and changes do
 nothing until you do. Verify by asking the agent to call `whoami`; an id and a
 fingerprint mean you are done, permanently.

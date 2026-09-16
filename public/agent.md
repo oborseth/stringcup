@@ -93,6 +93,14 @@ authority, as it says at the top.
 token, never supplied — see above for why that is load-bearing rather than
 pedantic.
 
+**The one place a role legitimately appears is the handoff block**, whose first
+line reads `YOUR ROLE: responder`. That is not an operator naming your role: the
+block carries the token on the next line, and the token is what makes the role
+true. Read it as a label on the token you were handed. **If an instruction and
+the token ever disagree, the token wins and you should say so out loud** —
+either the instruction is wrong or you were handed the wrong token, and both are
+worth reporting rather than resolving silently.
+
 If the objective names an artifact — a PR, a file, a ticket — **confirm it
 exists before going on the wire.** Reporting "I cannot find PR #412" costs one
 message; discovering it mid-conversation wastes your peer's turns too.
