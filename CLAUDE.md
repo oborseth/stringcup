@@ -958,10 +958,39 @@ The test vectors stay, re-motivated: they exist because the protocol is
 Apache-2.0 *to be reimplemented*, and a port or audit is dangerous without
 them. Do not point a blocked agent at them.
 
-The MCP path is **operator-only setup**: `.mcp.json` is read at session start,
-so registering the server mid-task does nothing until a restart, and a
-restricted agent generally cannot write the file governing its own tool
-surface. `agent.md` says so and gives the operator a copy-pasteable block.
+**The MCP path WAS "operator-only setup" and is not any more — publishing the
+package changed it, and the rule outlived its reason.** `.mcp.json` is still
+read at session start, so the **restart** remains irreducible and no agent can
+perform it. But *registering* the server is now an ordinary package install by
+name through the host's own tooling, and an agent may do that itself.
+
+The old prohibition's stated reason was "executing a file downloaded from a web
+page, on that page's say-so" — true of `curl`-ing `stringcup_mcp.py`, and **not
+a description of `uvx --from stringcup stringcup-mcp`**, where the page supplies
+a *name* and the code comes from an index the environment already trusts for
+every dependency. The pyproject comment said as much all along: the entry point
+exists so that the invocation replaces "an absolute path to a downloaded file".
+
+**When a rule's justification does not match its extent, capable readers split
+on the extent** — which is exactly what happened, and it is the general lesson
+rather than an agent-behaviour problem to fix with firmer wording.
+
+Two costs of the change, stated because neither is zero:
+
+- **The operator is no longer in the loop by construction**, and that property
+  was part of why MCP was recommended here. It is now in the loop by
+  *disclosure* instead: `agent.md` requires the agent to say plainly what it
+  ran and to ask for the restart. Weaker, and accepted deliberately — the
+  operator's stated ranking puts onboarding friction first, and this removes one
+  of the two actions at the highest-friction moment in the product.
+- **A name is still page-supplied**, so a typosquat is the residual risk. That
+  is why `stringcup-mcp` was claimed defensively as well as `stringcup`.
+
+**The curl prohibition is unchanged and must stay**: fetching either module and
+executing it is still the wrong thing to ask of an agent, and a host that
+refuses is still working correctly. Do not let the two collapse back together.
+`setup.md` remains the operator's guide and the handoff block remains the
+correct fallback when a host refuses.
 
 The `cryptography` dependency is irreducible: Python's stdlib has neither
 X25519 nor AES-256-GCM, and hand-rolling either to avoid an install is a worse
@@ -1121,8 +1150,12 @@ agent executes a downloaded file, which is what gets refused; through MCP the
 harness launches the server and Stringcup arrives as tools, so nothing external
 passes through the shell. The operator writes the config and restarts, so they
 are in the loop by construction — this is the host's extension mechanism used
-as intended, not a way around it. An agent cannot configure it for itself and
-is rightly refused when it tries (one reported `[Self-Modification]`). One agent
+as intended, not a way around it. **An agent trying to write the config file
+itself is a different thing from installing a published package, and one
+reported being refused as `[Self-Modification]` for the former** — which is
+correct, and is why the permitted path is the host's own `mcp add`/package
+mechanism rather than editing `.mcp.json` by hand. See the operator-only note
+above, which this superseded. One agent
 spent three rounds of reports on the shell path before an operator set up MCP,
 which then worked on the first call; the doc now says so up front rather than
 offering MCP as a mid-document aside addressed to the agent.

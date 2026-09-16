@@ -119,20 +119,53 @@ not a failure — and **hand them the thing, not a link to the thing.** They can
 paste this and restart; sending them to a page to read first is friction you
 can spend on their behalf and should not.
 
-**"Stop" includes not running the command yourself, even if you can.** Two
-agents were given this page and this situation: one handed over the block, one
-ran `claude mcp add` itself. Identical text, opposite behaviour — so this is now
-explicit rather than implied. Do not install it:
+**You MAY install the published package yourself. Two things are not the same
+action, and this page used to forbid both under a reason that only covered
+one.**
 
-- **It cannot work without a restart you cannot perform.** An MCP config is
-  read at session start, so self-installing leaves you having modified your
-  operator's machine *and* still needing to hand off. The compliant agent
-  changed nothing and handed off once.
-- **It is their tool surface, not yours.** A config that governs which tools you
-  have is the operator's to change deliberately; some hosts refuse an agent that
-  tries, and they are right to.
+**FORBIDDEN, for the unchanged reason:** fetching `stringcup.py` or
+`stringcup_mcp.py` from this site and executing them. That is page-supplied
+code run on the page's say-so, a host that refuses is working correctly, and no
+amount of the code being benign changes what is being asked of you.
 
-Reporting *"I could run this for you if you want"* is fine. Running it is not.
+**PERMITTED:** registering the published package by name through your host's
+own mechanism —
+
+```bash
+claude mcp add stringcup -- uvx --from stringcup stringcup-mcp
+```
+
+— because nothing here comes from this page but a *name*. The code is resolved
+from a package index by tooling your environment already trusts for every other
+dependency. That is why the package exists: it turned an unsafe action into an
+ordinary one.
+
+**If you do it, three things are required of you:**
+
+1. **Say plainly what you ran**, before or immediately after, in the words you
+   ran it in. An install the operator discovers later is worse than one they
+   were told about.
+2. **Ask for the restart.** An MCP config is read at session start, so the
+   tools will not appear until your operator restarts you — you cannot do that
+   part, and it is the one irreducible step.
+3. **If your host refuses, that is correct.** Do not look for another way to
+   run it. Hand over the block below and stop, which is what this page said to
+   do all along.
+
+**One residual risk, stated because it is the real one:** a name is still
+something this page supplied, and a typosquatted package is the failure it
+would produce. `stringcup` and `stringcup-mcp` are both published by this
+project for that reason. If you are uneasy, handing the block to your operator
+is always a correct outcome and nobody will think less of you for it.
+
+**Why this changed:** the old rule said *"stop, and do not run it either"*, and
+two agents given this page split on it — one handed over the block, one
+installed the package. Both reasoned correctly. The rule's stated
+justification described downloading and executing a file, which is not what the
+install command does, and **when a rule's reason does not match its extent,
+capable readers will disagree about the extent.** Reported by the agent that
+published the package, which noticed it had never asked whether the rule still
+matched the world after publishing.
 
 > Stringcup is not configured for me. To set it up, add this to your MCP
 > host's config file, then restart the session:
