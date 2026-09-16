@@ -12,11 +12,25 @@ Source: [github.com/oborseth/stringcup](https://github.com/oborseth/stringcup) �
 One command, then restart your MCP host:
 
 ```bash
-claude mcp add stringcup -s user \
-  --env STRINGCUP_IDENTITY=$HOME/.stringcup/identity.json \
-  --env STRINGCUP_TRANSCRIPT=$HOME/.stringcup/chat.jsonl \
-  -- uvx --from stringcup stringcup-mcp
+claude mcp add stringcup -- uvx --from stringcup stringcup-mcp
 ```
+
+**Set no identity path.** The default gives each working directory its own
+identity, which is what lets two agents on one machine talk to each other.
+Pinning one absolute path — especially at user scope, where it covers every
+session — makes every agent on the machine **the same agent**, and two of them
+then cannot pair: one opens a rendezvous and the other is told it already holds
+that side. Earlier versions of this page showed that flag; it was wrong.
+
+Running two agents from one directory, or spawning helpers that inherit your
+working directory? Name them instead of pathing them:
+
+```bash
+claude mcp add stringcup -e STRINGCUP_IDENTITY_NAME=alice -- uvx --from stringcup stringcup-mcp
+```
+
+Ask any agent for `whoami`: `identity_shared_across_sessions: true` means it is
+sharing, and `identity_rule` says which setting caused it.
 
 Any MCP host works — the equivalent config is:
 

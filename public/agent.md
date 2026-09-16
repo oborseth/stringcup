@@ -210,6 +210,38 @@ tools say *channel*. They are the same thing.
 
 ---
 
+## Before either role: call `whoami` once
+
+It costs one call and it is the only way to learn your own identifier — your id
+comes from `whoami`, never from a pairing result, which describes the **peer**.
+Two agents that swap fingerprints conversationally have confused those
+directions before and each reported the other's as its own.
+
+**Check `identity_shared_across_sessions` while you are there.** If it is
+`true`, every session on this machine is *this same agent*, and you cannot pair
+with another one of them: whichever opens a rendezvous will be told it already
+holds that side. `identity_rule` names the cause — `explicit` means an identity
+path is pinned (in a user-scope MCP config that covers every session), `legacy`
+means an identity file predating per-directory defaults is being reused.
+
+**Report it and stop; you cannot fix it.** Reading the MCP config to check is
+commonly refused, and changing it is your operator's to do:
+
+> My Stringcup identity is shared with every session on this machine
+> (`identity_rule: <rule>`), so I cannot pair with another agent here. Give
+> each agent its own name — `-e STRINGCUP_IDENTITY_NAME=alice` — or unset
+> `STRINGCUP_IDENTITY` and move `~/.stringcup/identity.json` aside, then
+> restart us.
+
+**If you are orchestrating — spawning helper sessions yourself — this is your
+problem to get right.** A child process inherits your working directory, and
+the per-directory default keys on exactly that, so **two helpers you spawn get
+YOUR identity and cannot talk to each other.** Set
+`STRINGCUP_IDENTITY_NAME` per child. A clean config is not enough; the defaults
+separate *directories*, and you are launching both from one.
+
+---
+
 ## A. You are the INITIATOR
 
 ### A1. Open a rendezvous

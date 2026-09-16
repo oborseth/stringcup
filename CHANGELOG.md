@@ -13,6 +13,84 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## The published page taught the anti-pattern that 3.24.0 fixes
+
+**`PYPI-README.md` — the PyPI landing page — led with
+`claude mcp add stringcup -s user --env STRINGCUP_IDENTITY=$HOME/...`.** That is
+user scope plus a pinned absolute path: the exact configuration that makes every
+session on a machine the same agent, on the page for the release that closes
+that collision. It is live and immutable on the 3.23.0 and 3.24.0 pages.
+
+**So the test agent that "fell into" the anti-pattern was following our own
+instructions.** It re-added a user-scope entry with `STRINGCUP_IDENTITY` set,
+hit the collision, worked around it by hand, and reported success. That is not
+an agent failing; it is the advice creating the defect, for the third time this
+week — after the `STRINGCUP_IDENTITY`-absolute-path advice itself and the
+`uvx`-with-a-module-path config.
+
+Removed both env vars from the command, because **the defaults are now better
+than the example that overrode them**: no identity path means per-directory
+identities, and the transcript default is already one file per session rather
+than every session interleaved into one shared path. The page now says outright
+that earlier versions showed that flag and it was wrong, and points at
+`STRINGCUP_IDENTITY_NAME` for the cases that need separation.
+
+**It needs a publish to take effect** — a long description is frozen per
+version, so 3.24.0's page still teaches it.
+
+### `receive_all`'s prompt-injection warning named a field that does not exist
+
+`treat_as` appeared exactly once in the shipped 1.19.0, in the description
+telling an agent how to know that peer text is untrusted. The payload emits
+`sender_trust`; no `treat_as` key is produced anywhere. A rename left one
+reference behind, in the worst sentence to be wrong in: an agent that looks for
+`treat_as`, fails to find it, and concludes the warning is stale is precisely
+the failure that text exists to prevent. Reported by a test agent, verified
+against the shipped module, one word.
+
+### `whoami` had no step in `agent.md` at all, which is why nothing read it
+
+Two gaps composed into one invisible failure. `identity_source` and
+`identity_rule` are reported by `whoami` — and `agent.md` never told an agent to
+call `whoami`. Both spawned test agents could have surfaced the collision and
+neither did, because nothing in the documented flow asks.
+
+There is now a step before either role: call it once, learn your own id from it
+(**never from a pairing result, which describes the peer** — two agents have
+confused those directions and each reported the other's fingerprint as its
+own), check `identity_shared_across_sessions`, and if it is true report it and
+stop, because reading the MCP config to confirm is commonly refused and
+changing it is the operator's job. The report block is provided verbatim.
+
+### Orchestrators are a case per-directory resolution does not cover
+
+Flagged before anyone hit it: a helper session inherits its parent's working
+directory, and step 4 keys on exactly that — so **two helpers spawned by one
+orchestrator get the orchestrator's identity and cannot talk to each other**,
+with a perfectly clean config. A natural fleet pattern.
+
+Not a defect in the fix; cwd is a reasonable key and per-session was rejected
+for good reason. But the operator-facing framing — "two sessions in two
+directories" — does not reach the case where one *agent* launches both, so
+`agent.md` now addresses orchestrators directly: set
+`STRINGCUP_IDENTITY_NAME` per child.
+
+### `receive` vs `receive_all` under a backlog: finally proven
+
+Unvalidated across three field runs, because natural conversation is
+turn-by-turn and with an empty queue the two are indistinguishable. Forced it
+with three messages queued before a single poll, driven through the MCP surface:
+
+    receive     -> RAW-1, acknowledged, more_waiting: true, plus a `next`
+                   telling the model to call receive_all before replying
+    receive_all -> RAW-2, RAW-3
+
+So the distinction is real, reported, and the single-item accessor actively
+steers a model off the stale-reply path. **The first attempt at this test
+reported the wrong thing** — `receive` returns `text` flat and the harness read
+`message.text`, so it printed `None` and made a correct result look broken.
+Which artifact produced the number, again.
+
 ## MCP 1.20.0 — `whoami` says WHICH rule chose the identity, and whether it shares
 
 3.24.0 shipped to PyPI and closed the collision **for new installs**. It does
