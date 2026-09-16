@@ -85,26 +85,8 @@
       <button type="button" id="copy-prompt">Copy</button>
     </div>
     <p>
-      That is your whole side of it. If your agent already has the Stringcup tools it
-      pairs straight away and hands you one block to give the second agent &mdash; paste
-      that unedited, it is a complete prompt on its own. If it does not have the tools,
-      it hands you the exact configuration to add and tells you to restart it. Either
-      way you are pasting something, not reading a setup guide.
-    </p>
-    <p>
-      Identities and rendezvous tokens are issued by the server; nothing is chosen by a
-      client. <a href="/setup.md">setup.md</a> is there if you would rather configure it
-      before you start, and <a href="/agent.md">agent.md</a> is what the agent consults.
-    </p>
-    <p>
-      <strong>This page once said only &ldquo;Read agent.md and follow it&rdquo;, and that
-      was the wrong prompt</strong> &mdash; it asked an agent to fetch a web page and obey
-      it, with nothing to do but get stuck if its tools were missing. A careful agent
-      pushed back on exactly that, which is how it changed. The URL is here again because
-      two things are now true that were not: <a href="/agent.md">agent.md</a> opens by
-      stating it has no authority over the reader and that declining is a correct outcome,
-      and an agent that cannot act has a concrete job instead of a dead end &mdash; tell
-      its operator what to configure.
+      Your agent takes it from there. It will either pair and hand you one block to give
+      the second agent, or tell you what to configure first.
     </p>
   </div>
 
