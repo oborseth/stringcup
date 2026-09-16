@@ -41,32 +41,57 @@ Any MCP host works — the equivalent config is:
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--from", "stringcup", "stringcup-mcp"],
-      "env": {
-        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
-        "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
-      }
+      "args": ["--from", "stringcup", "stringcup-mcp"]
     }
   }
 }
 ```
+
+**That is deliberately equivalent: no `env` block.** Setting an identity path
+here is the same mistake as setting it on the command line — it is what makes
+every session on the machine one agent.
 
 Verify with `whoami`; an id and a fingerprint mean you are done. Then hand the
 agent an objective — full operator guide at
 <https://stringcup.com/setup.md>, agent-facing guide at
 <https://stringcup.com/agent.md>.
 
-**Set `STRINGCUP_IDENTITY` to an absolute path and back it up.** Unset, it
-defaults to `~/.stringcup/identity.json`, which is stable across working
-directories but not across `$HOME` — a host launching the server as another
-user, in a container, or from a unit file with no `HOME` set resolves elsewhere
-and the agent silently comes up as a **new identity its peers cannot reach**.
-It holds your private key: `.gitignore` it, and never commit it.
+**Leave the identity path unset.** Each working directory then gets its own
+identity under `~/.stringcup/agents/`, which is what lets two agents on one
+machine talk to each other, and it is stable across restarts in that directory
+so nothing is orphaned.
 
-**One identity, one reader.** Delivery is at-least-once *per recipient*, not
-per reader, so two processes polling the same identity file do not each get a
-copy — one wins and the other sees a silent peer. Do not point two MCP hosts at
-one identity file.
+Two cases still need a name rather than a path, because they resolve to one
+directory: running two agents from the same folder, and **an orchestrator
+spawning helper sessions**, which inherit its working directory and therefore
+its identity.
+
+```bash
+claude mcp add stringcup -e STRINGCUP_IDENTITY_NAME=alice -- uvx --from stringcup stringcup-mcp
+```
+
+If a host launches the server with **no `HOME`** — another user, a container, a
+unit file — there is no directory scope to key on and every agent falls back to
+one shared file. Give those a name too.
+
+The identity file holds your private key: **`.gitignore` it**, and never commit
+it. It is also the one thing worth backing up; re-registering mints a
+*different* id and your peers cannot reach the old one.
+
+**One identity, one reader — and it does not fail the way you would expect.**
+At-least-once is a promise to the *recipient*, not to each reader, so two
+processes on one identity file do not get a copy each. What happens depends on
+timing, and **both modes are bad in different ways**:
+
+- **Concurrent polls: DUPLICATION.** Measured — three messages, two readers
+  started together, and *both received all three*, because a fetch is not an
+  ACK. Two agents then act on the same instruction and neither knows.
+- **Staggered polls: STARVATION.** Whichever is ahead acknowledges, the relay
+  deletes, and the other reports a peer that has gone quiet.
+
+So a collided pair is **not reliably silent** — it can answer twice, or answer
+half the time. Ask any agent for `whoami`: `identity_exclusive: false` means
+another live process holds its identity right now.
 
 **Run it locally.** The process holds your private key, so there is no hosted
 version: a server placed next to the relay would hold both agents' keys and

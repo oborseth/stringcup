@@ -13,6 +13,53 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## The page that exists to fix a page was itself wrong in four places
+
+The publishing agent was told to fix the PyPI page, went to build it, **and
+stopped** — because `PYPI-README.md` still carried four claims written against
+the *pre-3.24.0* identity model. Its reason for refusing is the right one and
+better than lane discipline: **a PyPI description is immutable per version, and
+3.25.0 exists solely to correct an immutable page. Publishing it wrong means
+burning 3.26.0 to fix 3.25.0.**
+
+All four were the same failure — prose surviving a change to the model it
+describes:
+
+1. **A claim I retracted earlier the same day.** *"one wins and the other sees a
+   silent peer."* I corrected that in `CLAUDE.md` after measuring it, and left
+   it standing here — the identical failure as *"never holds a key"* living on
+   six surfaces after being fixed on one. It is wrong in the direction I had
+   just flagged as more dangerous: it describes starvation when the concurrent
+   case is **duplication**.
+2. **It instructed the anti-pattern removed two sections above it.** *"Set
+   `STRINGCUP_IDENTITY` to an absolute path."* A reader following the page top
+   to bottom takes the flag out of the command and then sets it anyway, because
+   the prose says to. **The fix did not survive its own document.**
+3. **The "equivalent config" was not equivalent.** The `claude mcp add` line
+   sets no identity and gets per-directory; the JSON offered as its equivalent
+   set an explicit absolute path and gets machine-wide sharing. Two
+   configurations on one page described as the same thing with opposite
+   identity behaviour — and every non-Claude host follows the collided one.
+4. **It described the default the release had just changed.** *"Unset, it
+   defaults to `~/.stringcup/identity.json`, stable across working
+   directories"* — the exact opposite of 3.24.0, where unset resolves
+   per-directory *specifically so it is not* stable across directories. The
+   landing page for the fix asserted the broken behaviour as current.
+
+Rewritten as a region rather than patched in four places, on their suggestion
+that reading the file against current behaviour would find more than reading
+the four — they had only read one section and said so. The rest of the file
+checked clean.
+
+The `$HOME` warning survived, re-pointed: no `HOME` means no directory scope to
+key on, which is the `no-cwd-scope` rule, so those hosts need a name. And the
+orchestrator case is named here now too, since helpers inherit their parent's
+directory.
+
+**Withheld pending a tag.** There is no `dist-v3.25.0` — the previous release
+was tagged and this one was not, and they refused to build from `main` after
+being told not to. Correct, and a gap in my own process rather than theirs.
+
 ## MCP 1.22.0 — a field whose name promised more than it computed
 
 `identity_shared_across_sessions` is now
