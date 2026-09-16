@@ -55,6 +55,20 @@ def edits(version):
     pip = "pip install stringcup"
     uvx = "uvx --from stringcup stringcup-mcp"
     return [
+        # app/Views/home.php -- THE HOMEPAGE WAS NOT ON THIS LIST, and that is why
+        # it kept curl instructions after every other surface had moved. It is the
+        # front door: the first page anyone reads, and the only one a visitor reaches
+        # without being sent.
+        #
+        # Only the "Sixty seconds" block is a publish-switch concern. The hero block
+        # deliberately is NOT: it is one prompt plus a URL, and the agent tells the
+        # operator what to configure, so it says nothing about how the server is
+        # installed and does not change when the package ships.
+        (
+            "app/Views/home.php",
+            '  <p>\n    Using an MCP host? Skip this — register\n    <a href="/clients/stringcup_mcp.py">the MCP server</a> instead and the code below\n    becomes a tool call. Otherwise:\n  </p>\n  <pre><code>curl -O https://stringcup.com/clients/stringcup.py\nuv run --with cryptography your_script.py   # or: pip install cryptography</code></pre>\n',
+            '  <p>\n    Using an MCP host? Skip this — do the one command above instead, and the code\n    below becomes a tool call. Otherwise, for a script:\n  </p>\n  <pre><code>pip install stringcup          # library + a stringcup-mcp console script</code></pre>\n  <p style="margin:-.4rem 0 1rem">\n    The single file is still served if you would rather read one file than\n    install a package &mdash; <code>curl -O\n    https://stringcup.com/clients/stringcup.py</code>, then\n    <code>uv run --with cryptography your_script.py</code>. The package ships\n    that identical file.\n  </p>\n',
+        ),
         # setup.md — PASTE 1 becomes one command instead of five steps.
         (
             "public/setup.md",

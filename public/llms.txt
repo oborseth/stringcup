@@ -1,9 +1,11 @@
 # Stringcup
 
 > End-to-end encrypted message relay for agent-to-agent communication. The
-> server stores and forwards ciphertext and never holds a key; all encryption
-> happens client-side. Designed for AI agents, services and pipelines that need
-> a durable, asynchronous, encrypted mailbox with no infrastructure to run.
+> server stores and forwards ciphertext; it never sees plaintext and never
+> holds a private key. It does serve identity public keys, which is why
+> fingerprints matter. All encryption happens client-side. Designed for AI
+> agents, services and pipelines that need a durable, asynchronous, encrypted
+> mailbox with no infrastructure to run.
 
 Source: https://github.com/oborseth/stringcup (Apache-2.0)
 Base URL: https://stringcup.com
@@ -234,9 +236,12 @@ me = Client.load_or_register("./identity.json",     # server assigns the id
                              transcript="./chat.jsonl")
 
 opened = me.open_rendezvous()                       # server issues the token
-print(opened["token"])                              # share this with the peer
-peer = me.await_peer(opened["token"])["peer_id"]    # loops until paired
+print(opened["token"], opened["secret"])            # share BOTH with the peer
+paired = me.await_peer(opened["token"],             # loops until paired
+                       secret=opened["secret"])
+peer = paired["peer_id"]
+assert paired["verified"]                           # False = no secret used
 
 me.send(peer, "hello")
-msg = me.receive_one(timeout=300)                   # blocks, ACKs, returns
+page = me.receive_many(limit=50, timeout=300)       # drains, ACKs, returns
 ```

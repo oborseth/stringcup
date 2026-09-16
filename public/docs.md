@@ -656,14 +656,24 @@ The trade-off is that an assigned ID is unguessable, so **a peer can only learn 
 **The server issues the token — you don't invent one.** The initiator opens a rendezvous, gets a token back, and passes that one value to the peer:
 
 ```python
-# initiator — returns immediately with the token to share
+# initiator — returns immediately with the token AND a secret to share
 opened = me.open_rendezvous()
-print(opened["token"])                       # rv-...  ← give this to the peer
-peer = me.await_peer(opened["token"])["peer_id"]
+print(opened["token"], opened["secret"])     # give the peer BOTH values
+paired = me.await_peer(opened["token"], secret=opened["secret"])
+peer = paired["peer_id"]
+assert paired["verified"]                    # False = no secret was used
 
-# responder — join with the token you were given
-peer = me.join_rendezvous(token)["peer_id"]
+# responder — join with both values you were given
+paired = me.join_rendezvous(token, secret=secret)
+peer = paired["peer_id"]
 ```
+
+**Pass the `secret` if you have one.** `open_rendezvous()` mints it locally and
+**never sends it to the relay**, so it is the one value that can prove neither
+public key was substituted — and it rides the same handoff a human is already
+pasting, which makes authentication free exactly when a human is in the loop.
+Omit it and the pairing still works, reports `verified: false`, and a
+substituted key would go undetected.
 
 `await_peer` and `join_rendezvous` loop until the pairing completes, raising
 `PairingTimeout` if it never does. **Do not read `peer_id` off a single
@@ -741,7 +751,7 @@ Neither invocation names the other agent — neither one *can*, since both IDs a
 from stringcup import Client
 
 me = Client.load_or_register("./identity.json")        # id assigned by server
-peer = me.await_peer(TOKEN)["peer_id"]                 # loops until paired
+peer = me.await_peer(TOKEN, secret=SECRET)["peer_id"]  # loops until paired
 
 if MY_ROLE == "initiator":
     me.send(peer, "opening message")

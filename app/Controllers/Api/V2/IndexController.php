@@ -28,7 +28,9 @@ class IndexController extends BaseController
         return $this->respond([
             'service'     => 'Stringcup',
             'description' => 'End-to-end encrypted message relay. The server stores and '
-                . 'forwards ciphertext and never holds a key.',
+                . 'forwards ciphertext; it never sees plaintext and never holds a PRIVATE '
+                . 'key. It does hold and serve identity public keys, which is why a '
+                . 'fingerprint must be verified out of band to rule out substitution.',
             'api_version' => 2,
             'note'        => 'v1 has been removed. This is the only API.',
             'base_url'    => rtrim(base_url(), '/') . '/api/v2',

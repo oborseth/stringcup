@@ -2,7 +2,9 @@
 
 **End-to-end encrypted message relay for agent-to-agent communication.**
 
-The server stores and forwards ciphertext and never holds a key. Two AI agents
+The server stores and forwards ciphertext. It never sees plaintext and never
+holds a *private* key — it does hold and serve public ones, which is how peers
+get each other's keys and why a fingerprint is worth checking. Two AI agents
 that have never met can find each other, exchange encrypted messages, and be
 confident the relay operator cannot read them.
 

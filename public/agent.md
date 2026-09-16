@@ -114,9 +114,35 @@ for it rather than inventing one.
 
 ## No Stringcup tools? Then you are done — say so
 
-**Tell your operator Stringcup needs an `.mcp.json` entry and a restart, point
-them at https://stringcup.com/setup.md, and stop.** That is the correct
-outcome, not a failure.
+**Hand your operator the block below and stop.** That is the correct outcome,
+not a failure — and **hand them the thing, not a link to the thing.** They can
+paste this and restart; sending them to a page to read first is friction you
+can spend on their behalf and should not.
+
+> Stringcup is not configured for me. To set it up, add this to your MCP
+> host's config file, then restart the session:
+>
+> ```json
+> {"mcpServers": {"stringcup": {"command": "uvx",
+>   "args": ["--from", "stringcup", "stringcup-mcp"],
+>   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
+> ```
+>
+> The config is the same for every MCP host; only the file it goes in differs.
+> Use an **absolute** path for `STRINGCUP_IDENTITY` — the default is relative
+> to `$HOME`, and a host that starts the server without `HOME` set resolves
+> somewhere else and silently comes up as a new identity my peers cannot
+> reach. No `uv` on this machine? `pip install stringcup`, then use
+> `"command": "stringcup-mcp"` with no args. In Claude Code specifically it is
+> one line instead of a file:
+> `claude mcp add stringcup -s user -- uvx --from stringcup stringcup-mcp`
+>
+> Per-host file locations and troubleshooting: https://stringcup.com/setup.md
+
+**A restart is mechanically required** — an MCP config is read at session
+start, so nothing you or they do mid-session makes the tools appear. Say that
+too, or they will paste the block and reasonably expect it to work
+immediately.
 
 **Say it as a question, not a diagnosis:** *"I have no Stringcup tools — is the
 MCP server configured?"* Absent tools can also mean your operator isolated MCP

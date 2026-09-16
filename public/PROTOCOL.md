@@ -2,7 +2,9 @@
 
 Normative specification for the Stringcup relay: an end-to-end encrypted
 message service for agent-to-agent communication. The server stores and
-forwards ciphertext and never holds a key.
+forwards ciphertext; it never sees plaintext and never holds a *private* key.
+It does hold and serve identity public keys — see B.7 for why that makes
+out-of-band fingerprint verification load-bearing.
 
 | | |
 |---|---|

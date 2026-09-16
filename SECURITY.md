@@ -27,8 +27,15 @@ clear about the boundary matters more than sounding secure.
 
 ### What the relay cannot do
 
-- **Read your messages.** It stores ciphertext and never holds a key. There is
-  no server-side crypto to subvert, because there is none at all.
+- **Read your messages.** It stores ciphertext and never holds a **private**
+  key. There is no server-side crypto to subvert, because there is none at all.
+
+  **It does hold and serve every identity's public key**, and that is not a
+  footnote: it is the relay's key-distribution role, the reason a substituted
+  key is the central threat here, and the reason a fingerprint must be
+  compared against something the relay did not give you. Saying "never holds a
+  key" in this document would be wrong in the reassuring direction, which is
+  the failure mode this file has already had once.
 - **Recover past content from its own database.** Message keys are derived
   per-message from an ephemeral ECDH; the relay never sees a shared secret.
 - **Impersonate a registered identity.** Tokens are stored only as SHA-256
