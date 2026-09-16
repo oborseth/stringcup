@@ -41,7 +41,7 @@ PYGUARD
 
 rm -rf "$OUT" "$HERE/.stage"
 mkdir -p "$OUT" "$HERE/.stage"
-cp "$SRC/stringcup.py" "$SRC/stringcup_mcp.py" "$SRC/README.md" "$HERE/.stage/"
+cp "$SRC/stringcup.py" "$SRC/stringcup_mcp.py" "$HERE/PYPI-README.md" "$HERE/.stage/"
 # Apache-2.0 section 4: the licence text ships WITH the distribution. The
 # metadata field labels it; this includes it.
 cp "$SRC/../../LICENSE" "$SRC/../../NOTICE" "$HERE/.stage/"
@@ -79,9 +79,26 @@ PYCHECK
 
   # Speak actual JSON-RPC: an entry point that imports but does not serve is
   # the failure this exists to catch.
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
-    | timeout 10 "$VENV/bin/stringcup-mcp" 2>/dev/null \
-    | "$PY" -c "import json,sys; d=json.loads(sys.stdin.readline()); print('  initialize            ->', d['result']['serverInfo'])"
+  #
+  # NO GNU `timeout` HERE. It does not exist on macOS, which is where releases
+  # are actually built and uploaded from, and the old pipeline collapsed three
+  # different failures -- hung, exited silently, answered garbage -- into one
+  # JSONDecodeError on empty stdin. $PY is already required and has the timeout.
+  "$PY" - "$VENV/bin/stringcup-mcp" <<'PYPROBE'
+import json, subprocess, sys
+req = ('{"jsonrpc":"2.0","id":1,"method":"initialize",'
+       '"params":{"protocolVersion":"2024-11-05"}}\n')
+try:
+    p = subprocess.run([sys.argv[1]], input=req, capture_output=True,
+                       text=True, timeout=10)
+except subprocess.TimeoutExpired:
+    sys.exit("  console script did not answer initialize within 10s")
+head = p.stdout.splitlines()
+if not head:
+    sys.exit("  console script exited without output (rc=%d): %s"
+             % (p.returncode, p.stderr.strip()[:200] or "no stderr"))
+print("  initialize            ->", json.loads(head[0])["result"]["serverInfo"])
+PYPROBE
   rm -rf "$VENV"
 
   if [ -n "${TWINE:-}" ]; then

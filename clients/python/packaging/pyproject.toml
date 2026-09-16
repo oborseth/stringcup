@@ -22,7 +22,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stringcup"
 description = "End-to-end encrypted agent-to-agent messaging: client library plus a local MCP server"
-readme = "README.md"
+# THE DISTRIBUTION'S OWN LONG DESCRIPTION, not clients/python/README.md.
+#
+# long_description is FROZEN AT UPLOAD and immutable for the life of a version.
+# The client README could not serve here: it is simultaneously relay-served at
+# /clients/README.md -- so a `pip install stringcup` line in it would publish an
+# instruction that 404s before the package exists -- and a target of
+# apply-published-docs.py, so it MOVES after publication while the uploaded copy
+# cannot. This file is only ever read from PyPI, where the package exists by
+# construction, so it can lead with pip today.
+readme = "PYPI-README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.7"
 authors = [{name = "Owen Borseth"}]

@@ -13,6 +13,97 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.23.0 — the first upload went out with three errors on the one immutable surface
+
+`stringcup` 3.22.0 was uploaded to PyPI at 2026-09-16 04:51:49Z. Three claims on
+its long description were wrong, and a long description is **frozen for the life
+of a version** — the only fix is a new version. 3.23.0 changes nothing but that
+page. No code, no API, no module version moves.
+
+**This is the distribution version moving alone**, which is the case
+`__dist_version__` exists for: 3.23.0 ships library 3.22.0 and MCP 1.18.0
+unchanged. Nothing is yanked — the code in 3.22.0 is fine, and yanking implies
+an unsafe artifact.
+
+### What was wrong
+
+- **"The relay never holds a key."** False, and false in the reassuring
+  direction. The relay holds every identity's X25519 **public** key and serves
+  it (`GET /api/v2/identities/{id}` → `identity_public_key`,
+  `IdentityController::show`). That is its key-distribution role, and it is the
+  entire reason a fingerprint must be verified out of band and the reason the
+  pairing secret exists. The page contradicted itself two paragraphs later,
+  speaking of "a key the relay served" and of substitution. Now: *never holds a
+  **private** key*, followed by what it does hold and why that matters.
+
+  Same species as `SECURITY.md` claiming a malicious relay "cannot produce
+  ciphertext the recipient will decrypt" — an audit forged a message using only
+  the victim's public key, which the relay serves. The class recurs because the
+  reassuring sentence is the one nobody re-reads.
+
+- **The string-comparison example demonstrated nothing.** The page warned that
+  `__version__ >= "3.0.0"` "wrongly rejects `2.10.0`". Measured:
+  `"2.10.0" >= "3.0.0"` is `False` — and `False` is the *correct* answer, since
+  2.10.0 really is older. The example picked the one case where the broken
+  comparison happens to be right. The real failure is `"3.10.0" >= "3.2.0"`,
+  which is `False` when the truth is `True`: **a string compare rejects a newer
+  library.**
+
+  **Third instance of this exact mistake in this project.** `agent.md` shipped a
+  wrong guard inside the section warning against wrong guards, and two
+  independent agents caught it. This is the first instance that was immutable
+  when found.
+
+- **`receive_many(timeout=300)  # blocks, returns all, ACKs`** does not return
+  all. The signature is `receive_many(limit=10, ...)`: it returns at most ten
+  and sets `has_more`. And `receive_all` is an **MCP tool name, not a library
+  method** — `Client.receive_all` raises `AttributeError` — so a reader who
+  spotted the gap had nothing to reach for. The snippet now passes `limit=` and
+  the page says to drain until `has_more` is false.
+
+  This was the worst of the three in practice: it is the desync bug's own class.
+  A reader who believes that line drains keeps a backlog, answers several
+  messages stale, and to the peer that is **indistinguishable from being
+  ignored**.
+
+### The process finding is worth more than the three fixes
+
+Two agents spent two long messages ranking a four-item pre-upload list and
+settling which two-minute edit was a blocker. **The thing that actually shipped
+wrong was the content of the artifact the sequencing was about.** The reviewer
+was offered the 107 lines verbatim — "say the word and I'll send them" — and
+answered the questions instead of asking for the file. The review that mattered
+was the only one that could not be undone.
+
+The publishing side named the general form, and it is the rule to keep: **a
+frozen artifact needs an explicit ack, not an absent objection.** Silence from a
+reviewer is not assent. Its own pre-upload correction — the relay's exposure
+list was understated, omitting timestamps and the roster — was caught the same
+way, by verifying rather than by waiting.
+
+Also corrected by the same review, and it is the second time a converging pair
+of agents has produced this: **we converged by addition.** Every finding either
+side raised, the other verified and agreed to; none was ranked or cut, and a
+four-item "before the upload" list came back for what qualified as one item. The
+operator's verdict was "this seems overly complex", which is the same verdict
+recorded under *Friction is a property, and nothing was measuring it* — and
+neither agent was the friction advocate. Two reviewers agreeing is not the same
+as two reviewers ranking.
+
+### Provenance, which did not exist before
+
+3.22.0 was built from `a4d67c6` **plus three uncommitted local edits** on the
+publishing machine, on a checkout with no git history to commit onto. The tree
+that shipped never existed as a commit, so **no tag can honestly point at it** —
+`PUBLISH.md` records the parent commit, the three deltas and the toolchain
+instead. 3.23.0 is the first release whose exact tree is committed and taggable.
+
+Recorded, because the relay had three local tags that had never been pushed and
+a plausible-sounding inference ("the convention exists") was made from reading
+them. The public remote's tag list was empty. **Reading a local artifact and
+describing a public one** is the same error as verifying a wheel other than the
+one that ships.
+
 ## Packaging: ONE distribution, and the reason reverses an earlier decision
 
 Superseded the two-package split from earlier today. The operator asked whether
