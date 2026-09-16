@@ -78,7 +78,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.17.0"
+__version__ = "1.18.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -113,7 +113,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 21, 0)
+BUILT_AGAINST = (3, 22, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -750,12 +750,13 @@ def tool_create_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "created": True,
         "channel_id": body["id"],
         "label": label,
-        "label_note": (
-            "The relay assigned channel_id and never learns your label. Address "
-            "this channel by channel_id in every other tool. The label is stored "
-            "on this machine and sent to members inside the encryption, so it is "
-            "a convenience for humans, not an identifier and not authenticated."
-        ),
+        # SHORT ON PURPOSE. A 491-character paragraph attached to every
+        # received message was found to defeat itself -- identical text every
+        # turn stops being read -- and the fix was a short structural field
+        # with the prose stated once in the tool description. Several long
+        # note fields were then added anyway, including this one. Same lesson,
+        # applied: the detail lives in create_channel's description.
+        "label_is_local": True,
         "members_added": len(members) - len(body.get("unknown") or []),
         "unknown": body.get("unknown") or [],
         "owner": me.id,
@@ -786,14 +787,10 @@ def tool_close_channel(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "closed": True,
         "channel_id": body.get("id") or channel,
         "legacy_name": body.get("name"),
-        "what_this_did": (
-            "The channel and its membership list are gone, so no further "
-            "broadcast can address it and members will no longer see it in "
-            "list_channels. MESSAGES ALREADY DELIVERED ARE UNAFFECTED: fan-out "
-            "is one encrypted message per member, addressed to identities, so "
-            "closing a channel retracts nothing. Anything a member has not yet "
-            "acknowledged still arrives."
-        ),
+        # Kept, and only this one, because it is the fact an agent would
+        # otherwise assume the other way round -- and assuming a close
+        # retracts mail is a correctness error, not a stylistic one.
+        "messages_already_sent": "not retracted; closing a channel unsends nothing",
     }
 
 
@@ -1294,8 +1291,9 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "The channel, as returned by create_channel or "
-                        "list_channels. A legacy channel also answers to its old "
-                        "name."
+                        "list_channels. A human label you gave it also works -- "
+                        "resolved on this machine, never sent to the relay. A "
+                        "legacy channel also answers to its old name."
                     ),
                 },
                 "members": {
@@ -1337,8 +1335,9 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "The channel, as returned by create_channel or "
-                        "list_channels. A legacy channel also answers to its old "
-                        "name."
+                        "list_channels. A human label you gave it also works -- "
+                        "resolved on this machine, never sent to the relay. A "
+                        "legacy channel also answers to its old name."
                     ),
                 }
             },
@@ -1375,8 +1374,9 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "The channel, as returned by create_channel or "
-                        "list_channels. A legacy channel also answers to its old "
-                        "name."
+                        "list_channels. A human label you gave it also works -- "
+                        "resolved on this machine, never sent to the relay. A "
+                        "legacy channel also answers to its old name."
                     ),
                 },
                 "text": {"type": "string", "description": "The plaintext to send."},

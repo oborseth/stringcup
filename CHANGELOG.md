@@ -13,6 +13,80 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.22.0 / MCP 1.18.0 — the security work had made it harder to use
+
+**The operator's verdict, and it was fair: "the work you did with the auditor,
+while good, maybe made it harder to use."** Every finding this week added a
+field, a caveat or a paragraph, and nobody was measuring the cost of that. The
+stated product goal is agents communicating *with little to no friction*, and
+several changes taxed it.
+
+Measured before fixing, rather than assumed:
+
+- **Channel ergonomics regressed outright.** You used to write
+  `broadcast("ops-mail", …)`. After ids were assigned you had to carry
+  `tp-wuteffkb25lwlhyfgbvseyxh` — correct for the relay, worse for the person.
+- **Five prose note fields** had accumulated on MCP results
+  (`label_note`, `sender_trust`, `versions_note`, `tool_list_check`,
+  `what_this_did`) — in a server whose own history includes discovering that a
+  491-character paragraph on every message *defeats itself*, because identical
+  text every turn stops being read. That lesson was learned and then
+  re-violated five times over.
+
+### A label now works wherever an id does
+
+`_resolve_channel()` accepts a human label anywhere a channel id is accepted:
+`broadcast("ops-mail", …)` works again, and so do `topic()`,
+`channel_members()`, `add_members()`, `remove_member()` and `delete_topic()`.
+
+**This gives up no property at all.** The label was already stored locally, so
+the lookup is client-side and the relay still only ever sees the id it
+assigned — verified on the wire: zero requests mention the label. The old
+ergonomics and the new metadata property are not in tension; the first
+implementation just did not bother to reconcile them.
+
+**An ambiguous label raises rather than guessing.** Two channels labelled the
+same on one machine is precisely the case where picking one silently sends to
+the wrong group, and a wrong recipient is a correctness failure, not an
+inconvenience. `tp-` ids pass through untouched, and an unknown string still
+falls through to the relay so legacy names keep working.
+
+### And two note fields cut back
+
+`label_note` became `label_is_local: true` — a short structural field, with the
+prose stated once in `create_channel`'s description where a model reads it
+once instead of every call. `what_this_did` became
+`messages_already_sent: "not retracted; closing a channel unsends nothing"`,
+kept because that is the fact an agent would otherwise assume the other way
+round, and assuming a close retracts mail is a correctness error.
+
+### agent.md: two pastes, and the role is derived
+
+The page now opens with **one block the operator fills in and pastes** — one
+for starting a pair, one for joining — so the agent has nothing to ask. The
+initiator's `STRINGCUP HANDOFF` block *is already* a complete prompt for the
+second agent, carrying the token, the pairing secret, the objective and the
+completion condition, so it is pasted unedited.
+
+Two corrections behind that:
+
+- **`YOUR ROLE` was listed as an operator input.** The relay derives the role
+  from token-presence *precisely because* callers naming their own role caused
+  a silent double-rendezvous deadlock — and `agent.md` said "your operator
+  should have told you" with the derivation rule as a mere fallback. That
+  inverts it: the token is the fact, an instructed role is a claim about it.
+  It is gone from the required-input tables, and the operator blocks say not
+  to supply it.
+- **A first attempt at reducing friction made it worse.** Having found that
+  the five-field brief blocked pairing, the page briefly told agents not to
+  block on it and to pair first. The operator corrected that: **prompting is
+  the wanted interaction, not the friction.** Pairing early has three real
+  costs the page now names — two untasked agents each assume the other was
+  briefed, a rendezvous expires in 15 minutes while you go and ask, and the
+  initiator speaks first so pairing then going quiet leaves the peer blocked
+  on a message that is not coming. The fix was to remove the *need* to ask by
+  giving the operator a complete block, not to remove the asking.
+
 ## agent.md: the shell path is gone as an agent-facing option
 
 **A fresh agent fetched `agent.md` and declined to follow it.** Both of its

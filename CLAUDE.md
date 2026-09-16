@@ -149,6 +149,29 @@ An agent given only `https://stringcup.com` must be able to reach a working inte
 an exact-match nginx alias. An agent holding a cached client has to be able to
 ask what changed without cloning a repo that is not public.
 
+**An agent should PROMPT its operator for the objective, and `agent.md` must
+say so.** The five-field brief was originally presented as a precondition the
+operator "should have told you", which produced an agent that correctly
+refused to start — and a first attempt to reduce that friction told agents not
+to block on it and to pair first instead. **That was worse**, and the operator
+corrected it: prompting is the wanted interaction, not the friction. Pairing
+early has three real costs the page now names — two agents arriving untasked
+each assume the other was briefed; a rendezvous is time-boxed at 15 minutes
+and can expire while you go and ask; and the initiator speaks first, so an
+initiator that pairs then goes quiet leaves its peer blocked on a message that
+is not coming, which looks exactly like a crash. So the page separates *what
+the protocol needs to connect* (a token, if you were given one — that is all)
+from *what the work needs*, and tells the agent to ask for the second **before**
+pairing.
+
+**`YOUR ROLE` is not an operator input and must never be listed as one.** The
+relay derives it from token-presence precisely because callers naming their own
+role caused a silent double-rendezvous deadlock. `agent.md` said "your operator
+should have told you" with the derivation rule as a fallback, which inverts it:
+the token is the fact, an instructed role is a claim about it. If they
+disagree, the rule wins and the agent should say so, because either the
+instruction is wrong or it was handed the wrong token.
+
 `agent.md` is the important one: it replaces the wall of prompt text that used to be pasted into each agent, and tells the initiator to stop and hand its operator a block containing the responder's role and token. One copy-paste is the whole handshake. It lives next to the API so it cannot drift the way a prompt in a config file does.
 
 Most of this was missing at one point: the root served the stock CodeIgniter welcome page, and `clients/` sits outside `public/` so the library was unreachable over HTTP. **`clients/stringcup.py`, `clients/stringcup_mcp.py`, `clients/example_agent.py` and `clients/README.md` are published by an nginx alias** in `stringcup.com.conf`, matched by an anchored regex listing those filenames literally — so nothing else under `clients/` (tests, the PHP interop driver, requirements.txt) becomes reachable, and a new file added there is not exposed by accident.
@@ -1761,6 +1784,36 @@ because the design was attacked **before** it was written.
 Every other finding arrived after the thing had been written, tested,
 documented and often shipped. Send a plan to a reviewer before implementing a
 change of any size.
+
+## Friction is a property, and nothing was measuring it
+
+**The operator's verdict after a week of audit work: "while good, maybe made it
+harder to use."** It was fair. Every finding added a field, a caveat or a
+paragraph; each was individually justified; nobody was tracking the aggregate.
+The stated product goal is *agents communicating with little to no friction*,
+and that goal had no test, no reviewer and no advocate while nine security
+findings did.
+
+Two measured regressions, both self-inflicted:
+
+- **`broadcast("ops-mail", …)` stopped working** when channel ids were
+  assigned, replaced by `tp-wuteffkb25lwlhyfgbvseyxh`. The fix was
+  `_resolve_channel()`: **a label works wherever an id does**, resolved
+  client-side, never sent. This gives up nothing — the label was already
+  stored locally — which means the regression was never a necessary cost of
+  the security property. It was just not reconciled.
+- **Five prose note fields accumulated on MCP results**, in the same server
+  whose history records that a 491-character paragraph on every message
+  *defeats itself* because identical text every turn stops being read. The
+  lesson was learned, written down, and then broken five more times. **A
+  result field carries a value; a tool description carries the explanation.**
+
+The general rule: **when a security change alters an interface, state the
+ergonomic cost explicitly and look for the version that has none.** Usually
+there is one. And **ask whether the threat is the operator's** — relay-visible
+channel names are not a threat to someone who runs the relay, which was said
+out loud before the work started and then not weighed when the design landed
+on opaque ids everywhere.
 
 ## Security Considerations
 

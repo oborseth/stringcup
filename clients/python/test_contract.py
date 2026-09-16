@@ -136,6 +136,7 @@ EXPECTED_FEATURES = {
     "transcript_symlink_warning": (3, 20, 0),
     "assigned_topic_ids": (3, 21, 0),
     "local_channel_labels": (3, 21, 0),
+    "label_addressing": (3, 22, 0),
 }
 
 

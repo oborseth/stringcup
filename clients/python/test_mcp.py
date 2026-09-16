@@ -1274,8 +1274,10 @@ def test_channels():
           "The RELAY-ASSIGNED id is returned, not a caller-chosen name")
     check(payload["label"] == "ops",
           "...and the label is echoed as a local convenience")
-    check("never learns your label" in payload["label_note"],
-          "...with the result saying plainly that the relay never sees it")
+    check(payload.get("label_is_local") is True,
+          "...and a SHORT structural field saying the label is local, not a "
+          "paragraph -- the detail belongs in the tool description, which a "
+          "model reads once, rather than in every result, which it re-reads")
 
     # An agent on a host that cached an older tool list will send `name`.
     # It must land as a LOCAL LABEL rather than being forwarded to the relay,
@@ -1293,7 +1295,7 @@ def test_channels():
     check(fake.deleted == FakeClient.ASSIGNED_TOPIC,
           "close_channel reaches the library with the channel id")
     check(closed["closed"] is True, "...and reports the channel closed")
-    check("RETRACTS NOTHING" in closed["what_this_did"].upper(),
+    check("not retracted" in closed.get("messages_already_sent", ""),
           "...and states that messages already sent are NOT retracted, which is "
           "the thing an agent would otherwise assume")
     check(payload["unknown"] == [bogus], "An unrecognised id is reported, not raised")

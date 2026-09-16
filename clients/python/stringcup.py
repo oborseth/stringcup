@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.21.0"
+__version__ = "3.22.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 21, 0)
+version_info = (3, 22, 0)
 
 __all__ = [
     "Client",
@@ -208,6 +208,8 @@ FEATURES = {
     # 3.21.0
     "assigned_topic_ids": (3, 21, 0),       # the relay assigns tp- ids; names are local
     "local_channel_labels": (3, 21, 0),     # label_for(), stored client-side only
+    # 3.22.0
+    "label_addressing": (3, 22, 0),         # a label works wherever an id does
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1096,6 +1098,10 @@ class TrustStore:
     def label(self, topic_id: str) -> Optional[str]:
         """The local label for a channel id, or None. Falling back to the id is correct."""
         return self._labels.get(topic_id)
+
+    def labels(self) -> Dict[str, str]:
+        """Every known label, keyed by channel id. Copy, so callers cannot mutate it."""
+        return dict(self._labels)
 
     def get(self, peer_id: str) -> Optional[str]:
         return self._peers.get(peer_id)
@@ -2966,6 +2972,9 @@ class Client:
         then one batch send. The sender is excluded by default — echoing your
         own broadcast back into your inbox is rarely what you want.
         """
+        # Accept a human label wherever an id is accepted. Client-side only;
+        # the relay still sees nothing but the id it assigned.
+        topic = self._resolve_channel(topic)
         roster = self.topic(topic)
         recipients = [
             m["id"] for m in roster["members"]
@@ -3091,6 +3100,62 @@ class Client:
                 # break creating or joining a channel.
                 pass
 
+    def _resolve_channel(self, channel: str) -> str:
+        """
+        Accept a human label wherever a channel id is accepted.
+
+        **This exists because assigning channel ids made the library harder to
+        use, and that was a regression nobody was measuring.** Before ids you
+        wrote `broadcast("ops-mail", ...)`. After, you had to carry
+        `tp-wuteffkb25lwlhyfgbvseyxh` — which is correct for the relay and
+        worse for the person. The operator said so plainly: the security work
+        had made the thing harder to use.
+
+        The label is already stored locally, so resolving it here costs
+        nothing and **gives up no property at all** — the lookup is
+        client-side and the relay still only ever sees the id it assigned.
+
+        Resolution order, and the ambiguity rule matters:
+
+        1. An assigned id (`tp-…`) passes through untouched.
+        2. A string matching exactly one known local label resolves to its id.
+        3. Anything else passes through, so a legacy human name still works.
+
+        **An ambiguous label raises rather than guessing.** Two channels
+        labelled the same locally is exactly the case where picking one
+        silently sends a message to the wrong group, and a wrong recipient is
+        not a convenience failure.
+        """
+        if not channel or channel.startswith("tp-"):
+            return channel
+
+        matches = [tid for tid, label in self._known_labels().items()
+                   if label == channel]
+
+        if len(matches) == 1:
+            return matches[0]
+
+        if len(matches) > 1:
+            raise ValidationError(
+                "%r labels %d channels on this machine (%s). Pass the channel "
+                "id instead -- guessing which one you meant could send to the "
+                "wrong group." % (channel, len(matches), ", ".join(sorted(matches)))
+            )
+
+        # Not a label we know. Could be a legacy name; let the relay decide.
+        return channel
+
+    def _known_labels(self) -> Dict[str, str]:
+        """Every label this client knows, in-memory plus trust store."""
+        known = dict(self._labels)
+        if self.trust_store is not None:
+            try:
+                for tid, label in self.trust_store.labels().items():
+                    known.setdefault(tid, label)
+            except Exception:
+                pass
+        return known
+
     def label_for(self, topic_id: str) -> Optional[str]:
         """
         The local human label for a channel id, if this client knows one.
@@ -3210,6 +3275,9 @@ class Client:
         swapped inside a group raises `KeyPinMismatch` here rather than
         silently re-keying the next broadcast.
         """
+        # Accept a human label wherever an id is accepted. Client-side only;
+        # the relay still sees nothing but the id it assigned.
+        name = self._resolve_channel(name)
         body = self._request("GET", f"/topics/{name}")
 
         for member in body.get("members", []):
@@ -3256,6 +3324,7 @@ class Client:
         A roster is readable only by members, so a name you are not in
         returns None and a label claiming it can never verify.
         """
+        name = self._resolve_channel(name)
         now = time.monotonic()
         hit = self._roster_cache.get(name)
         if hit is not None:
@@ -3322,6 +3391,9 @@ class Client:
         `notify` tells each new member it was added; see `create_topic` for
         why the owner's client has to be the one to do it.
         """
+        # Accept a human label wherever an id is accepted. Client-side only;
+        # the relay still sees nothing but the id it assigned.
+        name = self._resolve_channel(name)
         ids = list(ids)
         body = self._request("POST", f"/topics/{name}/members", {"ids": ids})
         self._forget_roster(name)
@@ -3343,12 +3415,18 @@ class Client:
         the cached roster expires -- but the roster is relay-served, so nothing
         here is enforceable against the relay. See `ROSTER_CACHE_SECONDS`.
         """
+        # Accept a human label wherever an id is accepted. Client-side only;
+        # the relay still sees nothing but the id it assigned.
+        name = self._resolve_channel(name)
         body = self._request("DELETE", f"/topics/{name}/members/{member_id}")
         self._forget_roster(name)
         return body
 
     def delete_topic(self, name: str) -> dict:
         """Delete a topic. Owner only. Already-sent messages are unaffected."""
+        # Accept a human label wherever an id is accepted. Client-side only;
+        # the relay still sees nothing but the id it assigned.
+        name = self._resolve_channel(name)
         body = self._request("DELETE", f"/topics/{name}")
         self._forget_roster(name)
         return body
