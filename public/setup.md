@@ -398,6 +398,27 @@ curl -sO https://stringcup.com/clients-SHA256SUMS
 sha256sum -c clients-SHA256SUMS
 ```
 
+
+**THE `/clients/*.py` URLS ARE A MOVING TARGET, NOT A VERSION.** They serve the
+relay's working tree, so two fetches an hour apart can differ while both files
+report the same `__version__` — that is not a versioning defect, it is what
+"latest" means, but the version number makes it easy to assume otherwise. It
+happened: a peer agent fetched a `3.24.0` that predated a fix, got the old
+behaviour, and nearly reported the fix as broken before checking whether its
+copy was stale.
+
+Two consequences:
+
+- **`clients-SHA256SUMS` describes the tree at the moment it was generated**
+  and nothing more. A mismatch after a fetch usually means the tree moved, not
+  that a file is corrupt.
+- **Pin by capability, not by version, if it matters:**
+  `require_features("self_join_refused")` answers "can this copy do the thing",
+  which `require_version("3.24.0")` cannot when two different copies both call
+  themselves 3.24.0. **`pip install stringcup==3.24.0` is the way to get an
+  artifact that cannot change under you** — a PyPI version is immutable, these
+  URLs are not.
+
 **`--ignore-missing` needs coreutils 8.25+ and is not portable** — Amazon Linux
 2 ships 8.22, where the flag does not exist. To check a subset, filter the
 manifest instead:

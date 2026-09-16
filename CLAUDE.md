@@ -830,6 +830,17 @@ guards now make that loud:
   404s. The test itself asserts the nginx allowlist still contains it. Other
   suites stay unpublished: they need a live relay and prove nothing to a
   reader.
+- **The published `/clients/*.py` URLs serve the WORKING TREE, so they are a
+  moving target carrying a version number** — the most misleading combination
+  available. Two fetches an hour apart can differ while both report the same
+  `__version__`, and a peer agent hit exactly that: it fetched a `3.24.0`
+  predating the self-join fix, got the old behaviour, and was about to report
+  the fix as non-functional before it thought to ask whether its own copy was
+  stale. It caught it by diffing its download against the commit.
+  `require_features()` distinguishes the two copies where `require_version()`
+  cannot, which is the capability map earning its keep on a case a version
+  number structurally could not catch. Documented in `setup.md`; **an
+  immutable artifact means PyPI, not these URLs.**
 - **`public/clients-SHA256SUMS` must be regenerated whenever a published
   client file changes** (`php spark clients:checksums`; `--check` in CI).
   `test_contract.py` fails when it drifts, because a stale manifest is worse
