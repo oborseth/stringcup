@@ -13,6 +13,73 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.25.0 / MCP 1.21.0 — `identity_source` could not raise the suspicion it explains
+
+**The diagnostic I shipped yesterday cannot detect the thing it was added
+for**, and the agent that suggested it worked that out and said so:
+
+> `loaded` is the CORRECT answer for a legitimate restart. An agent resuming
+> after compaction sees `loaded`. An agent colliding with a live sibling ALSO
+> sees `loaded`. Same value, opposite meanings.
+
+So `identity_source` explains a collision *after* you suspect one and can never
+raise the suspicion. Measured, on two live MCP processes on one identity file:
+**both report `identity_source: loaded`.**
+
+What separates the two cases is **concurrency** — a restart means the
+predecessor is gone, a collision means it is not — and this library had no way
+to observe that. Confirmed: no `flock`, no `fcntl`, no pidfile, no `getpid`
+anywhere in either module. Concurrent use was undetectable **by construction**,
+not merely unreported.
+
+`whoami` now returns **`identity_exclusive`**: `true` if this process is the
+only live holder, `false` if another one has it right now, **`null` if locking
+was unavailable** — unknown is not the same as exclusive, and reporting `true`
+there would be the reassuring-direction error this project keeps catching.
+
+Measured across two real MCP subprocesses:
+
+    process A -> identity_exclusive: true   identity_source: loaded
+    process B -> identity_exclusive: false  identity_source: loaded
+    after both exit, process C -> true
+
+**It answers on the first tool call**, which is the point. The self-join guard
+works — 0.4s, verified in the field — but it fires at *pairing*, after the
+operator has already been handed a handoff block and sent to find the other
+agent. This fires before a rendezvous exists.
+
+### Three decisions inside it
+
+- **An advisory `flock` on a sibling `<path>.lock`, not a pidfile and not the
+  identity file.** The kernel releases it when the process dies, so there is no
+  stale-lock recovery to get wrong — verified: after both holders exited, a
+  third process took it. A pidfile would need liveness checks. And it is a
+  *sibling* because `Identity.save()` replaces the identity atomically, which
+  would move a lock onto an unlinked inode and let a second process take the
+  new file.
+- **It warns, it never refuses.** The proposal asked the question and this
+  project has already answered it twice: `build.sh` warns rather than failing
+  on an already-published version, and the transcript-mode exposure warning was
+  deliberately not made fail-closed. Refusing at startup would lock an operator
+  out of their own agent on a false positive. Surface to the caller, let the
+  caller decide.
+- **No `identity_note` prose field**, which the proposal included. A result
+  field carries a value; a tool description carries the reasoning. This server
+  once accumulated five prose note fields in results and the lesson was written
+  down, so the explanation went into `whoami`'s description and `agent.md`
+  instead.
+
+### And the gap that made the last diagnostic useless is closed
+
+`agent.md` now checks `identity_exclusive` **first**, before
+`identity_shared_across_sessions`, and says why: `loaded` cannot tell you which
+situation you are in, so only the concurrency answer is actionable. Detection
+nothing reads is not detection — two test agents called `whoami` of their own
+accord and still missed the collision, because nothing told them what to look
+at.
+
+**Not published.** 3.24.0 is what is on the index.
+
 ## The published page taught the anti-pattern that 3.24.0 fixes
 
 **`PYPI-README.md` — the PyPI landing page — led with

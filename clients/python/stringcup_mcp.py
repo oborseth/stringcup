@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.20.0"
+__version__ = "1.21.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -112,6 +112,10 @@ MAX_HOLD = 300.0
 
 DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 
+#: True if we hold the advisory lock on the identity, False if another
+#: live process does, None if locking was unavailable. Set at startup.
+_IDENTITY_EXCLUSIVE = None
+
 
 #: The library version this server was written against.
 #:
@@ -125,7 +129,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 24, 0)
+BUILT_AGAINST = (3, 25, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -387,7 +391,15 @@ def client() -> Client:
         trust_store=TrustStore(store_path),
         transcript=_TRANSCRIPT,
     )
+    global _IDENTITY_EXCLUSIVE
+    _IDENTITY_EXCLUSIVE = stringcup.identity_exclusive(path)
     _log("identity %s (%s)" % (_client.id, _client.my_fingerprint_short))
+    if _IDENTITY_EXCLUSIVE is False:
+        # Audible, and also on whoami -- stderr alone is the host's log, which
+        # an operator may never open.
+        _log("WARNING: another live process is using %s. Two agents sharing "
+             "one identity cannot pair with each other and will consume each "
+             "other's mail. Give each its own STRINGCUP_IDENTITY_NAME." % path)
     if _TRANSCRIPT:
         _log("transcript %s (0600; set STRINGCUP_TRANSCRIPT=off to disable)"
              % _TRANSCRIPT)
@@ -474,6 +486,12 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # collision was found, reading the MCP config to check is refused as
         # credential exploration. Suggested by the agent that found it.
         "identity_rule": _resolve_identity()[1],
+        # THE FIELD identity_source COULD NOT PROVIDE. "loaded" is correct for
+        # a legitimate restart and for a collision alike, so it cannot raise
+        # the suspicion -- only concurrency separates them. false means another
+        # live process holds this identity right now; null means locking was
+        # unavailable, which is NOT the same as exclusive.
+        "identity_exclusive": _IDENTITY_EXCLUSIVE,
         "identity_shared_across_sessions":
             _resolve_identity()[1] in SHARED_IDENTITY_RULES,
     }
@@ -987,6 +1005,13 @@ TOOLS: List[Dict[str, Any]] = [
             "an identity on first use. The identifier is assigned by the relay and "
             "cannot be chosen. Call this first if you need to tell someone your "
             "address; every other tool registers on demand anyway.\n\n"
+            "**If `identity_exclusive` is false, ANOTHER LIVE PROCESS is using this "
+            "identity right now** — you and it are the same agent, you cannot pair "
+            "with each other, and you will consume each other's mail. Check this "
+            "before opening a rendezvous: it is the only field that separates a "
+            "collision from an ordinary restart, because `identity_source: loaded` "
+            "is the correct answer for both. `null` means locking was unavailable, "
+            "which is not the same as exclusive.\n\n"
             "**If `identity_shared_across_sessions` is true, every session on this "
             "machine is THIS SAME AGENT** and two of them cannot pair with each "
             "other -- one will open a rendezvous and the other will be told it "

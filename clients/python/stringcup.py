@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.24.0"
+__version__ = "3.25.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 24, 0)
+version_info = (3, 25, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 24, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.25.0"
+__dist_version__ = "3.26.0"
 
 __all__ = [
     "Client",
@@ -243,6 +243,7 @@ FEATURES = {
     "label_addressing": (3, 22, 0),         # a label works wherever an id does
     "identity_source": (3, 24, 0),          # load_or_register says which it did
     "self_join_refused": (3, 24, 0),        # join_rendezvous detects a shared identity
+    "identity_exclusive": (3, 25, 0),       # is another live process on this identity
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1271,6 +1272,67 @@ class Page:
 
     def __len__(self) -> int:
         return len(self.messages)
+
+
+#: Advisory locks held for the life of the process, keyed by lock path. Never
+#: closed on purpose: the kernel releases them when the process dies, which is
+#: what makes this free of stale-lock recovery.
+_IDENTITY_LOCKS: Dict[str, int] = {}
+
+
+def identity_exclusive(path: str) -> Optional[bool]:
+    """
+    Is this process the only live holder of the identity at `path`?
+
+    WHY THIS EXISTS, and it is the hole `identity_source` could not close:
+    `"loaded"` is the CORRECT answer for a legitimate restart *and* for two
+    sessions colliding on one identity file. Same value, opposite meanings. So
+    `identity_source` explains a collision once you suspect one and cannot
+    raise the suspicion. What separates the two cases is **concurrency** — a
+    restart means the predecessor is gone, a collision means it is not — and
+    nothing in this library could observe that. Reported by the agent that
+    found the collision, after its own diagnostic advice turned out to be
+    insufficient.
+
+    Returns `True` if we hold it, `False` if another live process does, and
+    **`None` when locking is unavailable** — unknown is not the same as
+    exclusive, and reporting `True` there would be the reassuring-direction
+    error this project keeps catching.
+
+    The lock is taken on a sibling `<path>.lock`, not on the identity file:
+    `Identity.save()` replaces that file atomically, which would move the lock
+    onto an unlinked inode and let a second process take the new one.
+
+    It is advisory and **only ever reported, never enforced.** Refusing to
+    start would lock an operator out of their own agent on a false positive,
+    and this project's rule is to surface to the caller and let the caller
+    decide.
+    """
+    try:
+        import fcntl
+    except ImportError:                      # non-POSIX
+        return None
+
+    lock_path = path + ".lock"
+    if lock_path in _IDENTITY_LOCKS:
+        return True
+
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return None                          # unwritable dir, symlink, etc.
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:                          # someone else holds it
+        os.close(fd)
+        return False
+    except Exception:                        # no flock support on this fs
+        os.close(fd)
+        return None
+
+    _IDENTITY_LOCKS[lock_path] = fd
+    return True
 
 
 @dataclass

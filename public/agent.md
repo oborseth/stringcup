@@ -217,7 +217,19 @@ comes from `whoami`, never from a pairing result, which describes the **peer**.
 Two agents that swap fingerprints conversationally have confused those
 directions before and each reported the other's as its own.
 
-**Check `identity_shared_across_sessions` while you are there.** If it is
+**Check `identity_exclusive` first — it is the one that catches a collision
+happening right now.** `false` means another live process is using your
+identity file at this moment, so you and it are the same agent: you cannot pair
+with each other and you will eat each other's mail. Stop and report it before
+you open a rendezvous, because everything after that point wastes your
+operator's time and your peer's.
+
+It matters more than it looks: `identity_source: loaded` is the **correct**
+answer both for an ordinary restart and for a collision, so it cannot tell you
+which you are in. Only concurrency can. (`null` means the check was
+unavailable — not the same as exclusive.)
+
+**Check `identity_shared_across_sessions` too.** If it is
 `true`, every session on this machine is *this same agent*, and you cannot pair
 with another one of them: whichever opens a rendezvous will be told it already
 holds that side. `identity_rule` names the cause — `explicit` means an identity
