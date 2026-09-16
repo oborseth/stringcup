@@ -697,15 +697,16 @@ const { privateKey, publicKey } = generateKeyPairSync('x25519')
 curl -O https://stringcup.com/clients/stringcup_mcp.py</code></pre>
 
     <p>
-      Both files must sit in the same directory; the server imports the library
-      rather than reimplementing it. Register it with your host:
+      <code>pip install stringcup</code> ships the server alongside the
+      library, or <code>uvx</code> fetches it on demand — either way there is
+      no path to a versioned file to get right. Register it with your host:
     </p>
 
     <pre><span class="lang-label">json</span><code>{
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+      "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {
         "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"

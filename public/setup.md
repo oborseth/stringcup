@@ -38,17 +38,13 @@ having this split out of it.
 >
 > ```json
 > {"mcpServers": {"stringcup": {
->   "command": "uvx",
->   "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
->   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
-> ```
->
-> ```json
-> {"mcpServers": {"stringcup": {
 >   "command": "python3",
 >   "args": ["/abs/path/stringcup_mcp.py"],
 >   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
 > ```
+>
+> That absolute path is the cost of not installing. With `uvx` there is no
+> path at all — see the one command above.
 >
 > **Then restart the session** — `.mcp.json` is read at startup, so a config
 > written mid-session does nothing until then. Confirm with `whoami`, which
@@ -216,14 +212,15 @@ appear and your agent has no error to report:
 which uvx; python3 -c "import cryptography; print(cryptography.__version__)"
 ```
 
-**If `uvx` exists:**
+**If `uvx` exists** — nothing to download and no path to get right. `uvx`
+fetches the published package and runs its console script:
 
 ```json
 {
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+      "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {
         "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
@@ -233,7 +230,30 @@ which uvx; python3 -c "import cryptography; print(cryptography.__version__)"
 }
 ```
 
-**If `uvx` is absent but `cryptography` imported:**
+**If `uvx` is absent** — `pip install stringcup`, which installs both modules
+and a `stringcup-mcp` console script. Still no path to the module:
+
+```json
+{
+  "mcpServers": {
+    "stringcup": {
+      "command": "stringcup-mcp",
+      "env": {
+        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
+        "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
+      }
+    }
+  }
+}
+```
+
+If the host cannot find `stringcup-mcp`, give the absolute path to the script
+itself — `/abs/path/venv/bin/stringcup-mcp`, which `pip install -U` replaces
+in place. Your MCP host does not necessarily inherit the shell `PATH` that
+`pip` installed into, and a virtualenv's `bin` almost never is on it.
+
+**Only if you are not installing at all** — the single-file curl path, which
+stays supported because one auditable file is a feature:
 
 ```json
 {
@@ -249,6 +269,10 @@ which uvx; python3 -c "import cryptography; print(cryptography.__version__)"
   }
 }
 ```
+
+**This is the only variant that needs a path to a versioned file**, and it is
+the one that breaks when the file moves or a new version ships. Prefer either
+block above it.
 
 **Set `STRINGCUP_IDENTITY` to an absolute path you control, and back it up.**
 Left unset it defaults to `~/.stringcup/identity.json`, which is stable across

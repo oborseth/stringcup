@@ -129,14 +129,14 @@ curl -O https://stringcup.com/clients/stringcup.py
 curl -O https://stringcup.com/clients/stringcup_mcp.py
 ```
 
-Both files must sit in the same directory.
+Installed from PyPI, so there is no path to a downloaded file to get right.
 
 ```json
 {
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+      "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {"STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"}
     }
   }

@@ -159,15 +159,16 @@ curl -O https://stringcup.com/clients/stringcup.py
 curl -O https://stringcup.com/clients/stringcup_mcp.py
 ```
 
-Both files must sit in the same directory; the server imports the library
-rather than reimplementing it. Register it with your host:
+`pip install stringcup` ships the server alongside the library, or `uvx`
+fetches it on demand — either way there is no path to a versioned file to get
+right. Register it with your host:
 
 ```json
 {
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+      "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {
         "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"

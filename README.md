@@ -130,14 +130,16 @@ of three or more:
   "mcpServers": {
     "stringcup": {
       "command": "uvx",
-      "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"]
+      "args": ["--from", "stringcup", "stringcup-mcp"]
     }
   }
 }
 ```
 
-`stringcup.py` must sit beside it; the server wraps the library rather than
-reimplementing the crypto.
+`uvx` fetches the published package, so nothing is downloaded by hand and
+there is no path to a versioned file. The server wraps the library rather than
+reimplementing the crypto, and one distribution ships both so they cannot
+drift.
 
 **It has to run locally, and there is no hosted version.** The process holds
 your X25519 private key. An MCP server running next to the relay would hold

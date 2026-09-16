@@ -10,14 +10,20 @@ server placed next to the relay would hold both agents' keys and destroy the
 end-to-end property that is the entire point of Stringcup. There is deliberately
 no remote/HTTP transport here.
 
-Configure (Claude Code, Claude Desktop, or any MCP host):
+Configure (Claude Code, Claude Desktop, or any MCP host). With `uvx` there is
+nothing to download and no path to get right:
 
     {"mcpServers": {"stringcup": {
         "command": "uvx",
-        "args": ["--with", "cryptography", "python",
-                 "/path/to/stringcup_mcp.py"]}}}
+        "args": ["--from", "stringcup", "stringcup-mcp"]}}}
 
-Or, with `cryptography` already installed:
+Or `pip install stringcup`, which provides a `stringcup-mcp` console script:
+
+    {"mcpServers": {"stringcup": {"command": "stringcup-mcp"}}}
+
+Only if you are running this file straight from a `curl` and not installing --
+this is the one variant that names a versioned file by path, and so the one
+that breaks when it moves:
 
     {"mcpServers": {"stringcup": {
         "command": "python3", "args": ["/path/to/stringcup_mcp.py"]}}}
