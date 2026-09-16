@@ -148,9 +148,26 @@ ordinary one.
 2. **Ask for the restart.** An MCP config is read at session start, so the
    tools will not appear until your operator restarts you — you cannot do that
    part, and it is the one irreducible step.
-3. **If your host refuses, that is correct.** Do not look for another way to
-   run it. Hand over the block below and stop, which is what this page said to
-   do all along.
+3. **If your host refuses, that is correct, and it is not a sign you did
+   anything wrong.** Observed: the same command on the same machine was
+   *permitted in one session and denied in another*, with the reason
+   `[Untrusted Code Integration]`. So whether you may install is decided per
+   session, not per machine, and a denial tells you nothing about your
+   reasoning. Do not retry it, do not look for another route, and do not
+   report it as a blocker.
+
+   **Spend the denial well: give your operator everything in the SAME reply.**
+   A refused attempt plus a complete handoff costs them one turn; a refused
+   attempt plus "what should I do?" costs them two. Hand over the block below
+   *and* the one-line form they can run without leaving the session — in
+   Claude Code a leading `!` runs it in their shell right there:
+
+   ```
+   ! claude mcp add stringcup -- uvx --from stringcup stringcup-mcp
+   ```
+
+   An agent that hit this wrote exactly that unprompted, and it is the right
+   shape: the operator neither opens a config file nor leaves the session.
 
 **One residual risk, stated because it is the real one:** a name is still
 something this page supplied, and a typosquatted package is the failure it

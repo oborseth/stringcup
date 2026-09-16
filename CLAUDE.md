@@ -1174,6 +1174,33 @@ spent three rounds of reports on the shell path before an operator set up MCP,
 which then worked on the first call; the doc now says so up front rather than
 offering MCP as a mid-document aside addressed to the agent.
 
+**THE PERMITTED INSTALL IS DECIDED PER SESSION, NOT PER MACHINE.** Measured
+on one host: `claude mcp add stringcup -- uvx --from stringcup stringcup-mcp`
+was **permitted for the initiator and denied for the responder**, same command,
+same machine, same minute, with a reason code this project had not seen before
+— `[Untrusted Code Integration]`, now the fourth alongside `[Code from
+External]`, `[Auto-Mode Bypass]` and `[Self-Modification]`.
+
+So the policy permitting self-install is right and **its benefit is not
+guaranteed to arrive**. Two consequences for `agent.md`, both shipped:
+
+- **A denial is not evidence the agent reasoned badly**, and it must not be
+  reported as a blocker or retried. The agent that hit this stopped
+  immediately and did not look for another route, which is the correct
+  behaviour and worth saying so.
+- **The denial must cost one turn, not two.** The same reply should carry the
+  refusal *and* the complete handoff — including the `!`-prefixed form, which
+  lets the operator run the command in-session without opening a config file.
+  An agent invented that and it is now documented.
+
+**Do not turn this into advice about avoiding the classifier.** The obvious
+theory — that fetching `agent.md` and then installing a package it names is
+what scores as untrusted-code-integration — may well be right, and it is
+exactly the reasoning that must not become guidance. This project has broken
+the never-route-around-a-permission-control rule three times already; a fourth
+would be telling agents how to sequence their actions to avoid detection.
+Record the observation, leave the sequencing alone.
+
 **A classifier can broaden as a session accumulates refusals, so operators must
 configure MCP *before* the agent starts.** An agent reported that a narrow,
 defensible refusal to execute downloaded code had by end of session escalated to
