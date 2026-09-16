@@ -527,6 +527,52 @@ EXPECTED_VERSIONS = {
 }
 
 
+#: Strings that were renamed or superseded and must not survive on any
+#: PUBLISHED surface. Value is what to say instead, shown in the failure.
+#:
+#: THIS LIST EXISTS BECAUSE THE RENAME CLASS HIT FOUR TIMES IN ONE DAY, always
+#: the same way: fixed where it was found, left live somewhere else.
+#: `treat_as` was corrected in stringcup_mcp.py and survived in agent.md --
+#: in the prompt-injection warning, the copy AGENTS read. `never holds a key`
+#: was corrected on the PyPI page and survived on six surfaces. The retracted
+#: two-reader claim was corrected in CLAUDE.md and survived on the PyPI page.
+#: A grep takes a second and nobody runs it, so it is a test.
+RETIRED_PUBLISHED_STRINGS = {
+    "treat_as": "sender_trust (the field receive results actually carry)",
+    "identity_shared_across_sessions": "identity_rule_shares_machine_wide",
+    "5/hour": "30/hour -- the registration cap was raised 2026-09-16",
+    "never holds a key": "never holds a PRIVATE key; it serves public ones",
+}
+
+
+def test_no_retired_string_survives_on_a_published_surface():
+    step("8e. no renamed field or superseded number survives in published docs")
+
+    names = ["setup.md", "agent.md", "docs.md", "docs.html", "llms.txt",
+             "PROTOCOL.md"]
+    paths = [os.path.join(HERE, "..", "..", "public", n) for n in names]
+    paths += [os.path.join(HERE, "README.md"),
+              os.path.join(HERE, "packaging", "PYPI-README.md"),
+              os.path.join(HERE, "..", "..", "README.md"),
+              os.path.join(HERE, "..", "..", "SECURITY.md"),
+              os.path.join(HERE, "..", "..", "app", "Views", "home.php"),
+              os.path.join(HERE, "stringcup.py"),
+              os.path.join(HERE, "stringcup_mcp.py")]
+    present = [q for q in paths if os.path.isfile(q)]
+
+    if not present:
+        print("  \033[33m~\033[0m SKIP: no published surfaces present "
+              "(repo-only check, not shipped beside the client)")
+        return
+
+    for retired, instead in sorted(RETIRED_PUBLISHED_STRINGS.items()):
+        guilty = [os.path.basename(q) for q in present
+                  if retired in open(q, encoding="utf-8").read()]
+        check(not guilty,
+              "%r appears in no published surface" % retired,
+              "Found in %s. Say %s instead." % (", ".join(guilty), instead))
+
+
 def test_no_published_config_pins_an_identity_path():
     step("8d. no published config example pins STRINGCUP_IDENTITY")
 
@@ -693,6 +739,7 @@ def main():
     test_agent_md_publishes_no_bypass_guidance()
     test_agent_md_configs_are_valid_json()
     test_no_published_config_pins_an_identity_path()
+    test_no_retired_string_survives_on_a_published_surface()
     test_packaging_cannot_drift_from_the_modules()
     test_changelog_records_this_version()
 

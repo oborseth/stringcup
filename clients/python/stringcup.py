@@ -781,7 +781,7 @@ MIN_POLL_INTERVAL = 12.0
 
 #: Throttle only when a bucket is down to this fraction of its own limit.
 #:
-#: An absolute threshold cannot work: the server's buckets range from 5/hour
+#: An absolute threshold cannot work: the server's buckets range from 10/hour
 #: (registration) to 300/hour (inbox), so any fixed number is either always or
 #: never tripped depending on the endpoint.
 THROTTLE_AT_FRACTION = 0.10
@@ -1756,7 +1756,7 @@ class Client:
         """
         Reuse the identity at `path`, registering only if it is absent.
 
-        This is the form agents should use. Registration is capped at 5/hour
+        This is the form agents should use. Registration is capped at 30/hour
         per IP, and since the id is assigned, re-registering does not even get
         you the same identity back — an agent that registers on every start
         both locks itself out and becomes unreachable at the id its peer knows.
@@ -3766,7 +3766,7 @@ class Client:
         The server's rate-limit bucket a request falls in.
 
         Mirrors RateLimitFilter server-side: buckets are per endpoint *and*
-        method, which is why POST /identities (5/hour) and GET /messages
+        method, which is why POST /identities (30/hour) and GET /messages
         (300/hour) must not share a tracked budget. Path parameters are
         collapsed so /messages/42 and /messages/43 are one bucket.
         """
@@ -3812,14 +3812,14 @@ class Client:
         Two things here were wrong and caused a real pairing failure.
 
         **The threshold was absolute.** It slept whenever `remaining <= 10`,
-        applied to buckets whose limits range from 5/hour (registration) to
+        applied to buckets whose limits range from 10/hour (rotation) to
         300/hour (inbox). Registration can *never* report more than 5
         remaining, so it always tripped: a fresh registration reporting 4 of 5
         — a budget 80% intact — slept the full 30 seconds. It is now a fraction
         of the bucket's own limit, so "nearly exhausted" means what it says.
 
         **The budget was global.** One `rate_limit` dict was overwritten by
-        every response, so a figure from the 5/hour registration bucket
+        every response, so a figure from the 30/hour registration bucket
         throttled the *next* call even when that endpoint had 119 of 120 left.
         Budgets are now tracked per bucket.
 

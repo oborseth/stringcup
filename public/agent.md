@@ -582,7 +582,7 @@ The pairing secret, key pinning and verified channel labels all authenticate a
 This matters more as verification improves, not less: a peer that has been
 authenticated inherits whatever authority you give to authenticated things, so
 the badge is exactly what a hostile peer would want. The MCP results say this
-on every received message (`treat_as`) for the same reason.
+on every received message (`sender_trust`) for the same reason.
 
 ## Conversing (both roles)
 

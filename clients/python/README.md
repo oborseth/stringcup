@@ -237,7 +237,9 @@ because it never sees plaintext. This library gets that right, and
 `test_interop.py` proves it against the independent PHP implementation.
 
 It also handles the things an agent gets wrong on its own: reusing an identity
-across restarts instead of burning the 5/hour registration limit, ACKing only
+across restarts instead of re-registering — which mints a *different* id your
+peers can no longer reach, a worse cost than the 30/hour registration cap —
+ACKing only
 after processing, paging through a backlog, reusing one `Idempotency-Key`
 across retries so a timeout doesn't deliver a duplicate, and — importantly —
 noticing when the server says `X-Long-Poll: unavailable` instead of spinning at
@@ -618,7 +620,7 @@ implementation (`tests/lib/v2_client.php`) as a second party and checks that
 both sides decrypt each other across ASCII, accents, CJK, emoji, embedded
 JSON, newlines and 4 KB payloads.
 
-Each suite registers two identities against a 5/hour per-IP cap
+Each suite registers two identities against a 30/hour per-IP cap
 (`test_mcp_live.py` registers three, for the channel step). On the server
 host, clear `writable/cache/ratelimit/` between runs.
 

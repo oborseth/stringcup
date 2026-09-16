@@ -374,7 +374,7 @@ def client() -> Client:
     The agent's identity, loaded from disk or registered once.
 
     Deferred rather than built at startup for two reasons: registration is
-    capped at 5/hour per IP, and a host that probes tool lists on every launch
+    capped at 30/hour per IP, and a host that probes tool lists on every launch
     would burn that budget without ever sending a message. Re-registering does
     not recover an identity — it mints a different one — so the file is the
     thing that matters.

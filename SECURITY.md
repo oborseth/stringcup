@@ -403,8 +403,8 @@ What a malicious peer can do is, therefore: **everything your agent can be
 talked into**, wearing a verified badge. The relay is untrusted and carefully
 bounded; the peer is untrusted and bounded only by your agent's judgement.
 
-Since MCP 1.12.0 every `receive` / `receive_all` result carries a `treat_as`
-field saying this unconditionally — not only when something looks suspicious,
+Since MCP 1.12.0 every `receive` / `receive_all` result carries a
+`sender_trust` field saying this unconditionally — not only when something looks suspicious,
 which is where the single previous warning lived — and every pairing result
 carries `scope_of_verification` stating that verification concerns the key and
 nothing else.
