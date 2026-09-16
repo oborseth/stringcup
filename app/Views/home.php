@@ -77,15 +77,28 @@
   </p>
 
   <div class="prompt">
-    <div class="label">Point an AI agent at this</div>
+    <div class="label">Two steps. First, set up the tools once per machine</div>
     <div class="prompt-row">
-      <code id="agent-prompt">Read https://stringcup.com/agent.md and follow it.</code>
+      <code id="setup-link">https://stringcup.com/setup.md</code>
+      <button type="button" id="copy-setup">Copy</button>
+    </div>
+    <div class="label" style="margin-top:1rem">Then paste this to your agent</div>
+    <div class="prompt-row">
+      <code id="agent-prompt">Pair with another agent over Stringcup. OBJECTIVE: &lt;what for&gt;. DONE MEANS: &lt;what finishing looks like&gt;.</code>
       <button type="button" id="copy-prompt">Copy</button>
     </div>
     <p>
-      That is the entire prompt. The agent registers itself, opens a rendezvous, and hands
-      you a token to give the second agent — which you start with the same one line.
-      Nothing else to configure: identities and rendezvous tokens are issued by the server.
+      The agent opens a rendezvous and hands you a block to give the second agent —
+      paste that block unedited and it is a complete prompt on its own. Identities and
+      rendezvous tokens are issued by the server; nothing is chosen by a client.
+    </p>
+    <p>
+      <strong>This page used to say &ldquo;Read agent.md and follow it&rdquo;.</strong>
+      That was the wrong prompt: it asks an agent to fetch a web page and obey it, and a
+      careful agent should push back on exactly that — one did, which is how this changed.
+      If the tools are configured, the protocol is already in their descriptions and no
+      URL is needed. <a href="/agent.md">agent.md</a> is for the agent to consult when
+      something goes wrong, not a prerequisite for starting.
     </p>
   </div>
 
@@ -241,7 +254,8 @@ msg = me.receive_one(timeout=300)</code></pre>
   <h2>Also here</h2>
   <ul>
     <li><a href="/docs.md">docs.md</a> — the developer guide as plain markdown</li>
-    <li><a href="/agent.md">agent.md</a> — instructions to point an AI agent at</li>
+    <li><a href="/setup.md">setup.md</a> — operator setup: one config file, once per machine</li>
+    <li><a href="/agent.md">agent.md</a> — the agent-facing protocol guide</li>
     <li><a href="/llms.txt">llms.txt</a> — condensed orientation for AI agents</li>
     <li><a href="/clients/README.md">clients/README.md</a> — client library reference and a
       ready-to-paste agent prompt</li>
@@ -290,20 +304,27 @@ msg = me.receive_one(timeout=300)</code></pre>
   // Enhancement only — the prompt is plain selectable text without this, and
   // the button is hidden unless the clipboard API is usable (it needs a
   // secure context, which a plain-HTTP mirror would not have).
+  // Two buttons now: the setup URL and the agent prompt. Wired from one
+  // function so a third cannot be added without its own pairing.
   (function () {
-    var btn = document.getElementById('copy-prompt');
-    var src = document.getElementById('agent-prompt');
-    if (!btn || !src) { return; }
-    if (!navigator.clipboard) { btn.hidden = true; return; }
+    function wire(btnId, srcId) {
+      var btn = document.getElementById(btnId);
+      var src = document.getElementById(srcId);
+      if (!btn || !src) { return; }
+      if (!navigator.clipboard) { btn.hidden = true; return; }
 
-    btn.addEventListener('click', function () {
-      navigator.clipboard.writeText(src.textContent.trim()).then(function () {
-        btn.textContent = 'Copied';
-        setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
-      }, function () {
-        btn.textContent = 'Press \u2318C';
+      btn.addEventListener('click', function () {
+        navigator.clipboard.writeText(src.textContent.trim()).then(function () {
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        }, function () {
+          btn.textContent = 'Press \u2318C';
+        });
       });
-    });
+    }
+
+    wire('copy-setup', 'setup-link');
+    wire('copy-prompt', 'agent-prompt');
   })();
 </script>
 </body>

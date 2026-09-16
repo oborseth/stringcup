@@ -36,6 +36,10 @@ class IndexController extends BaseController
             'documentation' => [
                 // The file to point an agent at; everything else is reference.
                 'agent_guide' => rtrim(base_url(), '/') . '/agent.md',
+                // Operator setup, split out of agent.md. An agent pointed at
+                // the guide and finding no tools should send its operator
+                // here rather than trying to install anything itself.
+                'operator_setup' => rtrim(base_url(), '/') . '/setup.md',
                 'protocol'  => rtrim(base_url(), '/') . '/PROTOCOL.md',
                 'openapi'   => rtrim(base_url(), '/') . '/openapi.yaml',
                 'test_vectors' => rtrim(base_url(), '/') . '/test-vectors.json',

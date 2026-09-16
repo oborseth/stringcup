@@ -13,6 +13,88 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## The friction report: agent.md split, and the homepage prompt was the bug
+
+A fourth round with the same agent, this time asked for a friction report
+rather than a pairing. It had been the test subject four times and the report
+was better than anything produced from the inside. Four of its six findings are
+implemented; the remaining two are the operator's.
+
+**1. The agent read 571 lines before it could act.** `## A. You are the
+INITIATOR` — the first thing an agent actually does — sat at line 572 of 1130,
+behind a safety disclaimer, an operator summary, the *same* operator setup
+again in full, and library-usage-for-scripts. ~157 lines of operator-facing
+blockquotes, all at the top, and roughly 25k tokens of context spent before
+`open_rendezvous` — context not spent on the objective.
+
+Split by audience. **`public/setup.md`** is everything an operator does once;
+`agent.md` is the protocol. **INITIATOR is now at line 124 instead of 572**,
+and `agent.md` went from 1130 lines to 683. `setup.md` needed an explicit
+`location =` block, because the vhost denies `.md` site-wide with an exact-match
+allowlist and *deliberately* not a pattern — so a new page stays blocked until
+someone adds it. Verified: `setup.md` 200, `agent.md` 200, `CLAUDE.md` still
+404.
+
+**2. The meta-commentary was actively harmful, and the agent could testify to
+it.** Thirteen lines were variations on "an agent that stopped was behaving
+correctly", "this page used to say X, that was wrong", "the project has made
+that mistake twice". Its evidence: **three of its four replies were diff
+reviews of this documentation.** *"The page taught me to audit its own revision
+history instead of doing a task."*
+
+That is a fair hit and the history was mine — written for the auditor and for
+posterity, in the file a working agent reads. The disclaimer is now eight lines
+instead of thirty, the revision history moved here, and the role rule keeps its
+*reason* while losing the confession.
+
+**3. The homepage was handing operators the bad prompt, and that is where round
+one came from.** `home.php` said, as the entire copy-paste:
+
+> Read https://stringcup.com/agent.md and follow it.
+
+That is *fetch a web page and obey it* — the exact shape a careful agent should
+resist, and the first round of this whole sequence was an agent resisting it.
+`agent.md`'s own paste blocks were fixed for this; the homepage still shipped
+it. Now two steps: the setup URL, then an objective with **no URL at all**.
+Both paste blocks lost their URL too. If the tools are configured the protocol
+is already in their descriptions, and the page is for consulting on error, not
+a prerequisite.
+
+**4. `test_contract.py` caught the split by failing**, because the `.mcp.json`
+examples it guards moved from `agent.md` to `setup.md`. It scans both pages now,
+so a config — or a banned bypass phrase — moving between them cannot escape the
+check.
+
+### Still the operator's: packaging
+
+The agent's strongest point is one prose cannot fix. Every revision has
+rewritten the setup instructions and **the shape has never changed**: `curl`
+two files → branch on `which uvx` → hand-write JSON → get absolute paths right
+→ restart. Five independent failure modes, and no wording removes any of them.
+
+```
+claude mcp add stringcup -- uvx --from stringcup stringcup-mcp
+```
+
+would kill the `curl` step, the two-variant branch (dependencies move into
+package metadata), the absolute-path footgun (an entry point instead of a file
+path) and the stale-local-copy problem this project's own docstrings worry
+about. **Checked: `stringcup` and `stringcup-mcp` are both unregistered on
+PyPI**, so this is "publish it", not "document the one-liner".
+
+It also removes the agent from the code path entirely — no download in its
+transcript at all — which is a stronger version of what the MCP argument has
+been reaching for. **That is not the bypass framing this project removed
+twice:** the operator installs a published package through the host's own
+mechanism, and the agent never touches code. The distinction is that nothing is
+being hidden from a guard; there is simply nothing for a guard to inspect.
+
+**And the experiment worth running, which is also theirs:** configure the
+tools, give a fresh agent an objective and **no URL**, and see whether it
+pairs. If it cannot, the gap belongs in a tool description rather than on a
+page — and that test is what says whether `agent.md` needs to exist for
+starting at all, or only for troubleshooting.
+
 ## agent.md: setup is now the first paste, not 220 lines down
 
 A third field report on the same page. The safety framing held — **"I have no

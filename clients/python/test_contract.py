@@ -374,13 +374,19 @@ BANNED_BYPASS_PHRASES = [
 def test_agent_md_publishes_no_bypass_guidance():
     step("8. agent.md routes nobody around a permission control")
 
-    path = os.path.join(HERE, "..", "..", "public", "agent.md")
-    if not os.path.isfile(path):
-        print("  \033[33m~\033[0m SKIP: public/agent.md not present "
-              "(published file, not shipped beside the client)")
+    # Both pages: the bypass framing was in agent.md, and setup.md now carries
+    # the operator-facing half it was split out of. A phrase moving between
+    # them must not escape the check.
+    paths = [os.path.join(HERE, "..", "..", "public", name)
+             for name in ("agent.md", "setup.md")]
+    present = [q for q in paths if os.path.isfile(q)]
+
+    if not present:
+        print("  \033[33m~\033[0m SKIP: public/agent.md and public/setup.md not "
+              "present (published files, not shipped beside the client)")
         return
 
-    text = open(path, encoding="utf-8").read().lower()
+    text = "\n".join(open(q, encoding="utf-8").read() for q in present).lower()
 
     for phrase in BANNED_BYPASS_PHRASES:
         check(phrase not in text,
@@ -406,15 +412,24 @@ def test_agent_md_configs_are_valid_json():
     # it just finds itself without Stringcup. This project already shipped one
     # config defect of that shape (a `uvx`-only example on a box with no uv),
     # and the operator had to derive a working config themselves.
-    path = os.path.join(HERE, "..", "..", "public", "agent.md")
-    if not os.path.isfile(path):
-        print("  \033[33m~\033[0m SKIP: public/agent.md not present "
-              "(published file, not shipped beside the client)")
+    # BOTH published pages are scanned. The configs live in setup.md, which was
+    # split out of agent.md so an agent would not read 400 lines of one-time
+    # operator setup before reaching the part it acts on -- and this check
+    # caught that move by failing when agent.md stopped containing them, which
+    # is the check working. Scanning both means a config re-added to either
+    # page is still validated rather than silently unguarded.
+    paths = [os.path.join(HERE, "..", "..", "public", name)
+             for name in ("setup.md", "agent.md")]
+    present = [q for q in paths if os.path.isfile(q)]
+
+    if not present:
+        print("  \033[33m~\033[0m SKIP: public/setup.md and public/agent.md not "
+              "present (published files, not shipped beside the client)")
         return
 
     import json as _json
 
-    text = open(path, encoding="utf-8").read()
+    text = "\n".join(open(q, encoding="utf-8").read() for q in present)
 
     # ONE pass, stripping the blockquote prefix uniformly. Matching quoted and
     # unquoted blocks with two patterns double-counted every blockquoted

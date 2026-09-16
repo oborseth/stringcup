@@ -136,7 +136,8 @@ An agent given only `https://stringcup.com` must be able to reach a working inte
 ```
 /                      landing page (app/Views/home.php) — links to everything
 /llms.txt              condensed orientation, the conventional entry point
-/agent.md              the file to point an agent at; it runs the conversation
+/setup.md              operator setup: one config file, once per machine
+/agent.md              the agent-facing protocol guide
 /api/v2                self-describing JSON index (IndexController)
 /clients/stringcup.py  the client library, fetchable with curl
 /clients/stringcup_mcp.py  MCP server for hosts that speak MCP
