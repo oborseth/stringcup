@@ -13,6 +13,90 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Packaging, built and tested but NOT published
+
+The operator has a PyPI account and said to get it right before publishing.
+Correct, and worth naming why: **a PyPI version can never be reused.** Publish
+`3.22.0` and that number is burned permanently — deleting the release does not
+free it, and anyone who installed it may have it cached. Unlike a git push,
+this one does not come back.
+
+### Two packages, and the versioning forces it
+
+`stringcup.py` and `stringcup_mcp.py` version **independently** (3.22.0 and
+1.18.0), with `BUILT_AGAINST` tying a server build to a library version. A
+single package carries one version number, so:
+
+- Track the **library** and an MCP-only change never bumps the package, so
+  `pip install -U` never fetches the new server. That defeats the point.
+- Use a **third** number and there are three versions to keep in step instead
+  of two — and `test_contract.py` exists because that discipline already
+  failed once.
+
+So `stringcup` carries the library version and `stringcup-mcp` carries the
+server version and depends on `stringcup>=BUILT_AGAINST`. That maps one-to-one
+onto the two files and leaves `require_version()` meaning exactly what it means
+today.
+
+### It is an additional channel, not a restructure
+
+Both ship as **flat modules** (`py-modules`), not package directories, because
+the distribution story is *one file plus cryptography* and `agent.md` tells
+readers they can fetch and read that single file to audit it. The wheel
+contains the same file. Nothing about the `curl` path changes.
+
+`packaging/` holds **no copy** of either module: `build.sh` stages the
+canonical files into a temp tree, so a release cannot drift from the published
+file — the property `clients-SHA256SUMS` gives the `curl` path.
+
+### The pin that is right here would be wrong for everyone else
+
+`requirements.txt` pins `cryptography<46` because **this host is Python 3.7**
+and 46 drops it. Publishing that unchanged would cap every user, including
+everyone on 3.12 with no reason to be held at cryptography 45. The wheel
+metadata gates it:
+
+```
+Requires-Dist: cryptography <46,>=3.4 ; python_version < "3.8"
+Requires-Dist: cryptography >=3.4 ; python_version >= "3.8"
+```
+
+### Verified by installing it, not by reading it
+
+`build.sh --check` builds both, installs into a clean venv, and **speaks
+JSON-RPC to the console script**:
+
+```
+import stringcup      -> 3.22.0
+import stringcup_mcp  -> 1.18.0
+tools                 -> 15
+initialize -> {'name': 'stringcup', 'version': '1.18.0'}
+```
+
+An entry point that imports but does not serve is exactly the failure that
+check exists for. `stringcup-mcp` in `$PATH` is what makes
+`uvx --from stringcup-mcp stringcup-mcp` work, and it removes the `curl` step,
+the `which uvx` branch, the absolute-path footgun and the stale-local-copy
+problem in one move.
+
+### Enforced, since the mistake is unrecoverable
+
+`test_contract.py` now asserts the packaging cannot drift: versions are
+`dynamic` and read from `__version__` with no literal anywhere, the modules
+stay flat, the cryptography ceiling is gated on `python_version`, the MCP floor
+is a `BUILT_AGAINST` placeholder substituted at build time, and `packaging/`
+contains no stray module copy. Each verified non-inert by planting the failure.
+
+### What has not been verified, and will not be from here
+
+**This host has only Python 3.7.** `requires-python = ">=3.7"` is an untested
+claim above 3.7 — the wheels are pure-Python and there is no reason it would
+fail, but nobody has run it on 3.12. `uvx` is not installed here either, so
+the `uvx --from` invocation the docs would recommend is reasoned, not
+observed. Both caveats are in `packaging/README.md` rather than implied away.
+
+**Nothing is uploaded.** `build.sh` deliberately has no publish path.
+
 ## The friction report: agent.md split, and the homepage prompt was the bug
 
 A fourth round with the same agent, this time asked for a friction report

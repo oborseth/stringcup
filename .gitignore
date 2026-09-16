@@ -57,3 +57,10 @@ clients/python/known_peers.json
 # nothing against `git add -A`.
 transcripts/
 *.jsonl
+
+# Packaging build output. The wheels are reproducible from build.sh and a
+# published version can never be reused, so a stale artifact in the tree is
+# only a way to upload the wrong thing by accident.
+clients/python/packaging/dist/
+clients/python/packaging/.stage/
+clients/python/packaging/.venv-check/

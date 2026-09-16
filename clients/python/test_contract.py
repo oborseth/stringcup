@@ -486,6 +486,72 @@ def test_agent_md_configs_are_valid_json():
               "A relative path fails silently by minting a new identity.")
 
 
+def test_packaging_cannot_drift_from_the_modules():
+    step("8c. the PyPI packaging reads its versions, never restates them")
+
+    # A PyPI VERSION CAN NEVER BE REUSED. Publishing a package whose metadata
+    # disagrees with the module is not a fixable mistake -- the number is
+    # burned and anyone who installed it may have it cached. So the packaging
+    # must derive every version rather than restate one, which is the same
+    # rule test_contract.py already enforces for the client surface.
+    pkg = os.path.join(HERE, "packaging")
+    if not os.path.isdir(pkg):
+        print("  \033[33m~\033[0m SKIP: packaging/ not present (repo-only, not "
+              "shipped beside the client)")
+        return
+
+    for name, module in (("stringcup", "stringcup"),
+                         ("stringcup-mcp", "stringcup_mcp")):
+        path = os.path.join(pkg, "pyproject.%s.toml" % name)
+        check(os.path.isfile(path), "pyproject.%s.toml exists" % name)
+        if not os.path.isfile(path):
+            continue
+
+        text = open(path, encoding="utf-8").read()
+
+        # Dynamic, so the wheel cannot claim a version the module does not.
+        check('dynamic = ["version"]' in text,
+              "%s declares its version dynamic" % name)
+        check('{attr = "%s.__version__"}' % module in text,
+              "...read from %s.__version__" % module)
+        check(not re.search(r'^version = "', text, re.M),
+              "...and never hardcodes one",
+              "A literal version here can disagree with the module, and a "
+              "published version cannot be taken back.")
+
+        # A flat module, not a package dir: the distribution story is "one
+        # file plus cryptography", and agent.md tells readers they can fetch
+        # and read that single file. Packaging is another channel for the same
+        # file, not a restructure.
+        check('py-modules = ["%s"]' % module in text,
+              "...and ships %s.py as a flat module" % module)
+
+    # THE CEILING MUST BE CONDITIONAL. requirements.txt pins cryptography<46
+    # because THIS HOST is 3.7; publishing that unchanged would cap every user
+    # on 3.8+ for a reason that does not apply to them.
+    lib = open(os.path.join(pkg, "pyproject.stringcup.toml"), encoding="utf-8").read()
+    check("python_version < '3.8'" in lib and "python_version >= '3.8'" in lib,
+          "the cryptography ceiling is gated on python_version, not absolute",
+          "An unconditional <46 caps every user of the package.")
+
+    # The server's floor is derived from BUILT_AGAINST by build.sh rather than
+    # typed a second time, so the two cannot disagree.
+    mcp_toml = open(os.path.join(pkg, "pyproject.stringcup-mcp.toml"),
+                    encoding="utf-8").read()
+    check("BUILT_AGAINST_FLOOR" in mcp_toml,
+          "the MCP package's stringcup floor is a placeholder, not a literal")
+    build_sh = open(os.path.join(pkg, "build.sh"), encoding="utf-8").read()
+    check("BUILT_AGAINST" in build_sh and "BUILT_AGAINST_FLOOR" in build_sh,
+          "...substituted from BUILT_AGAINST at build time")
+
+    # NO SECOND COPY. A duplicated module here would drift from the published
+    # file, which is the failure clients-SHA256SUMS guards for the curl path.
+    strays = [f for f in os.listdir(pkg) if f.endswith(".py")]
+    check(not strays,
+          "packaging/ holds no copy of either module",
+          "Found %s. build.sh stages the canonical files instead." % strays)
+
+
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
@@ -532,6 +598,7 @@ def main():
     test_published_checksums_are_current()
     test_agent_md_publishes_no_bypass_guidance()
     test_agent_md_configs_are_valid_json()
+    test_packaging_cannot_drift_from_the_modules()
     test_changelog_records_this_version()
 
     print("\n" + "=" * 52)

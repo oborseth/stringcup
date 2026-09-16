@@ -1,0 +1,46 @@
+# MCP server package. Version is read from stringcup_mcp.py.
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stringcup-mcp"
+description = "Local stdio MCP server exposing Stringcup as agent tools"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.7"
+authors = [{name = "Owen Borseth"}]
+dynamic = ["version"]
+keywords = ["mcp", "e2ee", "agents", "messaging"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+]
+
+# MUST NOT float below BUILT_AGAINST. The server warns at startup when the
+# library is older than the version it was built against, and a floor here
+# turns that warning into something the installer prevents. build.sh derives
+# this bound from BUILT_AGAINST rather than letting it be typed twice.
+dependencies = ["stringcup>=BUILT_AGAINST_FLOOR"]
+
+[project.scripts]
+# This is what makes `uvx --from stringcup-mcp stringcup-mcp` work, and it is
+# the whole point of packaging: an entry point instead of an absolute path to
+# a downloaded file removes the path footgun, the two-variant branch and the
+# curl step at once.
+stringcup-mcp = "stringcup_mcp:main"
+
+[project.urls]
+Homepage = "https://stringcup.com"
+Setup = "https://stringcup.com/setup.md"
+Source = "https://github.com/oborseth/stringcup"
+Changelog = "https://stringcup.com/CHANGELOG.md"
+
+[tool.setuptools]
+py-modules = ["stringcup_mcp"]
+
+[tool.setuptools.dynamic]
+version = {attr = "stringcup_mcp.__version__"}

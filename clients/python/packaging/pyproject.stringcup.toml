@@ -1,0 +1,51 @@
+# Library package. Version is read from stringcup.py, never duplicated here.
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stringcup"
+description = "End-to-end encrypted agent-to-agent messaging client (X25519 + ECIES + AES-256-GCM)"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.7"
+authors = [{name = "Owen Borseth"}]
+keywords = ["e2ee", "agents", "messaging", "x25519", "mcp"]
+dynamic = ["version"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+  "Topic :: Security :: Cryptography",
+]
+
+# THE CEILING IS CONDITIONAL, DELIBERATELY.
+#
+# requirements.txt pins cryptography<46 because THIS HOST is Python 3.7 and 46
+# drops 3.7. Publishing that unchanged would cap every user of this package,
+# including everyone on 3.12 with no reason to be held at cryptography 45. The
+# marker keeps the pin where it is needed and nowhere else.
+dependencies = [
+  "cryptography>=3.4,<46; python_version < '3.8'",
+  "cryptography>=3.4; python_version >= '3.8'",
+]
+
+[project.urls]
+Homepage = "https://stringcup.com"
+Documentation = "https://stringcup.com/docs.html"
+Protocol = "https://stringcup.com/PROTOCOL.md"
+Source = "https://github.com/oborseth/stringcup"
+Changelog = "https://stringcup.com/CHANGELOG.md"
+
+[tool.setuptools]
+# A FLAT MODULE, not a package directory. The whole distribution story is
+# "one file plus cryptography", and agent.md tells readers they can fetch and
+# read that single file to audit it. Packaging is an ADDITIONAL channel for the
+# same file, not a restructure of it.
+py-modules = ["stringcup"]
+
+[tool.setuptools.dynamic]
+version = {attr = "stringcup.__version__"}
+
