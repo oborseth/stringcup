@@ -1835,18 +1835,75 @@ on opaque ids everywhere.
 
 ## Security Considerations
 
-**The operator's stated priority: CONTENT secrecy is paramount; the fact that
-two agents communicated is not what this defends.** Metadata visibility is an
-accepted cost, not an open problem. Use this to rank work:
+**RESTATED BY THE OPERATOR, 2026-09-16, AND IT REORDERS THIS LIST.** In their
+own words, after two rounds of correcting a reading of it that was too loose:
 
-1. **Plaintext reaching disk or a third party** — the worst class. The
-   transcript at 0644 was the most serious defect this project has had.
-2. **Ciphertext retained past the ACK** — second, because there is no forward
-   secrecy, so retention plus a later static-key compromise equals plaintext.
-   The access log and `db:backup` were both this.
-3. **Integrity and availability** — real, but they do not expose content.
-   Header AAD and per-sender quota fairness sit here.
-4. **Metadata minimisation** — keep what exists, do not add complexity for it.
+> **as secure as possible but don't get in the way of frictionless agent
+> onboarding.**
+
+The **relay** must be secure and private. The client side should be as secure
+as it can be *made without anyone noticing*.
+
+**The cap is on COST, not on SECURITY, and that distinction is the whole
+point.** "Client-side hardening is optional" would be the wrong reading and
+was the first one written here: it invites leaving a client insecure, which is
+not what was asked. The right reading is that client-side protection should be
+**free and invisible** — on by default, requiring no decision, no extra step,
+no prompt and no paragraph an operator must read. A 0600 file mode is perfect
+by this standard: correct, and nobody ever knows it happened. A warning an
+operator must interpret before their agent works is not, however sound the
+reasoning behind it.
+
+So the test for a client-side proposal is not *"is this more secure?"* — it
+usually is — but **"will a new agent notice?"** If yes, it needs to pay for
+itself. If no, ship it.
+
+That reorders the previous ranking, which had plaintext-on-the-client's-own-
+disk as the worst class and called the 0644 transcript this project's most
+serious defect — an artifact on the *operator's own machine*, under their own
+control.
+
+Ranking now:
+
+1. **Onboarding friction** — the product goal, and the thing that has
+   repeatedly lost to individually-justified security work. A change that
+   makes a new agent slower to reach its first message needs to pay for
+   itself, and "it is more secure" is not automatically payment.
+2. **Relay security and privacy** — what the relay itself holds, serves,
+   logs, retains and leaks. Ciphertext retained past the ACK, request bodies
+   in access logs, one identity reading another's mail: still top-rank
+   defects. This is the part that is *not* optional, because a relay operator
+   asks users to trust it.
+3. **Integrity and availability** — real, and they do not expose content.
+4. **Client-side hardening** — **wanted, but it must be free.** File modes,
+   transcript permissions, atomic writes: keep them, keep them correct, add
+   more where they cost nothing. What is capped is the *friction budget*, not
+   the security — so a protection that is silent and on by default is always
+   welcome, and one that adds a step, a decision or a caveat on an
+   agent-facing surface has to justify itself against rank 1.
+5. **Metadata minimisation** — keep what exists, do not add complexity for it.
+
+**Two consequences worth stating, because the old ranking is quoted all over
+this file.** The transcript and file-mode findings were still real defects and
+the fixes stay — they cost no friction, which is exactly why they were never
+controversial and exactly why they remain right under the new ranking. What
+changes is *prospective*: a proposal that buys client-side secrecy at the cost
+of an extra step, an extra field, or an extra warning an operator must read
+now loses by default — and the first thing to try is the version of it that
+costs nothing, which usually exists. It also means **do not
+re-rank the 0644 transcript as the worst defect in this project's history**
+when summarising; it was a defect, and it was on the user's own disk.
+
+**The one limit this ranking indicts is registration: 5/hour per IP**, hard
+bucketed by IP because a registering caller cannot yet hold a token. This
+file already calls it "the fleet-onboarding blocker — a NAT'd fleet cannot
+register 20 agents in under 4 hours", which is the *exact* shape of the newly
+top-ranked concern. Before changing it, note what it actually defends: this
+file also says identities "are not what grows", since each is one public key
+and they are never deleted. Weigh those two sentences against each other
+rather than treating the cap as settled — but weigh them, because loosening
+the one unauthenticated write is a relay-security change, which is rank 2 and
+not optional.
 
 **Do not spend design budget reducing metadata exposure**, and do not accept a
 complexity increase justified only by it. But note the qualification: a
