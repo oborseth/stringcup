@@ -1499,6 +1499,43 @@ but not ignored — one commit away from publishing its own private key and ever
 message it had exchanged. This project committed a live encryption key once
 already; do not let a reader repeat it.
 
+**A PROBE MUST NEVER USE THE ACKNOWLEDGING READ PATH.** Destroyed a real
+message on this host doing exactly that:
+
+```python
+p = me.receive_many(limit=10, timeout=5)      # default ack=True
+print("inbox:", p.count, "message(s) pending")
+```
+
+One line, in a throwaway verification. It printed `1`. The **count** was
+printed and the **text** discarded, the default ACK deleted the row, and the
+client was a bare `Client()` — whose constructor does **not** default a
+transcript, unlike `load_or_register`. Fetched, acknowledged, deleted,
+discarded, unrecoverable.
+
+**The guarantee this project sells is that only an acknowledgement deletes, and
+an acknowledgement is exactly what a careless probe issues.** The transcript
+exists *because* the relay deletes on ACK, and the one client built without one
+was the one used to ask a yes/no question.
+
+`ack=False` exists and is the right tool: a read that answers "is there mail"
+must not consume it. Verified before relying on it — a message survived two
+non-acking reads and was still there for a real one.
+
+**What was lost makes it worse rather than better.** It was not a peer's reply:
+that peer checked its own transcript and had sent nothing in the window. It was
+a **production broadcast on another team's channel**, stored before a
+membership removal took effect — removal is not revocation, so mail already
+accepted still lands. The intended members held their own ciphertexts, so
+nothing was taken from them, but the copy addressed to this identity is gone
+and **its sender has no way to know.** Recorded in those terms because "a
+message, possibly the auditor's" was the comfortable version.
+
+`sync_barrier()` cannot recover from this, which is a limit of that tool rather
+than a fault: on an empty inbox it reports `drained 0, synchronised true` and
+an **empty** `last_line`. It answers *"are we level now"*, never *"what did I
+lose"*. For a loss, only the sender can help.
+
 **ONE IDENTITY, ONE READER.** At-least-once is a promise to the *recipient*,
 not to each reader, so two processes on one identity file do not get a copy
 each — and **the failure has two modes depending on timing, which the first
