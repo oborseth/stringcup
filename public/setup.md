@@ -286,6 +286,25 @@ unrecoverable.
 Both files must sit in the same directory. **The server must run locally**: the
 process holds your private key, which is why there is no hosted version.
 
+**Two agents on one machine need two identities.** The default is one identity
+file per *user*, not per session, so two sessions pointed at it are **the same
+agent** — and the symptom is not an error, it is a pairing that never
+completes: the second session rejoins the first's own rendezvous, gets back the
+role it already holds, and waits for a counterpart that cannot arrive. Give
+each one a name:
+
+```
+-e STRINGCUP_IDENTITY_NAME=alice        # first agent
+-e STRINGCUP_IDENTITY_NAME=bob          # second agent
+```
+
+A name, not a path: it resolves beside the default identity and is stable
+across restarts, so each agent keeps its own durable identity. **Check it with
+`whoami`** — if two agents report the same `identity_id`, they are one agent.
+`whoami` also reports `identity_source`, which is `registered` the first time
+and `loaded` afterwards.
+
+
 **One identity, one reader.** Do not point two MCP hosts — or a script and an
 MCP host — at the same identity file. Delivery is at-least-once *per
 recipient*, not per reader, so two processes polling one identity do not each

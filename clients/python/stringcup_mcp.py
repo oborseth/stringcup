@@ -31,6 +31,11 @@ that breaks when it moves:
 Environment:
 
     STRINGCUP_IDENTITY    identity file path (default ~/.stringcup/identity.json)
+    STRINGCUP_IDENTITY_NAME  a NAME, resolved beside the default identity, for
+                          running more than one agent on one machine. The
+                          default is one identity per USER, not per session, so
+                          two sessions sharing it are the same agent and cannot
+                          pair with each other
     STRINGCUP_BASE_URL    relay base URL (default https://stringcup.com/api/v2)
     STRINGCUP_TRUST_STORE pinned peer fingerprints (default alongside identity)
     STRINGCUP_TRANSCRIPT  JSONL log of every message in and out. ON BY DEFAULT:
@@ -54,6 +59,7 @@ from __future__ import annotations
 
 import json
 import binascii
+import hashlib
 import os
 import sys
 import time
@@ -84,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.18.0"
+__version__ = "1.19.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -119,7 +125,7 @@ DEFAULT_IDENTITY = os.path.expanduser("~/.stringcup/identity.json")
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 22, 0)
+BUILT_AGAINST = (3, 24, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -203,7 +209,76 @@ _TRANSCRIPT: Optional[str] = None
 
 
 def _identity_path() -> str:
-    return os.environ.get("STRINGCUP_IDENTITY") or DEFAULT_IDENTITY
+    """
+    Where this agent's identity lives.
+
+    TWO AGENTS ON ONE MACHINE MUST BE ABLE TO TALK TO EACH OTHER, and for one
+    release they could not. The default was one identity file per *user*, so
+    two sessions both loaded it, became the same identity, and the symptom was
+    not an error: the second rejoins the first's own rendezvous, is handed back
+    the role it already holds, and waits for a counterpart that cannot arrive.
+    Reported from a live two-session install where both agents printed the same
+    id and both said "identity registered".
+
+    Resolution order, and every step exists for a reason:
+
+    1. `STRINGCUP_IDENTITY` -- an explicit path always wins. **Do not put this
+       in a USER-scope MCP config**: that is precisely what makes every session
+       on the machine share one identity, and it is how the collision was
+       found. Per-project config, or nothing at all, is correct.
+    2. `STRINGCUP_IDENTITY_NAME` -- a name, not a path, resolved beside the
+       default. Short enough for a one-liner, stable across restarts.
+    3. An existing `~/.stringcup/identity.json` -- **never break an installed
+       agent.** If the legacy single-file default is already there it keeps
+       being used, because silently resolving somewhere else would mint a new
+       identity and make that agent unreachable at the id its peers hold. That
+       is the worst failure this project has, so it is not risked for tidiness.
+    4. Otherwise, per working directory: `agents/<dir>-<hash>.json`.
+
+    Step 4 is the one that makes the default safe, and it is a narrow use of
+    cwd. A cwd-*relative* file was rejected before and stays rejected -- it
+    breaks the moment you `cd`. This puts the file in the same private
+    directory as always and only uses cwd to NAME it, so an agent relaunched
+    in its own project gets its identity back while a different project gets
+    its own. The residual risk is renaming or moving a project directory, which
+    reads as a fresh identity; `whoami` reports `identity_source: registered`
+    and a new id when that happens, which is the signal an operator needs.
+
+    When cwd carries no useful scope -- `/` or the home directory itself --
+    step 4 would name every agent identically, so it falls back to the single
+    file rather than pretending to separate them.
+    """
+    explicit = os.environ.get("STRINGCUP_IDENTITY")
+    if explicit:
+        return explicit
+
+    home = os.path.dirname(DEFAULT_IDENTITY)
+    name = (os.environ.get("STRINGCUP_IDENTITY_NAME") or "").strip()
+    if name:
+        allowed = ("abcdefghijklmnopqrstuvwxyz"
+                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        safe = "".join(c if c in allowed else "-" for c in name).strip(".-")
+        # NOT "identity": a name that sanitises to nothing would land on the
+        # legacy default and silently share the identity this separates.
+        return os.path.join(home, (safe or "unnamed") + ".json")
+
+    if os.path.exists(DEFAULT_IDENTITY):
+        return DEFAULT_IDENTITY
+
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        return DEFAULT_IDENTITY
+
+    if cwd in (os.sep, os.path.realpath(os.path.expanduser("~"))):
+        return DEFAULT_IDENTITY
+
+    allowed = ("abcdefghijklmnopqrstuvwxyz"
+               "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    slug = "".join(c if c in allowed else "-"
+                   for c in os.path.basename(cwd))[:32].strip(".-") or "agent"
+    digest = hashlib.sha256(cwd.encode("utf-8")).hexdigest()[:8]
+    return os.path.join(home, "agents", "%s-%s.json" % (slug, digest))
 
 
 #: Set STRINGCUP_TRANSCRIPT to this to turn the transcript off.
@@ -374,6 +449,13 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # reading source. It is on by default now, so most holders of one will
         # not have chosen it. null means disabled.
         "transcript_file": _TRANSCRIPT,
+        # "registered" means this call created the identity; "loaded" means it
+        # was already on disk. Load-bearing for the same reason identity_file
+        # is: two sessions pointed at one file both get the same identity, and
+        # without this an agent reports "identity registered" either way, so
+        # the collision never surfaces. If two agents on one machine report the
+        # same id, they ARE one agent and cannot pair with each other.
+        "identity_source": getattr(_client, "identity_source", None),
     }
 
 

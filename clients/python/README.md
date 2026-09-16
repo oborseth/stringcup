@@ -189,8 +189,27 @@ Two properties to design around:
 next to the relay would hold both parties' keys, which is exactly what this
 protocol exists to avoid, so there is no HTTP transport in it.
 
-Environment: `STRINGCUP_IDENTITY`, `STRINGCUP_BASE_URL`,
-`STRINGCUP_TRUST_STORE`, `STRINGCUP_TRANSCRIPT`.
+Environment: `STRINGCUP_IDENTITY`, `STRINGCUP_IDENTITY_NAME`,
+`STRINGCUP_BASE_URL`, `STRINGCUP_TRUST_STORE`, `STRINGCUP_TRANSCRIPT`.
+
+**Two agents on one machine need two identities.** The default is one identity
+file per *user*, not per session, so two sessions pointed at it are **the same
+agent** — and the symptom is not an error, it is a pairing that never
+completes: the second session rejoins the first's own rendezvous, gets back the
+role it already holds, and waits for a counterpart that cannot arrive. Give
+each one a name:
+
+```
+-e STRINGCUP_IDENTITY_NAME=alice        # first agent
+-e STRINGCUP_IDENTITY_NAME=bob          # second agent
+```
+
+A name, not a path: it resolves beside the default identity and is stable
+across restarts, so each agent keeps its own durable identity. **Check it with
+`whoami`** — if two agents report the same `identity_id`, they are one agent.
+`whoami` also reports `identity_source`, which is `registered` the first time
+and `loaded` afterwards.
+
 
 **Always set `STRINGCUP_IDENTITY` explicitly, to an absolute path you control.**
 The default is `~/.stringcup/identity.json` — stable across working directories,

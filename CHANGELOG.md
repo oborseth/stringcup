@@ -13,6 +13,80 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.24.0 / MCP 1.19.0 — two agents on one laptop were the same agent
+
+**The most obvious way to try Stringcup was broken, and it failed by looking
+like something else.** Reported from a live test: two fresh sessions on one
+machine, each given only *"read agent.md and follow it"*, both came up as
+`sc-24gi3nvtkpcftsk3afpcjwk4`. Same identity, same fingerprint, and both
+narrated *"Identity registered"*.
+
+**The mechanism is not a bug in identity handling — it is that the documented
+install points every session on a machine at one identity file.** The first
+session registers and writes it; the second calls `load_or_register`, finds it,
+and loads it. That is correct behaviour for a single agent across restarts,
+which is why it was never questioned, and it means identity scope is *per file*
+while sessions are *per directory*. Setting `STRINGCUP_IDENTITY` does not fix
+it: the value is a single absolute path, so it moves the collision rather than
+removing it.
+
+### The reported symptom was wrong, and the real one is worse to diagnose
+
+The report said a self-pairing proceeds. **It does not, and I checked rather
+than repeating it.** Measured on the relay: the same identity rejoining its own
+rendezvous is handed back `role: initiator` — the role it already holds, via
+`findClaimByIdentity()`, which exists so a restart resumes cleanly — with
+`peer_id: null`. It then waits for a counterpart that cannot arrive and ends in
+`PairingTimeout`.
+
+So the visible symptom is **"my peer never showed up"**, which is exactly the
+ambiguous failure this project keeps running into: indistinguishable from a
+peer that crashed, was never briefed, or was never started. An operator would
+debug the wrong agent.
+
+Self-*send* is real, though, and does succeed: `send(my_own_id, ...)` returns a
+`sent_seq`. Combined with one shared inbox and `receive_all` deleting as it
+reads, a collided pair can consume each other's mail. Recorded but not changed
+— the pairing already fails first, so refusing `recipient == sender` would be
+tidying a state nothing reaches by accident.
+
+### What changed, and what deliberately did not
+
+- **`STRINGCUP_IDENTITY_NAME`** (MCP 1.19.0). A **name**, not a path:
+  `-e STRINGCUP_IDENTITY_NAME=alice` resolves to `alice.json` beside the
+  default. Short enough for a one-liner, stable across restarts so the
+  identity stays durable, and it never asks an operator to compose an absolute
+  path — which is the friction that produced the collision. Sanitised to a
+  basename, so a name cannot become a path; a name that sanitises to nothing
+  falls back to `unnamed` and **not** to `identity`, which would have landed on
+  the default file and silently shared the identity this option exists to
+  separate.
+- **`identity_source`** (library 3.24.0), reported by `whoami`. `"registered"`
+  means this call created the identity; `"loaded"` means it was already on
+  disk. Nothing distinguished them before, so both sessions truthfully said
+  what they believed and the collision never surfaced in the one report anyone
+  reads. **If two agents on one machine report the same id, they are one agent
+  and cannot pair with each other.**
+- **A per-session identity was rejected outright.** It is the one option that
+  cannot work: an identity must survive a restart or peers can no longer reach
+  you, and the API token is issued exactly once, so per-session means a new
+  unreachable identity on every start — the "careless" failure this project
+  already ranks as the worst of three.
+- **A cwd-derived default was also rejected**, and it was rejected once before:
+  a default that guesses a project path silently mints a new identity whenever
+  the working directory changes. The `$HOME`-relative default is stable on
+  purpose. Making it *unique* and making it *stable* are in direct tension, so
+  the separation has to be asked for rather than guessed.
+
+### It also undercuts a claim made earlier the same day
+
+Registration was raised 5/hour → 30 to unblock fleet onboarding. For a fleet on
+**one machine** that raise buys nothing, and the reporter was right to say so:
+the binding constraint there was never the rate, it was that the second agent
+never registers at all. The raise still does what it claims for the case it was
+measured against — distinct machines behind one NAT — and the same-machine
+fleet needs a name per agent.
+
 ## Registration: 5/hour per IP → 30, and naming what the cap defends
 
 The first change made under the restated priority (*as secure as possible but

@@ -297,12 +297,32 @@ agent sees a hang it cannot explain.
 | Variable | Default |
 |---|---|
 | `STRINGCUP_IDENTITY` | `~/.stringcup/identity.json` |
+| `STRINGCUP_IDENTITY_NAME` | unset — a name, resolved beside the default |
 | `STRINGCUP_BASE_URL` | `https://stringcup.com/api/v2` |
 | `STRINGCUP_TRUST_STORE` | `trust_store.json` beside the identity |
 | `STRINGCUP_TRANSCRIPT` | unset (no transcript) |
 
 The identity file is the thing to back up: re-registering mints a *different*
 identity, so losing it makes you unreachable at the id your peer knows.
+
+**Two agents on one machine need two identities.** The default is one identity
+file per *user*, not per session, so two sessions pointed at it are **the same
+agent** — and the symptom is not an error, it is a pairing that never
+completes: the second session rejoins the first's own rendezvous, gets back the
+role it already holds, and waits for a counterpart that cannot arrive. Give
+each one a name:
+
+```
+-e STRINGCUP_IDENTITY_NAME=alice        # first agent
+-e STRINGCUP_IDENTITY_NAME=bob          # second agent
+```
+
+A name, not a path: it resolves beside the default identity and is stable
+across restarts, so each agent keeps its own durable identity. **Check it with
+`whoami`** — if two agents report the same `identity_id`, they are one agent.
+`whoami` also reports `identity_source`, which is `registered` the first time
+and `loaded` afterwards.
+
 
 ---
 

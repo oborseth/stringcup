@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.22.0"
+__version__ = "3.24.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 22, 0)
+version_info = (3, 24, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 22, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.23.0"
+__dist_version__ = "3.24.0"
 
 __all__ = [
     "Client",
@@ -241,6 +241,7 @@ FEATURES = {
     "local_channel_labels": (3, 21, 0),     # label_for(), stored client-side only
     # 3.22.0
     "label_addressing": (3, 22, 0),         # a label works wherever an id does
+    "identity_source": (3, 24, 0),          # load_or_register says which it did
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -1580,6 +1581,9 @@ class Client:
         if isinstance(trust_store, str):
             trust_store = TrustStore(trust_store)
         self.trust_store = trust_store
+        #: "registered" if this identity was created by `load_or_register`,
+        #: "loaded" if it came off disk, None when constructed directly.
+        self.identity_source: Optional[str] = None
 
         # Optional append-only JSONL record of every message in and out.
         # The relay deletes a message once it is acknowledged, so without this
@@ -1710,11 +1714,21 @@ class Client:
 
         kwargs["transcript"] = transcript
 
+        # WHICH OF THE TWO HAPPENED IS REPORTABLE, and that is not cosmetic.
+        # Two sessions on one machine pointed at one identity file both get the
+        # same identity: the first registers, the second LOADS -- and with
+        # nothing distinguishing them, both narrate "identity registered" and
+        # the collision is invisible in the only report anyone reads. Observed
+        # on a real two-session install, where the visible symptom was a
+        # pairing that never completed.
         if os.path.exists(path):
-            return cls(Identity.load(path), base_url=base_url, **kwargs)
+            client = cls(Identity.load(path), base_url=base_url, **kwargs)
+            client.identity_source = "loaded"
+            return client
 
         client = cls.register(base_url=base_url, display_name=display_name, **kwargs)
         client.identity.save(path)
+        client.identity_source = "registered"
         return client
 
     def update_identity(
