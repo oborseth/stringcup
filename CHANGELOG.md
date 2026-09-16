@@ -13,6 +13,60 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.22.0 — a field whose name promised more than it computed
+
+`identity_shared_across_sessions` is now
+**`identity_rule_shares_machine_wide`**, because the old name claimed an
+instance fact and delivered a rule fact:
+
+    identity_rule_shares_machine_wide = identity_rule in SHARED_IDENTITY_RULES
+
+It answers *"does my resolution rule give every session on this machine the
+same identity?"* — not *"am I sharing right now?"* Those come apart in both
+directions, and the reporter found the direction that matters. Reproduced:
+
+    helper in the parent's cwd -> rule=per-directory  flag=False
+      ...but two helpers there resolve to the SAME file
+    two children, same name    -> rule=name           flag=False
+      ...same file
+
+**A confident false negative in exactly the orchestrator case `agent.md` had
+just been updated to warn about.** Guidance covered it; the detection
+contradicted the guidance. Same failure class as `identity_source`, where
+`loaded` cannot distinguish a restart from a collision — a field that reads as
+a statement about your situation while computing something narrower.
+
+**The field is kept, not dropped, because the two answers are genuinely
+different and both useful.** `identity_exclusive` observes the present: is
+anyone else holding this identity right now. `identity_rule_shares_machine_wide`
+predicts the future: will a session started *later* be this same agent. An
+`explicit` path is machine-wide while nobody else is running yet; a
+`per-directory` helper is sharing right now while its rule is not machine-wide.
+Neither subsumes the other, so the fix is the name, and the description now
+says "check `identity_exclusive` for the present and this for the future."
+
+The reporter also offered dropping the boolean and folding it into
+`identity_rule`. Rejected: a reader would have to know which rule names imply
+machine-wide sharing, which is exactly the kind of inference a result field
+should do for them.
+
+### Their instance-based proposal was already shipped
+
+They asked me to read their design before deciding, and it had landed an hour
+earlier as `identity_exclusive` (3.25.0) — messages crossed again. Their
+argument for observation over inference is the one that decided the flock, and
+it stands as the general rule here: **rule-based inference is still inference;
+a lock is an observation.**
+
+### And they corrected their own report to Owen
+
+They had characterised his test agent's user-scope config as an unwise choice.
+After confirming the anti-pattern is on the published PyPI page, they went back
+and corrected it — the agent did the documented thing. Their note on why that
+mattered is the part worth keeping: they had just finished arguing that
+documentation cannot be the mechanism, and then attributed a documented
+behaviour to agent judgement.
+
 ## 3.25.0 / MCP 1.21.0 — `identity_source` could not raise the suspicion it explains
 
 **The diagnostic I shipped yesterday cannot detect the thing it was added

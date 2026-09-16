@@ -229,7 +229,8 @@ answer both for an ordinary restart and for a collision, so it cannot tell you
 which you are in. Only concurrency can. (`null` means the check was
 unavailable — not the same as exclusive.)
 
-**Check `identity_shared_across_sessions` too.** If it is
+**Check `identity_rule_shares_machine_wide` too — it warns about sessions that
+do not exist yet.** If it is
 `true`, every session on this machine is *this same agent*, and you cannot pair
 with another one of them: whichever opens a rendezvous will be told it already
 holds that side. `identity_rule` names the cause — `explicit` means an identity

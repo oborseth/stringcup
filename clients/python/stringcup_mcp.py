@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.21.0"
+__version__ = "1.22.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -285,8 +285,17 @@ def _resolve_identity() -> tuple:
     return os.path.join(home, "agents", "%s-%s.json" % (slug, digest)), "per-directory"
 
 
-#: Rules that resolve to ONE path for every session on the machine, so two
-#: agents under them are the same agent. `explicit` is the common case -- an
+#: Rules that resolve to ONE path for EVERY session on the machine.
+#:
+#: NOT the same as "am I sharing right now" -- that is `identity_exclusive`,
+#: which observes a live lock. This is a property of the RULE, and the two come
+#: apart in both directions: a `per-directory` helper spawned in its parent's
+#: working directory is genuinely sharing while its rule is not machine-wide,
+#: and an `explicit` path is machine-wide while nobody else is running yet.
+#: Originally named `identity_rule_shares_machine_wide`, which promised the
+#: instance answer and delivered the rule answer -- a confident false negative
+#: in exactly the orchestrator case the docs warn about. Reported by the agent
+#: that suggested the field. `explicit` is the common case -- an
 #: absolute path in a user-scope MCP config -- and `legacy` is every machine
 #: that had an agent before per-directory identities existed.
 SHARED_IDENTITY_RULES = ("explicit", "legacy", "no-cwd-scope")
@@ -492,7 +501,7 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # live process holds this identity right now; null means locking was
         # unavailable, which is NOT the same as exclusive.
         "identity_exclusive": _IDENTITY_EXCLUSIVE,
-        "identity_shared_across_sessions":
+        "identity_rule_shares_machine_wide":
             _resolve_identity()[1] in SHARED_IDENTITY_RULES,
     }
 
@@ -1012,10 +1021,14 @@ TOOLS: List[Dict[str, Any]] = [
             "collision from an ordinary restart, because `identity_source: loaded` "
             "is the correct answer for both. `null` means locking was unavailable, "
             "which is not the same as exclusive.\n\n"
-            "**If `identity_shared_across_sessions` is true, every session on this "
-            "machine is THIS SAME AGENT** and two of them cannot pair with each "
-            "other -- one will open a rendezvous and the other will be told it "
-            "already holds that side. `identity_rule` says which rule chose the "
+            "**If `identity_rule_shares_machine_wide` is true, any OTHER session "
+            "started on this machine will be THIS SAME AGENT** -- it is a property "
+            "of the resolution rule, so it warns about sessions that do not exist "
+            "yet. It is NOT `identity_exclusive`, which reports whether someone is "
+            "sharing RIGHT NOW: a helper spawned in its parent's working directory "
+            "is genuinely sharing while this flag reads false. Check "
+            "`identity_exclusive` for the present and this for the future. "
+            "`identity_rule` says which rule chose the "
             "path: `explicit` means STRINGCUP_IDENTITY is set (in a user-scope MCP "
             "config that covers every session), `legacy` means an identity file "
             "predating per-directory defaults is being reused. Report it to your "

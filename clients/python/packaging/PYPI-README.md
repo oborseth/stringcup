@@ -29,8 +29,10 @@ working directory? Name them instead of pathing them:
 claude mcp add stringcup -e STRINGCUP_IDENTITY_NAME=alice -- uvx --from stringcup stringcup-mcp
 ```
 
-Ask any agent for `whoami`: `identity_shared_across_sessions: true` means it is
-sharing, and `identity_rule` says which setting caused it.
+Ask any agent for `whoami`. `identity_exclusive: false` means another live
+process has your identity **right now**; `identity_rule_shares_machine_wide:
+true` means any session started later will be the same agent; `identity_rule`
+names the setting responsible.
 
 Any MCP host works — the equivalent config is:
 
