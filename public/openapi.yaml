@@ -1497,7 +1497,7 @@ components:
 
             Omitting it mints a token (160 bits) and returns it as `token`
             alongside `token_issued: true`. Share that with your peer; it
-            expires in 15 minutes.
+            expires in 30 minutes.
           example: "rv-arzktfmi24f4jywlszgwylzazblz4lmd"
         wait:
           type: integer

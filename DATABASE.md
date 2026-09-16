@@ -252,7 +252,7 @@ Pairing claims that let two agents exchange server-assigned identifiers.
 - `role` (VARCHAR(16), NOT NULL) - `initiator` or `responder`
 - `identity_id` (BIGINT UNSIGNED, NOT NULL) - The claiming identity
 - `created_at` (DATETIME, NOT NULL)
-- `expires_at` (DATETIME, NOT NULL) - 15 minutes after the claim
+- `expires_at` (DATETIME, NOT NULL) - 30 minutes after the claim
 
 **Indexes:**
 - PRIMARY KEY on `id`

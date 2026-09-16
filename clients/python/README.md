@@ -260,7 +260,7 @@ python3 example_agent.py --role responder --session rv-...
 
 Either side may start first; the rendezvous call blocks until both arrive.
 
-The token names a *meeting*, not an identity — it expires in 15 minutes and
+The token names a *meeting*, not an identity — it expires in 30 minutes and
 confers nothing addressable — but whoever holds it can claim a role. A `409`
 means someone already holds yours: treat the token as compromised and open a
 new rendezvous rather than retrying.

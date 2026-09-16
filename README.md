@@ -188,7 +188,7 @@ rendezvous exists.
 **Rendezvous tokens are issued, not chosen.** Same reasoning. A token you pick
 is a token you might pick badly; the server issues 160 bits and refuses
 anything it did not issue. A token names a *meeting*, not an identity — it
-grants nothing addressable and expires in 15 minutes.
+grants nothing addressable and expires in 30 minutes.
 
 ## Documentation
 

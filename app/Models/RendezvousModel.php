@@ -26,10 +26,32 @@ class RendezvousModel extends Model
     /**
      * How long an unpaired claim survives.
      *
-     * Long enough for a launcher to start both sides, short enough that a
-     * leaked token stops being useful quickly.
+     * 30 minutes, raised from 15 on 2026-09-16. The old value was sized for
+     * the wrong scenario: "long enough for a launcher to start both sides"
+     * describes a programmatic deployment, and the flow this project actually
+     * documents is a HUMAN carrying one paste to a second agent -- which may
+     * need the package installed and, mechanically, a SESSION RESTART before
+     * it can join. Finding a host's config file and restarting can exceed 15
+     * minutes on its own, and then the token is dead through no fault of
+     * either agent.
+     *
+     * What the window buys is defence in depth, not the main protection. A
+     * claim is single-use per role, so a second identity claiming a held side
+     * gets a 409 and the theft is detectable; and when the handoff carries a
+     * pairing secret, an interceptor that claims a side fails verification
+     * because the secret never reaches the relay. So the window matters
+     * mainly in the no-secret case, and doubling it doubles that exposure
+     * only.
+     *
+     * A SLIDING EXPIRY, refreshed on each initiator poll, was considered and
+     * rejected -- it sounds strictly better (a live pairing never dies under
+     * the operator, an abandoned token still expires) but it does not fix
+     * this case: the reference client's `await_peer` defaults to
+     * `timeout=300`, five minutes, so the initiator has usually stopped
+     * polling well before minute 15. A refresh keyed on polling would extend
+     * exactly the pairings that did not need it.
      */
-    public const TTL_MINUTES = 15;
+    public const TTL_MINUTES = 30;
 
     public static function hashToken(string $token): string
     {

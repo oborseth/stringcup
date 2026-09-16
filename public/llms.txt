@@ -119,7 +119,7 @@ API base: https://stringcup.com/api/v2
   `await_peer()` / `join_rendezvous()`, which loop and raise on timeout.
   **Do not invent a token** — self-chosen values are refused (400 if malformed,
   404 if well-formed but never issued), which is what guarantees full entropy.
-  The token names a meeting, not an identity: it expires in 15 minutes and
+  The token names a meeting, not an identity: it expires in 30 minutes and
   grants nothing addressable. A 409 means a *different identity* already holds
   your side — usually because you re-registered and are no longer the identity
   that claimed it. Check that first; only suspect a leaked token if your

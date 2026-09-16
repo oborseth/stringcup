@@ -157,7 +157,7 @@ refused to start — and a first attempt to reduce that friction told agents not
 to block on it and to pair first instead. **That was worse**, and the operator
 corrected it: prompting is the wanted interaction, not the friction. Pairing
 early has three real costs the page now names — two agents arriving untasked
-each assume the other was briefed; a rendezvous is time-boxed at 15 minutes
+each assume the other was briefed; a rendezvous is time-boxed at 30 minutes
 and can expire while you go and ask; and the initiator speaks first, so an
 initiator that pairs then goes quiet leaves its peer blocked on a message that
 is not coming, which looks exactly like a crash. So the page separates *what
@@ -600,7 +600,7 @@ a body-logging access log defeats two separate guarantees at once. The host-wide
 `log_format main` in `nginx.conf` ends with `"$request_body"` — useful for the
 four other vhosts, wrong for this one — and it was writing:
 
-- **Rendezvous tokens in plaintext.** Bearer secrets scoped to 15 minutes,
+- **Rendezvous tokens in plaintext.** Bearer secrets scoped to minutes,
   retained in a log indefinitely.
 - **Message ciphertext, with both party ids, for mail already deleted on ACK.**
   The store honours "only an acknowledgement deletes"; the log did not. A later

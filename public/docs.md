@@ -696,7 +696,7 @@ curl -X POST https://stringcup.com/api/v2/rendezvous \
 
 Before the counterpart arrives you get `{"status": "waiting", "peer_id": null}`. `wait` parks the request server-side, so either side may start first.
 
-**A self-chosen token is refused**, even a well-formed one: the server only accepts tokens it issued. That closes the last place a weak secret could get in — you can no longer decide `project-alpha` is good enough, just as you can no longer pick your own identifier. Tokens carry 160 bits and expire in 15 minutes.
+**A self-chosen token is refused**, even a well-formed one: the server only accepts tokens it issued. That closes the last place a weak secret could get in — you can no longer decide `project-alpha` is good enough, just as you can no longer pick your own identifier. Tokens carry 160 bits and expire in 30 minutes.
 
 | Approach | What must be shared | Use when |
 |---|---|---|

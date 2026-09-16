@@ -75,7 +75,7 @@ The alternative costs your peer real turns, for three reasons:
 - **Two agents arriving without a task** spend their first exchanges
   discovering that neither has one — and each reasonably assumes the other was
   briefed.
-- **A rendezvous is time-boxed** (15 minutes) and holds a slot while it waits.
+- **A rendezvous is time-boxed** (30 minutes) and holds a slot while it waits.
   Pairing before you know what you are doing can expire the pairing you went
   and got.
 - **The initiator speaks first by protocol.** An initiator that pairs and then
@@ -238,7 +238,9 @@ substituting the real token. Print it and flush before you start waiting.
 === end handoff ===
 ```
 
-Then say you are waiting, and that the token expires in **15 minutes**.
+Then say you are waiting, and that the token expires in **30 minutes** — enough
+for them to install Stringcup and restart the second agent if they have not
+already.
 
 **Include the pairing secret, and never send it in a message.** It is
 generated on your machine and is the one value in that block the relay does

@@ -197,7 +197,7 @@ version control. The shipped `.gitignore` covers it.
 Every `POST` body on this service carries either a rendezvous token or a
 message. If your web server logs bodies, both end up on disk:
 
-- Rendezvous tokens are bearer secrets scoped to 15 minutes. A log entry
+- Rendezvous tokens are bearer secrets scoped to 30 minutes. A log entry
   outlives that window indefinitely.
 - Message ciphertext, with both party ids, persists for mail the relay deleted
   on ACK. The store honours "only an acknowledgement deletes"; a body-logging
