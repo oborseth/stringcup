@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 26, 0)
+BUILT_AGAINST = (3, 27, 0)
 
 
 def _version_note() -> Optional[str]:

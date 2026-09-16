@@ -141,6 +141,7 @@ EXPECTED_FEATURES = {
     "self_join_refused": (3, 24, 0),
     "identity_exclusive": (3, 25, 0),
     "handoff_expiry": (3, 26, 0),
+    "handoff_guide_url": (3, 27, 0),
 }
 
 
@@ -522,8 +523,8 @@ def test_agent_md_configs_are_valid_json():
 #: snapshots, and for the same reason: a published PyPI version can never be
 #: reused, so the discipline cannot be left to memory.
 EXPECTED_VERSIONS = {
-    "distribution": "3.28.0",
-    "library": "3.26.0",
+    "distribution": "3.29.0",
+    "library": "3.27.0",
     "mcp": "1.23.0",
 }
 

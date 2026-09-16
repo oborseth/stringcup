@@ -13,6 +13,48 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.27.0 — the responder was pointed at nothing, and that is why it "refused"
+
+The operator ran the two-pairable-agents test and reported that **the responder
+did not install the MCP server** while the initiator did. Diagnosed rather than
+guessed, and there were two causes:
+
+**The handoff block contained no URL at all.** Printed one to check:
+
+    STRINGCUP HANDOFF
+      YOUR ROLE: responder
+      TOKEN:     rv-...
+      EXPIRES:   ... UTC (relay value, not an estimate)
+      SECRET:    ps-...
+      Pass BOTH to join_rendezvous. ...
+
+That is everything a responder receives. **The initiator is handed the homepage
+prompt, which names `agent.md`; the responder is handed this, which names
+nothing.** So a responder arriving without tools has no idea where the guide
+is, cannot read what to do about it, and cannot find the install command it is
+now permitted to run. The operator watches one agent set itself up and the
+other apparently refuse, and concludes the second one is worse behaved.
+
+It was not. It had less information, by construction, and nobody had noticed
+because the initiator's path always went through a page that told it where to
+look.
+
+**And the timing made it certain.** Self-install became permitted at 22:25:24Z;
+the run predates it. So even with the URL the responder would have been
+obeying the rule that existed, correctly. Two independent causes for one
+observation, and only one of them is a defect.
+
+The block now ends with the guide's address, framed as a **reference and not an
+instruction** — this project's history records that *"read agent.md and follow
+it"* was the wrong prompt precisely because it asks an agent to fetch a page
+and do as it says. Naming where the guide is does not ask for obedience, and
+the line says so: *declining and telling your operator is a correct outcome.*
+
+Caught on the way: the first insertion landed **between an `if` body and its
+`else`**, and the module would not import. Second time today a decorator- or
+branch-level misplacement broke the library, and the second time the
+interpreter caught it rather than review.
+
 ## 3.26.0 / MCP 1.23.0 — the relay knew the deadline and the agent could not see it
 
 Two findings from a clean two-role run by the operator.

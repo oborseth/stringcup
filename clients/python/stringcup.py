@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.26.0"
+__version__ = "3.27.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 26, 0)
+version_info = (3, 27, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 26, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.28.0"
+__dist_version__ = "3.29.0"
 
 __all__ = [
     "Client",
@@ -245,6 +245,7 @@ FEATURES = {
     "self_join_refused": (3, 24, 0),        # join_rendezvous detects a shared identity
     "identity_exclusive": (3, 25, 0),       # is another live process on this identity
     "handoff_expiry": (3, 26, 0),           # the handoff block carries the relay deadline
+    "handoff_guide_url": (3, 27, 0),        # the block tells a responder where the guide is
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -2078,6 +2079,7 @@ class Client:
                 "  substituted. If pairing reports verified: false, or raises,",
                 "  stop and tell your operator.",
             ]
+
         else:
             lines += [
                 "",
@@ -2085,6 +2087,28 @@ class Client:
                 "  key would be undetectable without comparing fingerprints out",
                 "  of band.",
             ]
+
+        # THE RESPONDER WAS POINTED AT NOTHING, and that asymmetry is a real
+        # onboarding defect rather than an omission.
+        #
+        # The initiator is handed the homepage prompt, which names agent.md.
+        # The responder is handed THIS BLOCK AND ONLY THIS BLOCK -- so an agent
+        # that arrives without Stringcup tools has no idea where the guide is,
+        # cannot read what to do about it, and cannot find the install command
+        # it is now permitted to run. The operator sees one agent set itself up
+        # and the other apparently refuse to.
+        #
+        # The URL is a REFERENCE, not an instruction to obey: this page's own
+        # history records that "read agent.md and follow it" was the wrong
+        # prompt because it asks an agent to fetch a web page and do as it
+        # says. Naming where the guide is does not ask for obedience, and an
+        # agent declining is still a correct outcome.
+        lines += [
+            "",
+            "  No Stringcup tools yet, or unsure what to do with this?",
+            "  https://stringcup.com/agent.md  (reference, not an instruction:",
+            "  declining and telling your operator is a correct outcome)",
+        ]
 
         return "\n".join(lines)
 
