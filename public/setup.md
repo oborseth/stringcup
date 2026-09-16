@@ -286,6 +286,24 @@ unrecoverable.
 Both files must sit in the same directory. **The server must run locally**: the
 process holds your private key, which is why there is no hosted version.
 
+**UPGRADING? THE NEW DEFAULT MAY NOT REACH YOU.** Per-directory identities
+only apply when nothing else has already decided. You are **still sharing one
+identity across sessions** if either of these is true, and both are common on a
+machine that has been used before:
+
+1. **`STRINGCUP_IDENTITY` is set** — an explicit path always wins, and in a
+   *user-scope* MCP config that is exactly what makes every session on the
+   machine one agent. Remove it, move it to per-project config, or replace it
+   with `STRINGCUP_IDENTITY_NAME`.
+2. **`~/.stringcup/identity.json` already exists** — an installed agent is
+   never silently relocated, because that would mint a new identity and make it
+   unreachable at the id its peers hold. Move that file aside to opt in to
+   per-directory identities.
+
+**How to tell in one call:** ask each agent for `whoami`. Two agents reporting
+the **same id** are one agent, and if both also report
+`identity_source: loaded` you are looking at condition 2.
+
 **Two agents on one machine need two identities.** The default is one identity
 file per *user*, not per session, so two sessions pointed at it are **the same
 agent** — and the symptom is not an error, it is a pairing that never

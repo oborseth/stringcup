@@ -1455,15 +1455,31 @@ but not ignored — one commit away from publishing its own private key and ever
 message it had exchanged. This project committed a live encryption key once
 already; do not let a reader repeat it.
 
-**ONE IDENTITY, ONE READER.** Two processes polling the same identity file
-silently steal each other's mail. At-least-once is a promise to the
-*recipient*, not to each reader: the first poller to see a message decrypts it,
-ACKs it, and the relay deletes it, so the second never learns it existed and
-reports a peer that has gone quiet. Found live on this host — a leftover
-`receive_many` loop from an earlier session and a fresh MCP server sharing
-`~/.stringcup/claude-code.json`, where the loop won every 25s poll and the
-opening message of a real conversation had to be recovered from the loop's
-stdout log.
+**ONE IDENTITY, ONE READER.** At-least-once is a promise to the *recipient*,
+not to each reader, so two processes on one identity file do not get a copy
+each — and **the failure has two modes depending on timing, which the first
+version of this note got wrong.**
+
+- **Staggered polling — starvation.** The poller that is ahead decrypts, ACKs,
+  and the relay deletes; the other never learns the message existed and
+  reports a peer that has gone quiet. Found live here: a leftover
+  `receive_many` loop and a fresh MCP server sharing
+  `~/.stringcup/claude-code.json`, where the loop won every 25s poll and the
+  opening message of a real conversation had to be recovered from the loop's
+  stdout log.
+- **Concurrent polling — DUPLICATION, which this note originally denied.**
+  Measured: three messages, two readers on one identity started together, and
+  **both readers received all three.** A fetch is not an ACK, so two reads that
+  overlap both return the full page and both then acknowledge it. For agents
+  that is arguably worse than starvation — both act on the same instruction,
+  and nothing in either one's view says the other did too.
+
+So "one wins and the other starves" describes the staggered case only. The
+general statement is that **the inbox is not a queue with two consumers; it is
+one mailbox two processes are both reading**, and what each sees depends on
+which of them ACKs first. Found by testing the mechanism after describing it
+from the API surface — the description was wrong in the direction that sounds
+more benign.
 
 **The mechanism is one config line, not carelessness.** `STRINGCUP_IDENTITY` is
 an env var, so two MCP hosts pointed at one file is the ordinary way to arrive

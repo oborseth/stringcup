@@ -138,6 +138,7 @@ EXPECTED_FEATURES = {
     "local_channel_labels": (3, 21, 0),
     "label_addressing": (3, 22, 0),
     "identity_source": (3, 24, 0),
+    "self_join_refused": (3, 24, 0),
 }
 
 

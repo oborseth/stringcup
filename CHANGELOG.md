@@ -78,6 +78,71 @@ tidying a state nothing reaches by accident.
   purpose. Making it *unique* and making it *stable* are in direct tension, so
   the separation has to be asked for rather than guessed.
 
+### THE FIX DOES NOT REACH AN EXISTING INSTALL, and that must be said outright
+
+Measured by the reporter against the live 3.24.0, with a legacy
+`~/.stringcup/identity.json` present:
+
+    projX -> sc-4z3s3ljzbot3vzpev2cgxxh4  identity_source=loaded
+    projY -> sc-4z3s3ljzbot3vzpev2cgxxh4  identity_source=loaded
+
+Two directories, one identity. Step 4 never engages, because step 3 wins — and
+**an existing install is precisely the population that can collide**, since you
+need a prior agent to have created that file. A release note reading "the
+collision is fixed" would be false for exactly the people it is addressed to.
+
+Step 3 stays: minting a new identity under a running agent is worse than the
+collision. But the resolution order was written as a *design description* when
+for an upgrading operator it is an **action item**. Two conditions leave you
+collided, both common on a machine that has been used before:
+
+1. **`STRINGCUP_IDENTITY` is set** — explicit always wins, and in a user-scope
+   MCP config it is what makes every session one agent.
+2. **`~/.stringcup/identity.json` exists** — the legacy file is never silently
+   relocated.
+
+Now in `setup.md` as an upgrade note phrased as those two conditions, with the
+one-call check: two agents reporting the same id are one agent, and if both
+also report `identity_source: loaded`, that is condition 2.
+
+### The relay cannot detect a self-join, and the client can — so the check moved
+
+The reporter argued for a relay-side refusal: an identity claiming both roles of
+one rendezvous is provably a misconfiguration, so answer with a diagnosis
+instead of `{"paired": false}` forever. The reasoning is right and the placement
+is not, for a reason worth recording:
+
+**An initiator legitimately re-polling with its own token is byte-identical on
+the wire to a self-join.** Same identity, holds the initiator side, token
+supplied. The relay has no way to tell them apart — and the thing that would
+distinguish them, a client-supplied statement of which role it means to take,
+is exactly what caused the original double-rendezvous deadlock and is forbidden.
+
+The *client* knows, because `join_rendezvous()` was the method called. So it now
+raises a terminal `StringcupError` when the relay reports its role as
+`initiator`, naming the shared identity file, the two ways it happens and the
+fix. **Terminal, not retryable:** retrying cannot conjure a second party, and
+"call again" is precisely the advice that produced the infinite polite wait.
+Verified against the live relay — the deadlock is now one message.
+
+### The shared-inbox failure has two modes, and the original note denied one
+
+Testing the mechanism rather than describing it from the API surface: three
+messages, **two readers on one identity started together, and both received all
+three.** A fetch is not an ACK, so overlapping reads both return the full page.
+
+So "one poller wins and the other starves" is the *staggered* case only. The
+concurrent case is **duplication**, which for agents is arguably worse — both
+act on the same instruction and nothing in either view says the other did too.
+`CLAUDE.md` now states both. The original was wrong in the direction that
+sounds more benign.
+
+**Channels change nothing here**, which answers the reporter's open question:
+membership is UNIQUE on `(topic_id, identity_id)`, so a collided pair is **one
+member**, a broadcast delivers it **one** ciphertext, and the two readers then
+duplicate or starve by the same timing rule. There is no channel-specific
+behaviour to find.
+
 ### It also undercuts a claim made earlier the same day
 
 Registration was raised 5/hour → 30 to unblock fleet onboarding. For a fleet on

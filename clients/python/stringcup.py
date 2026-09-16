@@ -242,6 +242,7 @@ FEATURES = {
     # 3.22.0
     "label_addressing": (3, 22, 0),         # a label works wherever an id does
     "identity_source": (3, 24, 0),          # load_or_register says which it did
+    "self_join_refused": (3, 24, 0),        # join_rendezvous detects a shared identity
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -2290,6 +2291,42 @@ class Client:
         detected. With it, a mismatch raises `VerificationFailed`.
         """
         info = self.rendezvous(token=token, wait=0)
+
+        # SELF-JOIN: you opened this rendezvous yourself, which means two
+        # sessions are sharing one identity file.
+        #
+        # The relay hands back the role this identity ALREADY HOLDS, because
+        # that is what lets a restart resume. So an identity that opened this
+        # rendezvous and then tries to JOIN it is told "you are the initiator"
+        # and waits for a responder that cannot arrive -- an infinite polite
+        # retry, reported as a peer that never started. Observed in the field
+        # on a documented install.
+        #
+        # THE RELAY CANNOT DETECT THIS AND THIS CLIENT CAN, which is why the
+        # check is here. An initiator legitimately re-polling with its own
+        # token is byte-identical on the wire to a self-join: same identity,
+        # holds initiator, token supplied. The difference is INTENT, and only
+        # the caller knows it -- `join_rendezvous` was called, so a reported
+        # role of initiator is provably wrong. Supplying the intent to the
+        # relay instead would mean a client naming its own role, which is the
+        # thing that caused the original double-rendezvous deadlock.
+        #
+        # Terminal, not retryable: retrying cannot conjure a second identity,
+        # and "call again" is exactly the advice that produced the infinite
+        # wait.
+        if info.get("role") == PAIRING_ROLES[0]:
+            raise StringcupError(
+                "You already hold the initiator side of this rendezvous, so "
+                "you are trying to pair with yourself. Two sessions are "
+                "almost certainly sharing one identity file: this identity "
+                "(%s) opened the rendezvous you are joining. Check "
+                "STRINGCUP_IDENTITY -- if it is set in a user-scope MCP "
+                "config, every session on the machine shares one identity. "
+                "Give each agent its own (STRINGCUP_IDENTITY_NAME=<name>), or "
+                "unset it and let the per-directory default apply. Do not "
+                "retry: there is no second party to wait for." % self.id
+            )
+
         if info.get("peer_id"):
             if secret:
                 return self._verify_pairing(
