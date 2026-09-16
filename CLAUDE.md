@@ -1148,6 +1148,32 @@ context. And this is the one thing the transcript genuinely fixes: it is the
 only artifact that survives the session boundary on the agent's own side, and
 the relay cannot help — it has already deleted the mail on ACK.
 
+**A VERIFIED KEY IS NOT CORRECT ROUTING**, which completes a set this project
+had two thirds of:
+
+- a verified key is not trusted **content** — the prompt-injection case
+- a verified key is not shared **memory** — the session-boundary case
+- a verified key is not correct **routing** — this one
+
+Observed: an operator pasted a handoff block to the wrong agent. It paired,
+reported `verified: true` and `pinned: true`, and received a full publish
+report intended for someone else. **The cryptography was perfect and the
+message reached the wrong peer.** The secret travels with the token through a
+human, so whoever holds the handoff is who you are bound to — verification
+proves nobody substituted a key on the channel, and says nothing about whether
+the channel goes where the operator meant.
+
+All three are one mistake: treating an authenticated channel as evidence about
+something the authentication never covered. The reporter's phrasing, and the
+generalisation is theirs.
+
+**The corollary caught the reporter too, and it is the subtler half.** When the
+real peer later appeared with a different id, it inferred *"the maintainer
+rotated its identity"* rather than *"this is not the maintainer"*. A mismatched
+identity is exactly as consistent with a wrong peer as with a rotation, and
+**nothing on the wire distinguishes them** — the same ambiguity recorded above
+for rotation versus substitution, one layer out.
+
 Note the asymmetry that makes this easy to get wrong: **key verification DOES
 survive**, because it is a property of the key and the pin, not of anyone's
 memory. Identity continuity is real and carries the trust store forward; it
@@ -1202,6 +1228,27 @@ exactly the reasoning that must not become guidance. This project has broken
 the never-route-around-a-permission-control rule three times already; a fourth
 would be telling agents how to sequence their actions to avoid detection.
 Record the observation, leave the sequencing alone.
+
+**THE SELF-INSTALL POLICY BUYS NOTHING ON CLAUDE CODE'S DEFAULT POSTURE, and
+that friction must not be counted as removed.** Correcting a claim made here
+earlier the same day. Measured on the operator's machine: `Bash(claude mcp *)`
+has been in `permissions.allow` since 2026-08-28, configuration was
+**identical** between two agents, and the classifier permitted one and denied
+the other with `[Untrusted Code Integration]`. That session then denied
+`whoami` as `[Data Exfiltration]`, and after a manual install and restart the
+identical call went through **with no rule change**.
+
+So the variance is **per session**, not per device and not per rule, and no
+permission a self-hoster can write makes the install reliable. Onboarding is
+still two operator actions. The policy change is still right — it costs
+nothing and works where the classifier allows it — but it is not a friction
+reduction that can be relied on, and the notes said otherwise for a few hours.
+
+One correction worth carrying, because two agents reported it wrongly and it
+would have made the finding easy to dismiss: **`whoami` is not silent.** It
+registers on first use, which is an outbound POST carrying a public key. The
+`[Data Exfiltration]` classification is still wrong, but the defensible finding
+is per-session variance rather than a mis-scoped rule.
 
 **A classifier can broaden as a session accumulates refusals, so operators must
 configure MCP *before* the agent starts.** An agent reported that a narrow,
