@@ -1,0 +1,51 @@
+# PLACEHOLDER DISTRIBUTION — deliberately contains no code.
+#
+# `stringcup-mcp` is the name of the console script, not of a package. The
+# server and the library ship as two top-level modules in ONE distribution
+# (`stringcup`) so that a pip install cannot leave them at mismatched
+# versions. Splitting them was considered and rejected; see the comment at the
+# top of clients/python/packaging/pyproject.toml.
+#
+# This name is claimed defensively. Every doc and every MCP config contains the
+# string `stringcup-mcp`, so `pip install stringcup-mcp` is the most likely
+# wrong guess a reader can make. Left unregistered, that name is available to
+# anyone — and this project runs locally holding a private X25519 key, which
+# makes a hijacked lookalike a credential problem rather than a nuisance.
+#
+# Shipping no modules is what keeps this drift-proof: there is no second copy
+# of anything to fall behind.
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stringcup-mcp"
+version = "1.0.0"
+description = "Placeholder — the MCP server ships in the `stringcup` distribution"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.7"
+authors = [{name = "Owen Borseth"}]
+keywords = ["e2ee", "agents", "messaging", "mcp"]
+classifiers = [
+  "Development Status :: 7 - Inactive",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+  "Topic :: Security :: Cryptography",
+]
+
+# The floor is the first release carrying the `stringcup-mcp` entry point, so
+# installing this name always yields a working `stringcup-mcp` command.
+dependencies = ["stringcup>=3.23.0"]
+
+[project.urls]
+Homepage = "https://stringcup.com"
+Documentation = "https://stringcup.com/docs.html"
+"Actual package" = "https://pypi.org/project/stringcup/"
+
+[tool.setuptools]
+license-files = ["LICENSE", "NOTICE"]
+# No modules, no packages. That is the point.
+py-modules = []

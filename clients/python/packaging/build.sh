@@ -39,6 +39,28 @@ if d < tuple(int(x) for x in "$LIB_VER".split(".")):
     sys.exit("distribution %s is BEHIND the library %s" % ("$DIST_VER", "$LIB_VER"))
 PYGUARD
 
+# IS THIS VERSION ALREADY SPENT? A PyPI version can never be reused, so the
+# expensive mistake is building and uploading a number that is already taken.
+#
+# THIS WARNS, IT DOES NOT FAIL -- deliberately. Rebuilding an ALREADY-PUBLISHED
+# version is the way you prove the tagged tree still reproduces the artifact,
+# which is this project's provenance property. A guard that refused would block
+# the one check that makes the tag trustworthy.
+"$PY" - "$DIST_VER" <<'PYSPENT' || true
+import json, sys, urllib.request
+try:
+    with urllib.request.urlopen(
+            "https://pypi.org/pypi/stringcup/json", timeout=10) as r:
+        released = set(json.load(r)["releases"])
+except Exception:
+    sys.exit(0)          # offline builds must still work
+if sys.argv[1] in released:
+    print("  NOTE: %s is ALREADY ON PyPI and cannot be uploaded again."
+          % sys.argv[1])
+    print("        Fine if you are verifying reproducibility; bump "
+          "__dist_version__ if you meant to release.")
+PYSPENT
+
 rm -rf "$OUT" "$HERE/.stage"
 mkdir -p "$OUT" "$HERE/.stage"
 cp "$SRC/stringcup.py" "$SRC/stringcup_mcp.py" "$HERE/PYPI-README.md" "$HERE/.stage/"

@@ -13,6 +13,66 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## `stringcup-mcp` 1.0.0 — a name claimed so the obvious wrong guess works
+
+Published 2026-09-16T16:30:17Z by the agent holding the upload credentials, as
+a **placeholder with no code in it**. Source now committed under
+`clients/python/packaging-mcp-stub/`, which it was not when it went out.
+
+**Why the name mattered more than it looked.** `stringcup-mcp` is the name of
+the *console script*, so it appears in every doc and every MCP config on the
+site. `pip install stringcup-mcp` is therefore the most likely wrong guess a
+reader can make, and the name was unregistered. For software that runs locally
+holding a private X25519 key, a lookalike serving arbitrary code under that
+name is a credential problem, not a nuisance.
+
+Three properties, all verified against the **published** artifact rather than
+a local build:
+
+- **No modules.** No `.py` anywhere in the wheel and `top_level.txt` is empty.
+  That is what keeps it drift-proof — there is no second copy of anything to
+  fall behind, so it is not the split distribution `packaging/pyproject.toml`
+  argues against.
+- **A floor, not a pin** (`stringcup>=3.23.0`). Every future release satisfies
+  it, so **the stub never needs republishing**. A pin would have turned a
+  one-time defensive claim into a standing release obligation, and a forgotten
+  one would hold installers at 3.23.0 forever.
+- **It works end to end.** `pip install stringcup-mcp` in a clean venv pulls
+  `stringcup 3.23.0` and puts a `stringcup-mcp` on `PATH` that answers a real
+  JSON-RPC `initialize`.
+
+The committed source reproduces it: rebuilt here and diffed against a fresh
+`pip download`, every metadata value matches, with only the setuptools
+49.1.3-vs-84.0.0 rendering difference already recorded in `PUBLISH.md`.
+
+### The invariant is TAG == artifact, not main == artifact
+
+The fix that put `uvx --from stringcup stringcup-mcp` into the docs also
+touched `stringcup_mcp.py`'s header docstring, so `main` now differs from the
+published 3.23.0 wheel. The publishing agent asked the right question: is that
+the unbumped-2.3.0 incident again, in prose instead of `__all__`, and should
+`test_contract.py` enforce a bump whenever shipped content changes?
+
+**No.** `main` running ahead of the last release is what `main` is for, and
+requiring `main == artifact` buys a version number for every typo — the churn
+this project has now twice decided against. The trustworthy property is that
+**the tag reproduces the artifact**, which it does: `dist-v3.23.0` → `22d424a`,
+both modules byte-identical to a fresh `pip download`.
+
+The analogy breaks in the place that matters. 2.3.0 changed a **contract** that
+`require_version()` promised and a caller could depend on programmatically. A
+docstring is not that, which is why `test_contract.py` should not police it —
+and it is a deliberately **no-network** suite, so it cannot see what PyPI
+serves anyway.
+
+What does get a guard is the *unrecoverable* mistake: `build.sh` now asks the
+index whether the distribution version is already published and **warns**.
+**It must never fail on this** — rebuilding an already-published version is
+precisely how you prove a tagged tree still reproduces its artifact, so a guard
+that refused would block the check that makes the tag worth trusting. Found by
+noticing the strict version would have broken the verification run done an hour
+earlier.
+
 ## 3.23.0 — the first upload went out with three errors on the one immutable surface
 
 `stringcup` 3.22.0 was uploaded to PyPI at 2026-09-16 04:51:49Z. Three claims on

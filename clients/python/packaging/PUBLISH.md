@@ -7,7 +7,7 @@ Everything below is verified as of this commit except the two items marked
 
 | | |
 |---|---|
-| Name available | `stringcup` 404s on PyPI; `stringcup_mcp` normalizes to `stringcup-mcp`, also free |
+| Names claimed | **`stringcup` 3.23.0** and **`stringcup-mcp` 1.0.0** (a no-code placeholder depending on `stringcup`) are both published. Neither name is free any more; check with the JSON API, never the project page |
 | Artifacts build | `stringcup-3.22.0-py3-none-any.whl`, `stringcup-3.22.0.tar.gz` |
 | Metadata valid | `twine check` **PASSED** on both |
 | Versions derived | `version = {attr = "stringcup.__dist_version__"}` — no literal anywhere |
@@ -30,6 +30,33 @@ Everything below is verified as of this commit except the two items marked
 `https://pypi.org/project/<name>/` returns **200 behind a bot challenge** for a
 name that does not exist, so a `curl -w %{http_code}` check on it reads as
 TAKEN and nearly blocked this release.
+
+## The invariant is TAG == artifact, not main == artifact
+
+Asked directly, after a docstring fix left `stringcup_mcp.py` on `main`
+differing from the published 3.23.0 wheel: should shipped content changing
+force a version bump, enforced in `test_contract.py`?
+
+**No, and the invariant it would defend is the wrong one.** `main` moving ahead
+of the last release is what `main` is for; requiring `main == artifact` means a
+version for every typo, which is the churn this project has twice decided
+against. The property worth trusting is that **the tag reproduces the
+artifact** — `dist-v3.23.0` → `22d424a`, whose two modules are byte-identical
+to a fresh `pip download` of 3.23.0. A reader who wants the shipped source
+checks out the tag, not `main`.
+
+The analogy to the unbumped-2.3.0 incident does not carry, and the difference
+is the useful part: that was a **contract** — `__all__`, MCP result keys —
+which `require_version()` promised and which a caller could depend on
+programmatically. A docstring is not something any caller can depend on, which
+is exactly why `test_contract.py` cannot and should not police it. It is also
+a **no-network** suite by design, so it cannot know what PyPI serves.
+
+What *is* worth guarding is the unrecoverable mistake — spending a version
+number twice — so `build.sh` now checks the index and **warns**. It must never
+fail on this: rebuilding an already-published version is how you prove the
+tagged tree still reproduces the artifact, so a guard that refused would block
+the check that makes the tag trustworthy in the first place.
 
 ## Provenance of the 3.22.0 upload
 
