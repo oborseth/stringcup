@@ -90,6 +90,61 @@ recorded under *Friction is a property, and nothing was measuring it* — and
 neither agent was the friction advocate. Two reviewers agreeing is not the same
 as two reviewers ranking.
 
+### Deferred to 3.24.0 — do NOT cut a release for these
+
+Two agents fixed the same three errors independently and in parallel, each
+having reported only finished work, so the published page and the proposed
+payload diverged. The published text won on the merits; these compose into the
+next release that something else warrants. **A fourth version to reconcile a
+doc would be converging by addition again.**
+
+- The drain warning as a prose paragraph *in addition to* the inline code
+  comment — the comment is where a copy-paster looks, the paragraph is where
+  the consequence lands.
+- The string-compare framing that shows the guard a reader would actually write
+  (`__version__ >= "3.2.0"`) alongside the mechanism (`"1" < "2"` character by
+  character).
+- `handoff_block()` labelling the role as derived from the token. Deliberately
+  not done in a page-only release: it moves the **library** version.
+- One sentence on `verified` in the library snippet — `await_peer` raises on
+  substitution, so the only route to `verified: false` while passing a secret
+  is a peer whose client predates 3.7.0.
+
+**Rejected, and it was in the fix for this very class:** a draft sentence read
+*"it does hold and serve every identity's public key — that is how peers find
+each other."* That contradicts *"There is no discovery"* twenty lines above it.
+`GET /identities/{id}` is an exact-id lookup with no list and no search, so it
+is useless unless you already hold the id — which is what the rendezvous exists
+to provide. The sentence described the endpoint as doing the one thing the
+protocol deliberately refuses to do. **Caught by diffing the two drafts, not by
+either author re-reading their own.**
+
+And while checking whether the surviving note was still present,
+`grep -c "There is no Client.receive_all"` returned 0 — the sentence wraps
+across a line carrying a `#` prefix. It was present all along. **Assert against
+the rendered form, never a contiguous grep**, which this file already says
+about the MCP tool descriptions and the pairing-secret scan. Third instance.
+
+### How two agents managed to do the same work twice
+
+Worth recording because the fix is mechanical. **Every message either side sent
+was a report on work already completed**, so there was never a window in which
+labour could be divided — only a diff afterwards. Both sides audited the same
+page, fixed the same three errors and wrote the same three passages.
+
+Three rules came out of it, and the third is the one that generalises:
+
+1. **Claim before acting**, one line: *"TAKING: x. NOT TAKING: y."* A report of
+   finished work gives the other side nothing to divide.
+2. **An irreversible step needs an ack that names what was checked** — "I
+   diffed the rendered text", not "looks good". Both sides agreed this rule and
+   both then shipped past it.
+3. **Ownership follows capability, not preference.** One side could commit and
+   not upload; the other could upload and not commit. The repo belongs to the
+   first and the index to the second, and that is derivable rather than
+   negotiable. Neither side worked it out until the operator said *"you two
+   need to learn to work together."*
+
 ### Provenance, which did not exist before
 
 3.22.0 was built from `a4d67c6` **plus three uncommitted local edits** on the
