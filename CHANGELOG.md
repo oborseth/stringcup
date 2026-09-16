@@ -13,6 +13,70 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Packaging: ONE distribution, and the reason reverses an earlier decision
+
+Superseded the two-package split from earlier today. The operator asked whether
+both modules could stay as two top-level modules in one distribution. They can,
+and it is **better**, for a reason I had weighed too lightly.
+
+**Every drift-detection surface in the MCP server exists because the two files
+can be upgraded separately.** `whoami` returns `library_version`,
+`mcp_version`, `versions_note` and `tool_list_check`; the server warns at
+startup against `BUILT_AGAINST`; this project's notes record the cause as *"a
+partial upgrade is one forgotten line"*, reported by an agent that could not
+diagnose it. **Shipping both in one distribution makes that drift structurally
+impossible for anyone installing with pip** — `build.sh --check` asserts
+`_version_note()` is `None` on the installed artifact, and it cannot be
+anything else.
+
+That is worth more than one version number per file, which was the whole of the
+argument for splitting. It also means one name to claim, one upload, no publish
+ordering, and no window where the server installs and the library does not
+resolve. The `curl` path still has two files and still needs every warning.
+
+**A third version number, and it is not redundant.**
+`stringcup.__dist_version__` is neither module's. A distribution carries one
+version: track the library and an MCP-only change never bumps it; track the
+server and the reverse. So it is its own number, must increase whenever either
+module's does, and `test_contract.py` snapshots all three so bumping a module
+forces a decision about it. **Deliberately not in `__all__`** — build metadata,
+not client API — and the contract test rejected the first attempt at exporting
+it, which is the discipline working on its author.
+
+### Two compliance defects in the first artifacts
+
+Found by listing what the wheel actually contained rather than trusting the
+metadata:
+
+- **No `LICENSE`.** Apache-2.0 §4 requires shipping the licence text with a
+  distribution. `license = {text = "Apache-2.0"}` *labels* the wheel; it does
+  not include the licence.
+- **No `NOTICE`.** §4(d) requires propagating one that the work carries — and
+  this project's NOTICE is the file stating that the wire protocol may be
+  reimplemented freely under the patent grant, which is the reason Apache-2.0
+  was chosen over MIT. A wheel that drops it strips the grant's own notice.
+
+Both now ship in the wheel and the sdist.
+
+### Docs are prepared but NOT live, deliberately
+
+`packaging/apply-published-docs.py` holds every doc edit the PyPI path needs —
+`setup.md`'s PASTE 1 becoming one `claude mcp add` command, package-first
+install in both READMEs, `docs.md`, `llms.txt`, and a `pypi` link in the
+self-describing index.
+
+**It is a script and not a commit because the relay serves from the working
+tree.** Writing `pip install stringcup` before the package exists would publish
+an instruction that 404s to every reader — the same failure as citing a test
+file that is not served. So it **verifies PyPI reports a version matching
+`__dist_version__` before touching a file**, is idempotent, and aborts if any
+anchor has drifted rather than corrupting a page with a blind replace. Verified:
+it refuses to run today (exit 1), and `--dry-run` resolves all six anchors.
+
+`packaging/PUBLISH.md` is the checklist, including the two things that
+**cannot** be verified from this host and say so: Python 3.8+ (this box has only
+3.7) and the `uvx --from` invocation (`uv` is not installed).
+
 ## Packaging, built and tested but NOT published
 
 The operator has a PyPI account and said to get it right before publishing.

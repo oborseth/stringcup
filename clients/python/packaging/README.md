@@ -1,37 +1,60 @@
 # Packaging
 
-**Two packages, not one, and the reason is the versioning.**
+**One distribution, two top-level modules.** `pip install stringcup` gives you
+`stringcup.py`, `stringcup_mcp.py` and a `stringcup-mcp` console script.
 
-`stringcup.py` and `stringcup_mcp.py` version *independently* — 3.22.0 and
-1.18.0 as of writing — and `BUILT_AGAINST` ties a server build to a library
-version. A single PyPI package can carry only one version number, so:
+## Why one and not two
 
-- If the package version tracked the **library**, an MCP-only change would not
-  bump it and `pip install -U` would never fetch the new server. That defeats
-  the point of packaging.
-- If it were a **third** number, there would be three versions to keep in step
-  instead of two, and this project's `test_contract.py` exists precisely
-  because that discipline has already failed once.
+The first attempt split them, reasoning that two files with independent
+versions want two packages. That was wrong, and the argument against it is
+stronger than the argument for it:
 
-So: `stringcup` carries the library version, `stringcup-mcp` carries the server
-version and depends on `stringcup`. That maps one-to-one onto the two files and
-keeps `require_version()` and `BUILT_AGAINST` meaning exactly what they mean
-today.
+**Every drift-detection surface in the MCP server exists because the two files
+can be upgraded separately.** `whoami` returns `library_version`,
+`mcp_version`, `versions_note` and `tool_list_check`; the server warns at
+startup against `BUILT_AGAINST`; `CLAUDE.md` records the reason as *"a partial
+upgrade is one forgotten line."* An agent reported that exact failure and could
+not diagnose it.
+
+**Shipping both in one distribution makes that drift structurally impossible
+for anyone installing with pip.** `build.sh --check` asserts it on the built
+artifact: `_version_note()` returns `None`, and it cannot return anything else.
+That is worth more than one version number per file.
+
+It also means one name to claim, one upload, no publish ordering, and no window
+where the server installs and the library does not resolve.
+
+The `curl` path still has two files and still needs every one of those
+warnings. Nothing about it changes.
+
+## The third version number is not redundant
+
+`stringcup.__dist_version__` is neither module's version, and a distribution
+carries exactly one. If it tracked the library, an MCP-only change would not
+bump it and `pip install -U` would never fetch the new server; if it tracked
+the server, the reverse. So it is its own number, it must increase whenever
+either module's does, and `test_contract.py` snapshots all three so bumping a
+module forces a decision about it.
+
+It is **deliberately not in `__all__`** — build metadata, not client API.
+`pyproject.toml` reads it via `[tool.setuptools.dynamic] attr`, which needs no
+export. The contract test rejected the first attempt at exporting it, which is
+the discipline working.
 
 ## The single source of truth stays `clients/python/*.py`
 
-There is **no second copy** of either module in this directory. `build.sh`
-stages the canonical files into a temporary tree and builds from there, so a
-packaged release cannot drift from the published file — which is the same
-failure `clients-SHA256SUMS` guards against for the `curl` path.
+There is **no copy** of either module in this directory. `build.sh` stages the
+canonical files into a temporary tree and builds from there, so a packaged
+release cannot drift from the published file — the same property
+`clients-SHA256SUMS` gives the `curl` path.
 
 ## The dependency pin is conditional, and that matters
 
 `requirements.txt` pins `cryptography>=3.4,<46` because **this host runs Python
 3.7** (the newest Amazon Linux 2 offers) and 46 drops 3.7. **Publishing that
 ceiling unchanged would cap every user of the package**, including everyone on
-3.12 who has no reason to be held at cryptography 45. The packages therefore
-use an environment marker: the ceiling applies only below 3.8.
+3.12 who has no reason to be held at cryptography 45. An environment marker
+keeps the pin where it applies and nowhere else.
 
 ## Publishing does not undo
 

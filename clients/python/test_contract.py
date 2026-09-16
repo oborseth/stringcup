@@ -486,70 +486,89 @@ def test_agent_md_configs_are_valid_json():
               "A relative path fails silently by minting a new identity.")
 
 
-def test_packaging_cannot_drift_from_the_modules():
-    step("8c. the PyPI packaging reads its versions, never restates them")
+#: The three version numbers, snapshotted together.
+#:
+#: Bumping either module fails this, which forces a decision about the
+#: distribution version -- the same mechanism as the `__all__` and `FEATURES`
+#: snapshots, and for the same reason: a published PyPI version can never be
+#: reused, so the discipline cannot be left to memory.
+EXPECTED_VERSIONS = {
+    "distribution": "3.22.0",
+    "library": "3.22.0",
+    "mcp": "1.18.0",
+}
 
-    # A PyPI VERSION CAN NEVER BE REUSED. Publishing a package whose metadata
-    # disagrees with the module is not a fixable mistake -- the number is
-    # burned and anyone who installed it may have it cached. So the packaging
-    # must derive every version rather than restate one, which is the same
-    # rule test_contract.py already enforces for the client surface.
+
+def test_packaging_cannot_drift_from_the_modules():
+    step("8c. one distribution, two modules, three versions kept in step")
+
+    import stringcup_mcp as _mcp
+
+    check(stringcup.__dist_version__ == EXPECTED_VERSIONS["distribution"],
+          "distribution version matches the snapshot (%s)" % stringcup.__dist_version__,
+          "Bumping a module means deciding whether the distribution version "
+          "moves. It must, or `pip install -U` cannot fetch the new file.")
+    check(stringcup.__version__ == EXPECTED_VERSIONS["library"],
+          "library version matches the snapshot (%s)" % stringcup.__version__)
+    check(_mcp.__version__ == EXPECTED_VERSIONS["mcp"],
+          "mcp version matches the snapshot (%s)" % _mcp.__version__)
+
+    # A distribution behind the library publishes a version nobody can fetch
+    # the new code with.
+    dist = tuple(int(x) for x in stringcup.__dist_version__.split("."))
+    check(dist >= stringcup.version_info,
+          "the distribution version is not behind the library",
+          "distribution %s < library %s" % (dist, stringcup.version_info))
+
     pkg = os.path.join(HERE, "packaging")
     if not os.path.isdir(pkg):
         print("  \033[33m~\033[0m SKIP: packaging/ not present (repo-only, not "
               "shipped beside the client)")
         return
 
-    for name, module in (("stringcup", "stringcup"),
-                         ("stringcup-mcp", "stringcup_mcp")):
-        path = os.path.join(pkg, "pyproject.%s.toml" % name)
-        check(os.path.isfile(path), "pyproject.%s.toml exists" % name)
-        if not os.path.isfile(path):
-            continue
+    path = os.path.join(pkg, "pyproject.toml")
+    check(os.path.isfile(path), "packaging/pyproject.toml exists")
+    if not os.path.isfile(path):
+        return
 
-        text = open(path, encoding="utf-8").read()
+    text = open(path, encoding="utf-8").read()
 
-        # Dynamic, so the wheel cannot claim a version the module does not.
-        check('dynamic = ["version"]' in text,
-              "%s declares its version dynamic" % name)
-        check('{attr = "%s.__version__"}' % module in text,
-              "...read from %s.__version__" % module)
-        check(not re.search(r'^version = "', text, re.M),
-              "...and never hardcodes one",
-              "A literal version here can disagree with the module, and a "
-              "published version cannot be taken back.")
+    # ONE distribution carrying BOTH modules is the point: every drift-warning
+    # surface in the server exists because a hand install can upgrade one file
+    # and forget the other, and shipping them together makes that impossible
+    # for pip users. Two distributions would reintroduce exactly that gap.
+    check('py-modules = ["stringcup", "stringcup_mcp"]' in text,
+          "the distribution ships BOTH modules, so they cannot drift",
+          "Splitting them reintroduces the partial-upgrade failure that "
+          "whoami's versions_note exists to report.")
+    check('name = "stringcup"' in text, "...under one name")
+    check('stringcup-mcp = "stringcup_mcp:main"' in text,
+          "...with a console script, which is what removes the path footgun")
 
-        # A flat module, not a package dir: the distribution story is "one
-        # file plus cryptography", and agent.md tells readers they can fetch
-        # and read that single file. Packaging is another channel for the same
-        # file, not a restructure.
-        check('py-modules = ["%s"]' % module in text,
-              "...and ships %s.py as a flat module" % module)
+    check('dynamic = ["version"]' in text, "the version is declared dynamic")
+    check('{attr = "stringcup.__dist_version__"}' in text,
+          "...read from __dist_version__, not either module's __version__")
+    check(not re.search(r'^version = "', text, re.M),
+          "...and never hardcoded",
+          "A literal here can disagree with the module, and a published "
+          "version cannot be taken back.")
 
-    # THE CEILING MUST BE CONDITIONAL. requirements.txt pins cryptography<46
-    # because THIS HOST is 3.7; publishing that unchanged would cap every user
-    # on 3.8+ for a reason that does not apply to them.
-    lib = open(os.path.join(pkg, "pyproject.stringcup.toml"), encoding="utf-8").read()
-    check("python_version < '3.8'" in lib and "python_version >= '3.8'" in lib,
+    # The ceiling that is right for this host is wrong for everyone on 3.8+.
+    check("python_version < '3.8'" in text and "python_version >= '3.8'" in text,
           "the cryptography ceiling is gated on python_version, not absolute",
           "An unconditional <46 caps every user of the package.")
 
-    # The server's floor is derived from BUILT_AGAINST by build.sh rather than
-    # typed a second time, so the two cannot disagree.
-    mcp_toml = open(os.path.join(pkg, "pyproject.stringcup-mcp.toml"),
-                    encoding="utf-8").read()
-    check("BUILT_AGAINST_FLOOR" in mcp_toml,
-          "the MCP package's stringcup floor is a placeholder, not a literal")
-    build_sh = open(os.path.join(pkg, "build.sh"), encoding="utf-8").read()
-    check("BUILT_AGAINST" in build_sh and "BUILT_AGAINST_FLOOR" in build_sh,
-          "...substituted from BUILT_AGAINST at build time")
-
     # NO SECOND COPY. A duplicated module here would drift from the published
-    # file, which is the failure clients-SHA256SUMS guards for the curl path.
-    strays = [f for f in os.listdir(pkg) if f.endswith(".py")]
+    # file -- the failure clients-SHA256SUMS guards for the curl path.
+    # NARROWLY the two module names. The first version flagged any .py here and
+    # tripped on apply-published-docs.py, which is a tool rather than a copy --
+    # a check that fires on legitimate files is one people switch off.
+    strays = [f for f in os.listdir(pkg)
+              if f in ("stringcup.py", "stringcup_mcp.py")]
     check(not strays,
           "packaging/ holds no copy of either module",
-          "Found %s. build.sh stages the canonical files instead." % strays)
+          "Found %s. build.sh stages the canonical files instead, so a release "
+          "cannot drift from the published file." % strays)
 
 
 def test_changelog_records_this_version():

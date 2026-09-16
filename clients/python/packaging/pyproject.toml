@@ -1,0 +1,88 @@
+# ONE distribution, TWO top-level modules.
+#
+# The library and the MCP server are separate files with separate versions, and
+# every drift-detection surface in the server -- whoami's library_version,
+# mcp_version, versions_note and tool_list_check -- exists because a hand
+# install can upgrade one and forget the other. "A partial upgrade is one
+# forgotten line."
+#
+# Shipping both in one distribution makes that drift STRUCTURALLY IMPOSSIBLE
+# for anyone installing with pip. That is worth more than one version per
+# package, and it was the argument for splitting them into two distributions
+# that this replaces. The curl path still has two files and still needs the
+# warnings.
+#
+# It also means one name to claim, one upload, no publish ordering, and no
+# resolvable-dependency window where the server installs and the library does
+# not.
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stringcup"
+description = "End-to-end encrypted agent-to-agent messaging: client library plus a local MCP server"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.7"
+authors = [{name = "Owen Borseth"}]
+dynamic = ["version"]
+keywords = ["e2ee", "agents", "messaging", "x25519", "mcp"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+  "Topic :: Security :: Cryptography",
+]
+
+# THE CEILING IS CONDITIONAL, DELIBERATELY.
+#
+# requirements.txt pins cryptography<46 because THIS HOST is Python 3.7 and 46
+# drops 3.7. Publishing that unchanged would cap every user of this package,
+# including everyone on 3.12 with no reason to be held at cryptography 45.
+dependencies = [
+  "cryptography>=3.4,<46; python_version < '3.8'",
+  "cryptography>=3.4; python_version >= '3.8'",
+]
+
+[project.scripts]
+# What makes `uvx --from stringcup stringcup-mcp` work: an entry point instead
+# of an absolute path to a downloaded file, which removes the curl step, the
+# `which uvx` branch and the path footgun at once.
+stringcup-mcp = "stringcup_mcp:main"
+
+[project.urls]
+Homepage = "https://stringcup.com"
+Setup = "https://stringcup.com/setup.md"
+Documentation = "https://stringcup.com/docs.html"
+Protocol = "https://stringcup.com/PROTOCOL.md"
+Source = "https://github.com/oborseth/stringcup"
+Changelog = "https://stringcup.com/CHANGELOG.md"
+
+[tool.setuptools]
+# APACHE-2.0 SECTION 4 REQUIRES SHIPPING THE LICENSE TEXT with any
+# distribution. Declaring `license = {text = "Apache-2.0"}` in the metadata is
+# not that -- it labels the wheel, it does not include the licence. The first
+# build shipped neither artifact with a LICENSE file, which is a compliance
+# defect and not a cosmetic one. build.sh stages LICENSE from the repo root
+# alongside the modules.
+# NOTICE too: Apache-2.0 section 4(d) requires propagating a NOTICE file that
+# the work carries, and this one records the copyright, points at
+# THIRD-PARTY-NOTICES.md, and states that the wire protocol may be
+# reimplemented freely under the patent grant -- which is the point of choosing
+# Apache-2.0 over MIT for a protocol meant to be reimplemented. A wheel that
+# drops it strips the grant's own notice.
+license-files = ["LICENSE", "NOTICE"]
+
+# FLAT MODULES, not a package directory. The distribution story is "one file
+# plus cryptography", and agent.md tells readers they can fetch and read that
+# single file to audit it. Packaging is another channel for the same files, not
+# a restructure of them.
+py-modules = ["stringcup", "stringcup_mcp"]
+
+[tool.setuptools.dynamic]
+# The DISTRIBUTION version, which is neither module's. See the comment on
+# __dist_version__ in stringcup.py for why a third number is not redundant.
+version = {attr = "stringcup.__dist_version__"}

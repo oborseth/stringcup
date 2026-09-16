@@ -80,6 +80,37 @@ __version__ = "3.22.0"
 #: Numeric form, for comparisons. Compare this, never `__version__`.
 version_info = (3, 22, 0)
 
+#: Version of the PyPI DISTRIBUTION, which ships this module and
+#: `stringcup_mcp.py` together. **This is a third number and it is not
+#: redundant.**
+#:
+#: `__version__` above describes this module's surface and
+#: `stringcup_mcp.__version__` describes the server's; both are consumed by
+#: `require_version()` and `BUILT_AGAINST` and neither may be repurposed. But a
+#: distribution carries exactly one version, and if it tracked either module
+#: then a change to the *other* would not bump it and `pip install -U` would
+#: never fetch the new file.
+#:
+#: **Why one distribution rather than two**, which is the decision this number
+#: exists to serve: the library and the server are two files, and everything in
+#: `whoami` — `library_version`, `mcp_version`, `versions_note`,
+#: `tool_list_check` — exists because they can DRIFT. "A partial upgrade is one
+#: forgotten line." Shipping them in one distribution makes that drift
+#: **structurally impossible** for anyone installing with pip, which is worth
+#: more than the tidiness of one version per file. The `curl` path still has
+#: two files and still needs the warnings.
+#:
+#: **Deliberately NOT in `__all__`.** It is build metadata, not client API --
+#: nothing a caller writes against. `pyproject.toml` reads it via
+#: `[tool.setuptools.dynamic] attr`, which needs no export, and adding it to
+#: the public surface would make a packaging detail into a compatibility
+#: promise. The contract test caught the first attempt at exporting it.
+#:
+#: It must increase whenever either module's version does.
+#: `clients/python/test_contract.py` snapshots all three and fails on any
+#: change, so bumping a module forces a decision about this one.
+__dist_version__ = "3.22.0"
+
 __all__ = [
     "Client",
     "Identity",

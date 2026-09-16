@@ -1,46 +1,53 @@
 #!/usr/bin/env bash
-# Build both distributions from the CANONICAL client files.
+# Build the distribution from the CANONICAL client files.
 #
-# No second copy of either module lives in this directory: the files are
-# staged into a temp tree and built from there, so a packaged release cannot
-# drift from the file published at stringcup.com/clients/. That is the same
-# property clients-SHA256SUMS gives the curl path.
+# ONE distribution, TWO top-level modules -- see pyproject.toml for why. No
+# copy of either module lives in this directory: they are staged into a temp
+# tree and built from there, so a release cannot drift from the file published
+# at stringcup.com/clients/. Same property clients-SHA256SUMS gives the curl
+# path.
 #
-#   ./build.sh          build wheels + sdists into dist/
-#   ./build.sh --check   build, then install into a clean venv and exercise it
+#   ./build.sh           build wheel + sdist into dist/
+#   ./build.sh --check   build, install into a clean venv, exercise it
 #
-# It does NOT upload. Publishing is irreversible -- a PyPI version can never be
-# reused -- so it is a separate, deliberate, human step.
+# It does NOT upload. A PyPI version can never be reused, so publishing is a
+# separate, deliberate, human step -- and not from this host: twine needs
+# urllib3, urllib3 v2 needs OpenSSL 1.1.1+, and Amazon Linux 2 ships 1.0.2k.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/.."
 OUT="$HERE/dist"
+PY="${PYBUILD:-python3}"
 CHECK="${1:-}"
 
-LIB_VER=$(python3 -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('$SRC/stringcup.py').read()).group(1))")
-MCP_VER=$(python3 -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('$SRC/stringcup_mcp.py').read()).group(1))")
-FLOOR=$(python3 -c "import re;t=re.search(r'BUILT_AGAINST = \((\d+), (\d+), (\d+)\)', open('$SRC/stringcup_mcp.py').read());print('.'.join(t.groups()))")
+ver() { "$PY" -c "import re;print(re.search(r'$2 = \"([^\"]+)\"', open('$SRC/$1').read()).group(1))"; }
+DIST_VER=$(ver stringcup.py __dist_version__)
+LIB_VER=$(ver stringcup.py __version__)
+MCP_VER=$(ver stringcup_mcp.py __version__)
 
-echo "library $LIB_VER | mcp $MCP_VER | mcp requires stringcup>=$FLOOR"
+echo "distribution $DIST_VER  (library $LIB_VER, mcp $MCP_VER, shipped together)"
+
+# A distribution version behind either module would publish a version nobody
+# can fetch the new code with. Cheap to check, unrecoverable to get wrong.
+"$PY" - <<PYGUARD
+import sys
+d = tuple(int(x) for x in "$DIST_VER".split("."))
+for name, v in (("library", "$LIB_VER"), ("mcp", "$MCP_VER")):
+    pass
+if d < tuple(int(x) for x in "$LIB_VER".split(".")):
+    sys.exit("distribution %s is BEHIND the library %s" % ("$DIST_VER", "$LIB_VER"))
+PYGUARD
 
 rm -rf "$OUT" "$HERE/.stage"
-mkdir -p "$OUT"
-
-build_one() {
-  local name="$1" module="$2" toml="$3"
-  local stage="$HERE/.stage/$name"
-  mkdir -p "$stage"
-  cp "$SRC/$module" "$stage/"
-  cp "$SRC/README.md" "$stage/README.md"
-  sed "s/BUILT_AGAINST_FLOOR/$FLOOR/" "$HERE/$toml" > "$stage/pyproject.toml"
-  (cd "$stage" && "${PYBUILD:-python3}" -m build --outdir "$OUT" >/dev/null)
-  echo "  built $name"
-}
-
-build_one stringcup      stringcup.py     pyproject.stringcup.toml
-build_one stringcup-mcp  stringcup_mcp.py pyproject.stringcup-mcp.toml
-
+mkdir -p "$OUT" "$HERE/.stage"
+cp "$SRC/stringcup.py" "$SRC/stringcup_mcp.py" "$SRC/README.md" "$HERE/.stage/"
+# Apache-2.0 section 4: the licence text ships WITH the distribution. The
+# metadata field labels it; this includes it.
+cp "$SRC/../../LICENSE" "$SRC/../../NOTICE" "$HERE/.stage/"
+cp "$HERE/pyproject.toml" "$HERE/.stage/"
+(cd "$HERE/.stage" && "$PY" -m build --outdir "$OUT" >/dev/null)
+rm -rf "$HERE/.stage"
 ls -1 "$OUT"
 
 if [ "$CHECK" = "--check" ]; then
@@ -48,39 +55,40 @@ if [ "$CHECK" = "--check" ]; then
   echo "=== installing into a clean venv and exercising it ==="
   VENV="$HERE/.venv-check"
   rm -rf "$VENV"
-  "${PYBUILD:-python3}" -m venv "$VENV"
+  "$PY" -m venv "$VENV"
   "$VENV/bin/pip" -q install --upgrade pip >/dev/null
-  "$VENV/bin/pip" -q install "$OUT"/stringcup-"$LIB_VER"-py3-none-any.whl \
-                             "$OUT"/stringcup_mcp-"$MCP_VER"-py3-none-any.whl
+  "$VENV/bin/pip" -q install "$OUT/stringcup-$DIST_VER-py3-none-any.whl"
 
   "$VENV/bin/python" - <<'PYCHECK'
-import stringcup, stringcup_mcp, sys
+import stringcup, stringcup_mcp
+print("  distribution          ->", stringcup.__dist_version__)
 print("  import stringcup      ->", stringcup.__version__)
 print("  import stringcup_mcp  ->", stringcup_mcp.__version__)
+print("  tools                 ->", len(stringcup_mcp.TOOLS))
+# THE POINT OF ONE DISTRIBUTION: these cannot drift, so assert it holds in the
+# artifact rather than trusting that it does.
 assert stringcup_mcp.BUILT_AGAINST <= stringcup.version_info, "BUILT_AGAINST drifted"
 assert stringcup_mcp.__version__ in stringcup_mcp.INSTRUCTIONS, "build marker missing"
-print("  tools                 ->", len(stringcup_mcp.TOOLS))
+note = stringcup_mcp._version_note()
+assert note is None, "a single distribution must never report a version mismatch: %r" % note
+print("  versions_note         -> None (cannot drift in one distribution)")
 PYCHECK
 
-  echo "  console script        -> $VENV/bin/stringcup-mcp"; test -x "$VENV/bin/stringcup-mcp" || { echo "  MISSING console script"; exit 1; }
+  test -x "$VENV/bin/stringcup-mcp" || { echo "  MISSING console script"; exit 1; }
+  echo "  console script        -> $VENV/bin/stringcup-mcp"
 
-  # Speak actual JSON-RPC to the installed console script: an entry point that
-  # imports but does not serve is the failure this check exists for.
+  # Speak actual JSON-RPC: an entry point that imports but does not serve is
+  # the failure this exists to catch.
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
     | timeout 10 "$VENV/bin/stringcup-mcp" 2>/dev/null \
-    | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print('  initialize ->', d['result']['serverInfo'])"
+    | "$PY" -c "import json,sys; d=json.loads(sys.stdin.readline()); print('  initialize            ->', d['result']['serverInfo'])"
   rm -rf "$VENV"
 
-  # twine validates the metadata PyPI will render. It needs urllib3<2 on this
-  # host: urllib3 v2 requires OpenSSL 1.1.1+ and Amazon Linux 2 ships 1.0.2k,
-  # so an unpinned `pip install twine` here fails on import, not on upload.
-  if [ -x "${TWINE:-}" ]; then
+  if [ -n "${TWINE:-}" ]; then
     echo
-    "$TWINE" check "$OUT"/* || { echo "  twine check FAILED"; exit 1; }
+    $TWINE check "$OUT"/* || { echo "  twine check FAILED"; exit 1; }
   else
     echo
-    echo "  (set TWINE=/path/to/python -m twine to validate metadata; skipped)"
+    echo "  (set TWINE='/path/to/python -m twine' to validate metadata; skipped)"
   fi
 fi
-
-rm -rf "$HERE/.stage"
