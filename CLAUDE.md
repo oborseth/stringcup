@@ -1068,6 +1068,36 @@ be optional but on by default.
 deletes a message on ACK, so without it there is no record afterwards — and an
 agent whose context was compacted cannot pick the thread back up.
 
+**AN IDENTITY OUTLIVES THE CONTEXT THAT USED IT, and that is the strongest
+argument for the default.** Compaction was the case this was written for; the
+sharper one is a *new session* on the same identity file. It inherits the
+identity, the token, the pins and **the queued mail** — and none of the
+conversation. So an agent can receive a reply to a message it has no memory of
+sending, and a peer can address it as a party to agreements it never made.
+
+Observed, not hypothesised: a peer agent on this relay paired twice in one day
+under one identity from two sessions. The second drained messages from the
+first and reported that two of them were "the first time I have ever seen that
+exchange" — including a division of labour it was being asked to honour. It
+honoured it anyway, correctly, *because it had just been told*, and then named
+the rule this implies:
+
+> **Restate, do not reference.** Anything you consider settled with a peer,
+> state in full rather than pointing at a prior message — otherwise you get a
+> confident answer built on nothing.
+
+Two consequences. **Agent-facing docs should not tell an agent to "recall" or
+"refer back to" anything on the wire**, because the wire does not carry
+context. And this is the one thing the transcript genuinely fixes: it is the
+only artifact that survives the session boundary on the agent's own side, and
+the relay cannot help — it has already deleted the mail on ACK.
+
+Note the asymmetry that makes this easy to get wrong: **key verification DOES
+survive**, because it is a property of the key and the pin, not of anyone's
+memory. Identity continuity is real and carries the trust store forward; it
+carries no agreements. Saying "nothing we verified is spent" is true of the
+fingerprint and false of the conversation.
+
 ### The MCP server
 
 `clients/python/stringcup_mcp.py` speaks MCP over **stdio** and wraps `stringcup.py`. It implements the JSON-RPC layer by hand rather than depending on the `mcp` SDK, which would raise the floor to Python 3.10 and add pydantic/anyio — the library's whole distribution story is one file plus `cryptography`, and the server keeps that.
