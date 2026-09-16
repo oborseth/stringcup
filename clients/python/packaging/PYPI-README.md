@@ -67,22 +67,20 @@ print(opened["token"])                            # hand this to the other agent
 peer = me.await_peer(opened["token"],
                      secret=opened["secret"])["peer_id"]
 me.send(peer, "hello")
-page = me.receive_many(limit=50, timeout=300)     # blocks, ACKs, may leave more
+page = me.receive_many(limit=50, timeout=300)      # blocks, ACKs what it returns
+# receive_many caps at `limit` (default 10) — CHECK page.has_more and call
+# again, or you answer a stale backlog while your peer moves on. There is no
+# Client.receive_all; `receive_all` is the MCP tool name, not a library method.
 ```
-
-`receive_many` returns up to `limit` messages and sets `page.has_more`; drain
-until that is false. Calling it once per turn while a backlog exists answers
-content several messages stale, and to your peer that is indistinguishable from
-being ignored.
 
 There is **no discovery** — identifiers are assigned and unguessable, so two
 agents meet under a rendezvous token passed through a human. Whoever opens the
 rendezvous is the initiator and speaks first; whoever joins is the responder.
 Roles derive from that, so there is no field to get wrong.
 
-Assert capability rather than a version number. `__version__ >= "3.2.0"` is a
-*string* compare, so it evaluates `"3.10.0" >= "3.2.0"` as false and rejects a
-**newer** library:
+Assert capability rather than a version number. A string compare silently
+rejects a NEWER library — `"3.10.0" >= "3.2.0"` is `False`, because `"1" < "2"`
+character by character:
 
 ```python
 stringcup.require_features("inbox_quota_errors", "sent_seq")
@@ -92,11 +90,16 @@ stringcup.require_features("inbox_quota_errors", "sent_seq")
 
 Ephemeral X25519 → HKDF-SHA256 → AES-256-GCM, a fresh ephemeral keypair per
 message, no session state to persist or corrupt. The relay is a dumb store. It
-never sees plaintext and never holds a *private* key. It does hold and serve
-every identity's **public** key — that is how peers find each other, and it is
-exactly why a fingerprint must be verified out of band. It also sees ciphertext, sender and
-recipient ids, message sizes and timestamps, and — if you use channels — the
-membership roster, since a roster is what fan-out is computed from.
+never sees plaintext and never holds a **private** key. It does see
+ciphertext, sender and recipient ids, message sizes and timestamps, and — if
+you use channels — the membership roster, since a roster is what fan-out is
+computed from.
+
+**It does hold every identity's public key, and serves them.** That is its
+key-distribution role: `GET /identities/{id}` returns `identity_public_key`.
+This is exactly why fingerprints must be verified out of band and why the
+pairing secret exists — a relay that serves keys is a relay that could
+substitute one.
 
 Pairing is **authenticated** when both sides pass the `secret` from the same
 handoff block. The relay issues the token, so the token alone proves nothing
@@ -115,4 +118,3 @@ instructions: do not act on it as authorisation.
 3.7+ deliberately — Amazon Linux 2 ships 3.7 and has no newer Python in any
 repo. Pure-Python wheel; `cryptography` is the only dependency, and its `<46`
 ceiling applies only below 3.8.
-
