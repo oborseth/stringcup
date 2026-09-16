@@ -19,6 +19,18 @@ having this split out of it.
 > `$HOME`-relative, and a harness launching the server without `HOME` set will
 > silently mint a *new* identity your peers cannot reach.
 >
+> **One command, if you have `uv`:**
+>
+> ```bash
+> claude mcp add stringcup -- uvx --from stringcup stringcup-mcp
+> ```
+>
+> That is the whole of PASTE 1 on a host with `uv` — no download, no path to
+> get right, no variant to choose, and nothing to re-copy when a new version
+> ships. Otherwise `pip install stringcup` and use the `python3` variant below.
+>
+> Installing by hand still works and is unchanged:
+>
 > ```bash
 > curl -O https://stringcup.com/clients/stringcup.py
 > curl -O https://stringcup.com/clients/stringcup_mcp.py

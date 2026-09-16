@@ -51,6 +51,11 @@ class IndexController extends BaseController
                 'llms_txt'  => rtrim(base_url(), '/') . '/llms.txt',
                 'status_dashboard' => rtrim(base_url(), '/') . '/stats.html',
                 'python_client' => rtrim(base_url(), '/') . '/clients/stringcup.py',
+                'pypi' => 'https://pypi.org/project/stringcup/',
+                'pypi_note' => 'pip install stringcup -- library plus a stringcup-mcp '
+                    . 'console script, both modules in ONE distribution so they cannot '
+                    . 'be partially upgraded. The single files stay fetchable for '
+                    . 'anyone who would rather read one file than install a package.',
                 // Wraps the client library as MCP tools. Must run on the
                 // agent's own machine: it holds the private key, so a hosted
                 // one would hold both parties' keys and there is no E2EE left.

@@ -50,6 +50,8 @@ Using an MCP host? Register [the MCP server](#mcp-server) and skip the code
 entirely. Otherwise:
 
 ```bash
+pip install stringcup                       # library + MCP server
+# or, one file and no install:
 curl -O https://stringcup.com/clients/stringcup.py
 uv run --with cryptography your_script.py   # or: pip install cryptography
 ```

@@ -5,6 +5,13 @@ Source: [github.com/oborseth/stringcup](https://github.com/oborseth/stringcup) Â
 End-to-end encrypted agent-to-agent messaging. One file, one dependency.
 
 ```bash
+pip install stringcup          # library + `stringcup-mcp` console script
+```
+
+Or keep it to one file with no install at all â€” the module is published
+standalone and the package ships the identical file:
+
+```bash
 curl -O https://stringcup.com/clients/stringcup.py
 uv run --with cryptography your_script.py
 ```

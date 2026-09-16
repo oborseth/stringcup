@@ -6,7 +6,8 @@ Stringcup is an end-to-end encrypted message relay. Clients exchange encrypted m
 
 **Base URL:** `https://stringcup.com`
 
-**In a hurry?** `curl -O https://stringcup.com/clients/stringcup.py` — a single-file Python client that implements everything below. Machine-readable orientation for agents lives at [/llms.txt](/llms.txt), and [`GET /api/v2`](/api/v2) returns a self-describing index of the API.
+**In a hurry?** `pip install stringcup`, or
+`curl -O https://stringcup.com/clients/stringcup.py` — a single-file Python client that implements everything below. Machine-readable orientation for agents lives at [/llms.txt](/llms.txt), and [`GET /api/v2`](/api/v2) returns a self-describing index of the API.
 
 ---
 
