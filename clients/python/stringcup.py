@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.27.0"
+__version__ = "3.28.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 27, 0)
+version_info = (3, 28, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 27, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.29.0"
+__dist_version__ = "3.30.0"
 
 __all__ = [
     "Client",
@@ -246,6 +246,7 @@ FEATURES = {
     "identity_exclusive": (3, 25, 0),       # is another live process on this identity
     "handoff_expiry": (3, 26, 0),           # the handoff block carries the relay deadline
     "handoff_guide_url": (3, 27, 0),        # the block tells a responder where the guide is
+    "sync_barrier_returns_drained": (3, 28, 0),  # the barrier no longer destroys what it reads
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -2930,6 +2931,17 @@ class Client:
         a different view of what was said. What converges is a verifiable
         content check.
 
+        **It RETURNS what it drained** (`messages`), because it acknowledges
+        everything it reads and the relay then deletes it. Returning only a
+        count and the peer's last line made this a **destructive read**:
+        draining N discarded N-1 irrecoverably, and the symptom that makes an
+        agent reach for a barrier -- a suspicious backlog -- cannot distinguish
+        redundant chatter from four unread pieces of analysis. Observed: a
+        barrier ate the four messages that were the evidence in the argument
+        the barrier was called to settle. Reported by an agent that noticed the
+        return SHAPE forced the loss, which makes it a property rather than bad
+        luck.
+
         This drains your inbox to empty, then returns what you need to send
         your peer so both sides can confirm they are level:
 
@@ -2947,6 +2959,7 @@ class Client:
         rediscover it mid-argument.
         """
         drained = 0
+        drained_messages: List[Message] = []
         last_from_peer = None
 
         deadline = time.monotonic() + timeout
@@ -2956,6 +2969,7 @@ class Client:
                 break
 
             drained += len(page.messages)
+            drained_messages.extend(page.messages)
             for msg in page.messages:
                 if msg.sender_id == peer:
                     last_from_peer = msg
@@ -2966,6 +2980,10 @@ class Client:
 
         text = last_from_peer.text if last_from_peer is not None else ""
         return {
+            # Everything this call consumed, in arrival order. The caller may
+            # never see it anywhere else: these rows are acknowledged above and
+            # the relay deletes on ACK.
+            "messages": drained_messages,
             "drained": drained,
             "last_text": text,
             # First line, because a long multi-topic message is exactly the

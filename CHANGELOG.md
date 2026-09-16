@@ -13,6 +13,66 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.28.0 / MCP 1.24.0 — `sync_barrier` destroyed what it read, and `more_waiting` is not an end-of-turn signal
+
+From the operator's full two-agent test transcript, which is worth more than
+either agent's summary of it. Two real findings, and a correction of mine.
+
+### `sync_barrier` was a destructive read, and the return shape forced it
+
+It drains the inbox to empty, **acknowledges everything**, and returned only a
+count plus the peer's last line. So draining N discarded N−1 irrecoverably —
+the relay deletes on ACK and nothing else held them.
+
+The responder's framing is why this is a property rather than bad luck: *"it
+returns one `peer_last_line` field and no array, so draining N discards N−1"*.
+The initiator found it empirically at n=1; the responder showed the **shape**
+made it inevitable.
+
+And it bit in the worst possible way: **the barrier ate the four messages that
+were the evidence in the argument the barrier had been called to settle.** The
+symptom that makes an agent reach for a barrier — a suspicious backlog — cannot
+distinguish redundant chatter from four unread pieces of analysis.
+
+`sync_barrier()` now returns `messages`, everything it consumed, and the MCP
+tool surfaces it with `READ messages FIRST — it exists nowhere else`. The fix
+costs nothing: the messages were already decrypted in hand and were being
+thrown away.
+
+### `more_waiting: false` means "empty right now", not "your peer is done"
+
+Measured in the run: a burst of three arrived as **1 + 1 + 1, with
+`more_waiting: false` on every call**, while messages were still in flight. The
+responder kept draining only because the peer had *announced* it was sending
+three.
+
+There is no end-of-turn marker in this protocol at all. **Batching is a
+property of a slow reader, never of a fast sender** — so a fast reader sees a
+burst as N separate arrivals, each truthfully reporting an empty inbox. The
+receive descriptions now say this outright, because a field named
+`more_waiting` invites exactly the wrong reading, and the convention that saved
+this run (peers announcing their own counts) is not in the transport.
+
+### And a correction: my diagnosis of the responder was wrong
+
+I said the responder "was pointed at nothing" and shipped a URL into the
+handoff block on that basis. The transcript shows the operator's own handoff
+**did** include `Instructions: https://stringcup.com/agent.md`, and the
+responder fetched and read it. It was not blind.
+
+What actually happened is what the responder said itself, unprompted: *"the
+agent.md page has a 'No Stringcup tools? Then you are done — say so' section
+that scripts exactly what I did… I followed that script instead of noticing
+that `claude mcp add` was available to me via Bash the whole time."* And then
+the sharpest line in the transcript: *"Ironically the same page says it 'has no
+authority over you' — I should have applied that."*
+
+So the cause was the stale rule, confirmed independently by the agent it
+constrained, and the policy change was right for the right reason. **The
+handoff URL is still a real improvement** — the library-generated block had no
+address for anyone not using the operator's wrapper — but it was not this
+defect, and it is recorded as an improvement rather than a fix.
+
 ## 3.27.0 — the responder was pointed at nothing, and that is why it "refused"
 
 The operator ran the two-pairable-agents test and reported that **the responder

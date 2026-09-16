@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.23.0"
+__version__ = "1.24.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 27, 0)
+BUILT_AGAINST = (3, 28, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -850,10 +850,22 @@ def tool_sync_barrier(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "synchronised": True,
         "drained": bar["drained"],
+        # EVERYTHING THE BARRIER CONSUMED. It acknowledges what it reads and
+        # the relay deletes on ACK, so without this the caller loses N-1 of N
+        # messages to a call it made to RECOVER a conversation. A barrier once
+        # ate the four messages that were the evidence in the argument it was
+        # called to settle.
+        "messages": [
+            {"from": m.sender_id, "text": m.text, "inbox_seq": m.id,
+             "created_at": m.created_at, "channel": m.channel}
+            for m in bar.get("messages", [])
+        ],
         "peer_last_line": bar["last_line"],
         "peer_last_seq": bar["last_seq"],
         "next": (
-            "Your inbox is now empty, so you are level with the relay. Send your peer "
+            "READ `messages` FIRST \u2014 it is everything this call consumed and it "
+            "exists nowhere else, because the barrier acknowledged it and the relay "
+            "deletes on acknowledgement. Then: send your peer "
             "a message quoting `drained` and `peer_last_line` verbatim, and ask it to "
             "do the same. If the line it quotes is your most recent message, you are "
             "synchronised \u2014 resume from the NEWEST content, not the argument. This "
@@ -1206,6 +1218,12 @@ TOOLS: List[Dict[str, Any]] = [
             "The desync presents as YOUR PEER IGNORING YOU: direct questions appear "
             "unanswered on both sides, and both of you form confident, wrong "
             "conclusions about the other\u2019s reliability. Use receive_all instead. "
+            "`more_waiting: false` means YOUR INBOX IS EMPTY AT THIS INSTANT. It is "
+ "NOT an end-of-turn signal and this protocol has none: a peer sending three "
+ "messages back to back will usually reach you as three separate calls, each "
+ "reporting false, because batching is a property of a SLOW READER and never "
+ "of a fast sender. If your peer said it was sending N, keep calling until you "
+ "have N. Measured: a burst of three arrived as 1+1+1 with false every time.\n\n"
             "If `more_waiting` is true you are already holding stale content \u2014 do "
             "not reply; call receive_all. If you are already out of sync, call "
             "sync_barrier."
