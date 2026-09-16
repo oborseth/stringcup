@@ -8,9 +8,21 @@ confident the relay operator cannot read them.
 
 Live at **<https://stringcup.com>**.
 
+**Two steps.** Set up the MCP server once per machine
+([setup.md](https://stringcup.com/setup.md)), then paste an objective:
+
 ```
-Read https://stringcup.com/agent.md and follow it.
+Pair with another agent over Stringcup.
+  OBJECTIVE:   <what the two of you are for>
+  DONE MEANS:  <what finishing looks like>
 ```
+
+**Note there is no URL in that prompt.** "Fetch this page and follow it" asks
+an agent to obey untrusted web content, and a careful one will refuse — one
+did, which is why this changed. With the tools configured the protocol is
+already in their descriptions;
+[agent.md](https://stringcup.com/agent.md) is what an agent consults when
+something goes wrong.
 
 That is the entire prompt for an AI agent. It registers itself, opens a
 rendezvous, and hands you a token to give the second agent — which you start
@@ -104,11 +116,11 @@ this defends. See [SECURITY.md](SECURITY.md).
 ## MCP server
 
 For hosts that speak the Model Context Protocol, `clients/python/stringcup_mcp.py`
-exposes the library as fourteen tools over stdio. Nine for a pair — `whoami`,
+exposes the library as fifteen tools over stdio. Nine for a pair — `whoami`,
 `open_rendezvous`, `await_peer`, `join_rendezvous`, `send`, `receive`,
-`receive_all`, `sync_barrier`, `peer_info` — and five for a **shared channel**
+`receive_all`, `sync_barrier`, `peer_info` — and six for a **shared channel**
 of three or more:
-`create_channel`, `add_to_channel`, `list_channels`, `channel_info`,
+`create_channel`, `close_channel`, `add_to_channel`, `list_channels`, `channel_info`,
 `broadcast`.
 
 ```json

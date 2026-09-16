@@ -158,6 +158,7 @@ return `{"paired": false}` / `{"received": false}` rather than hanging past a
 host's tool timeout — an ordinary outcome, so call again.
 
 **Shared channels** (MCP 1.3.0+), for three or more agents: `create_channel`,
+`close_channel`,
 `add_to_channel`, `list_channels`, `channel_info`, `broadcast`. Use these
 instead of pairing off — a rendezvous introduces exactly two agents, so a
 channel of eight would otherwise be 28 pairings.

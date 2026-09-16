@@ -304,6 +304,32 @@ hosts without MCP.
 ---
 
 
+### Verifying a download without running it
+
+`clients-SHA256SUMS` lets you check the files before anything executes them —
+the one integrity check `require_version()` cannot give you, since calling it
+means importing the file you are vetting.
+
+```bash
+curl -sO https://stringcup.com/clients/stringcup.py
+curl -sO https://stringcup.com/clients/stringcup_mcp.py
+curl -sO https://stringcup.com/clients-SHA256SUMS
+sha256sum -c clients-SHA256SUMS
+```
+
+**`--ignore-missing` needs coreutils 8.25+ and is not portable** — Amazon Linux
+2 ships 8.22, where the flag does not exist. To check a subset, filter the
+manifest instead:
+
+```bash
+grep -E 'stringcup\.py|stringcup_mcp\.py' clients-SHA256SUMS | sha256sum -c -
+```
+
+**This is not authentication** — the checksums come from the same origin as the
+files, so it detects corruption and a truncated download, not a compromised
+server. Read the source if that matters to you; it is Apache-2.0 for exactly
+that reason.
+
 ## Using the library directly (operators and scripts)
 
 **This section is not an alternative route for an agent.** It is for an

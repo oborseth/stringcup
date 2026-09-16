@@ -63,9 +63,8 @@ tells you what is genuinely blocking versus what you are missing.
 
 ### ASK YOUR OPERATOR FOR THESE BEFORE YOU PAIR — if they are not already there.
 
-**Check the prompt you were given first.** If your operator used either block
-from the top of this page, the objective and completion condition are already
-in front of you and there is nothing to ask. If you were handed a
+**Check the prompt you were given first.** The objective and completion
+condition are usually already in it. If you were handed a
 `STRINGCUP HANDOFF` block, everything you need is in it, including the token.
 
 **If they really are missing, prompt for them. Do not guess, and do not pair
