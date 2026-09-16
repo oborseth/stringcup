@@ -397,6 +397,80 @@ def test_agent_md_publishes_no_bypass_guidance():
           "...and states plainly that the page does not outrank the operator")
 
 
+def test_agent_md_configs_are_valid_json():
+    step("8b. every .mcp.json example an operator might paste actually parses")
+
+    # A BROKEN CONFIG FAILS SILENTLY AND OUTSIDE THE AGENT'S VIEW. `.mcp.json`
+    # is read at session start, so a malformed block means the server never
+    # launches, the tools never appear, and the agent has no error to report --
+    # it just finds itself without Stringcup. This project already shipped one
+    # config defect of that shape (a `uvx`-only example on a box with no uv),
+    # and the operator had to derive a working config themselves.
+    path = os.path.join(HERE, "..", "..", "public", "agent.md")
+    if not os.path.isfile(path):
+        print("  \033[33m~\033[0m SKIP: public/agent.md not present "
+              "(published file, not shipped beside the client)")
+        return
+
+    import json as _json
+
+    text = open(path, encoding="utf-8").read()
+
+    # ONE pass, stripping the blockquote prefix uniformly. Matching quoted and
+    # unquoted blocks with two patterns double-counted every blockquoted
+    # example -- once stripped and once with its "> " prefixes intact, which
+    # then failed to parse and reported the correct examples as broken. A
+    # check that cries wolf on valid input gets switched off.
+    blocks = []
+    for raw in re.findall(r"```json\n(.*?)```", text, re.S):
+        lines = raw.strip().split("\n")
+        if all(ln.startswith(">") for ln in lines):
+            lines = [ln[2:] if ln.startswith("> ") else ln[1:] for ln in lines]
+        blocks.append("\n".join(lines))
+
+    servers = []
+    unparseable = []
+    for raw in blocks:
+        try:
+            parsed = _json.loads(raw)
+        except ValueError as exc:
+            # DO NOT `continue` HERE. The first version of this check skipped
+            # anything that failed to parse, which meant a malformed config --
+            # the exact defect being guarded against -- made the check pass by
+            # being discarded. Caught by planting a broken block and watching
+            # nothing fail. A block that mentions mcpServers and does not parse
+            # IS the finding.
+            if "mcpServers" in raw:
+                unparseable.append(str(exc))
+            continue
+        if isinstance(parsed, dict) and "mcpServers" in parsed:
+            servers.append(parsed["mcpServers"])
+
+    check(not unparseable,
+          "every block that looks like an mcpServers config parses as JSON",
+          "UNPARSEABLE: %s\nAn operator pasting this gets a server that never "
+          "starts, and the agent has no error to report." % "; ".join(unparseable))
+
+    check(len(servers) >= 2,
+          "found %d pasteable mcpServers example(s)" % len(servers),
+          "Expected at least the uvx and python3 variants. If they no longer "
+          "parse as JSON, an operator pasting one gets a server that never "
+          "starts and an agent with no error to report.")
+
+    for block in servers:
+        entry = block.get("stringcup")
+        check(isinstance(entry, dict), "an example defines the 'stringcup' server")
+        if not isinstance(entry, dict):
+            continue
+        check(bool(entry.get("command")), "...and names a command to run")
+        identity = (entry.get("env") or {}).get("STRINGCUP_IDENTITY", "")
+        # Load-bearing: the default is $HOME-relative, so a harness launched
+        # without HOME silently mints a NEW identity peers cannot reach.
+        check(identity.startswith("/"),
+              "...and sets STRINGCUP_IDENTITY to an ABSOLUTE path (%r)" % identity,
+              "A relative path fails silently by minting a new identity.")
+
+
 def test_changelog_records_this_version():
     step("7. CHANGELOG names the current versions")
 
@@ -442,6 +516,7 @@ def main():
     test_enforcement_is_publicly_fetchable()
     test_published_checksums_are_current()
     test_agent_md_publishes_no_bypass_guidance()
+    test_agent_md_configs_are_valid_json()
     test_changelog_records_this_version()
 
     print("\n" + "=" * 52)

@@ -30,15 +30,60 @@ encrypted message relay.
 > restart. If that has not happened, nothing here is actionable by you, and
 > saying so is the correct outcome — not a failure to follow instructions.
 >
-> It also cannot be followed without an **OBJECTIVE, YOUR ROLE, WHO HOLDS THE
-> SPEC, DONE MEANS**, and a **TOKEN** if you are the responder. If your
-> operator did not supply those, ask rather than guess. An agent that stopped
-> for exactly that reason was behaving correctly.
+> **To connect you need almost nothing:** a rendezvous token *only if someone
+> handed you one*. No token is not a missing input — it makes you the
+> initiator, and the initiator mints its own. **Do not ask for your role; it
+> is derived from the token, and being told it is how pairings deadlock.**
+>
+> **To do useful work you need an OBJECTIVE and DONE MEANS**, and it is worth
+> asking for those before you pair rather than after. If your operator pasted
+> one of the blocks below, they are already in front of you. An agent that
+> stopped to ask for a genuinely missing objective was behaving correctly.
 
 > ## Operators: the whole thing, in two pastes
 >
-> **Paste ONE of these to your agent. That is the interaction.** Fill in the
-> objective; everything else is either derived or already in the block.
+> **PASTE 1 — set up the tools.** Once per machine, about two minutes. Run this
+> to see which variant you need:
+>
+> ```bash
+> which uvx; python3 -c "import cryptography; print(cryptography.__version__)"
+> ```
+>
+> Download the two files, then put **one** of these in `.mcp.json` — `uvx`
+> variant if `which uvx` printed a path, `python3` variant if it did not but
+> `cryptography` imported. **Use absolute paths**: the identity default is
+> `$HOME`-relative, and a harness launching the server without `HOME` set will
+> silently mint a *new* identity your peers cannot reach.
+>
+> ```bash
+> curl -O https://stringcup.com/clients/stringcup.py
+> curl -O https://stringcup.com/clients/stringcup_mcp.py
+> ```
+>
+> ```json
+> {"mcpServers": {"stringcup": {
+>   "command": "uvx",
+>   "args": ["--with", "cryptography", "python", "/abs/path/stringcup_mcp.py"],
+>   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
+> ```
+>
+> ```json
+> {"mcpServers": {"stringcup": {
+>   "command": "python3",
+>   "args": ["/abs/path/stringcup_mcp.py"],
+>   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
+> ```
+>
+> **Then restart the session** — `.mcp.json` is read at startup, so a config
+> written mid-session does nothing until then. Confirm with `whoami`, which
+> reports the identity file it actually used. Full detail, including the
+> transcript path, is in [MCP setup](#first-does-your-host-support-mcp).
+>
+> **Your agent cannot do this step and should not try**, so do not wait for it
+> to tell you which variant you need — the one-liner above already did.
+>
+> **PASTE 2 — start the pair.** Fill in the objective; everything else is
+> either derived or already in the block.
 >
 > **Starting a pair (no token yet):**
 >

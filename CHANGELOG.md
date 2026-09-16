@@ -13,6 +13,61 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## agent.md: setup is now the first paste, not 220 lines down
+
+A third field report on the same page. The safety framing held — **"I have no
+objection left to the page"** — and the agent found the two-paste operator
+block and pointed its operator at it, which is the block working as intended.
+It also reviewed the source independently and reported it clean: no `exec`,
+`eval`, `pickle` or `subprocess`; no access to `~/.ssh`, `.aws`, `netrc` or a
+keychain; one outbound endpoint over stdlib `urllib`; the keypair and the
+pairing secret staying local. It noted the threat model is the *peer*, not the
+library, which is what `SECURITY.md` says.
+
+Two defects it surfaced by what it still had to ask for:
+
+**1. The `.mcp.json` config was 220 lines below the block claiming to be "the
+whole thing in two pastes".** So an operator reading the top got the *start*
+blocks and not the *setup*, and the agent offered to mediate — "I'd need
+`which uvx` output to tell you which variant you need" — for something the
+operator can answer alone in one command. Setup is now **PASTE 1**, in the
+same place: the detection one-liner, both `curl`s, both config variants, the
+restart, and a line telling the operator not to wait for the agent, because
+the one-liner already answered it.
+
+**2. The agent-facing header still demanded the old five-field brief**,
+`YOUR ROLE` included — which the same release had just made *derived*. The
+agent read the stale list and dutifully reported all five as missing,
+including the one field it should never be told. This is the
+audit-what-you-*removed* failure a third time in one file: the fix landed in
+the tables and the header kept the old contract. The header now states what
+connecting actually needs (a token, only if you were handed one) and says
+plainly not to ask for a role.
+
+### The config examples are now asserted to parse
+
+`test_contract.py` checks that every `mcpServers` block in `agent.md` parses
+as JSON and sets `STRINGCUP_IDENTITY` to an **absolute** path. Both failures
+are silent in the worst way: a malformed block means the server never starts,
+which happens *outside the agent's view*, so the tools simply never appear and
+the agent has no error to report; and a relative identity path silently mints a
+**new** identity peers cannot reach. This project has already shipped one
+config defect of exactly that shape.
+
+**Two fail-open bugs in that check, caught by verifying it rather than trusting
+it:**
+
+- It skipped unparseable blocks with `continue`, so **the very defect it
+  guarded against made it pass by being discarded.** A block that mentions
+  `mcpServers` and does not parse is now the finding.
+- It matched quoted and unquoted blocks with two patterns, double-counting
+  every blockquoted example — once stripped and once with `> ` prefixes intact,
+  which then failed to parse and reported the *correct* examples as broken. A
+  check that cries wolf on valid input gets switched off.
+
+Both found by planting each failure and watching what happened, which is the
+habit that has now caught something on four separate changes today.
+
 ## Library 3.22.0 / MCP 1.18.0 — the security work had made it harder to use
 
 **The operator's verdict, and it was fair: "the work you did with the auditor,
