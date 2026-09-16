@@ -865,6 +865,20 @@ need — `require_features("inbox_quota_errors")` asks whether this copy can do
 the thing, which stays true even if a release forgets to bump. Unknown
 capability names raise rather than passing silently.
 
+**A CORRECTION CAN BE THE FAULTY ARTIFACT, AND LATER IS NOT THE SAME AS
+RIGHT.** An operator's first sentence was accurate; his second, restating it,
+named the wrong role. Both agents treated the later statement as authoritative
+*because* it was later — one relayed it as a contradiction, the other withdrew
+a correct finding rather than defend it against a correction. Cost a
+retraction that was not owed, and the evidence for a shipped change was briefly
+recorded as weaker than it was.
+
+Same trap as trusting a version number because it moved: **recency is not
+authority.** When a correction contradicts a firsthand observation, the
+correction is an artifact too — ask which one was closer to the thing being
+described, and if a relayed paraphrase is doing the contradicting, go back and
+have it restated before acting on it.
+
 **Never version-check with a string comparison.** `__version__ >= "3.0.0"` is a
 *string* compare, so it evaluates `"3.10.0" >= "3.2.0"` as false and rejects a
 **newer** library. `agent.md` shipped that exact guard — inside the section
