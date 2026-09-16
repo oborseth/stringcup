@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.19.0"
+__version__ = "1.20.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -208,7 +208,7 @@ _client: Optional[Client] = None
 _TRANSCRIPT: Optional[str] = None
 
 
-def _identity_path() -> str:
+def _resolve_identity() -> tuple:
     """
     Where this agent's identity lives.
 
@@ -250,7 +250,7 @@ def _identity_path() -> str:
     """
     explicit = os.environ.get("STRINGCUP_IDENTITY")
     if explicit:
-        return explicit
+        return explicit, "explicit"
 
     home = os.path.dirname(DEFAULT_IDENTITY)
     name = (os.environ.get("STRINGCUP_IDENTITY_NAME") or "").strip()
@@ -260,25 +260,36 @@ def _identity_path() -> str:
         safe = "".join(c if c in allowed else "-" for c in name).strip(".-")
         # NOT "identity": a name that sanitises to nothing would land on the
         # legacy default and silently share the identity this separates.
-        return os.path.join(home, (safe or "unnamed") + ".json")
+        return os.path.join(home, (safe or "unnamed") + ".json"), "name"
 
     if os.path.exists(DEFAULT_IDENTITY):
-        return DEFAULT_IDENTITY
+        return DEFAULT_IDENTITY, "legacy"
 
     try:
         cwd = os.path.realpath(os.getcwd())
     except OSError:
-        return DEFAULT_IDENTITY
+        return DEFAULT_IDENTITY, "no-cwd-scope"
 
     if cwd in (os.sep, os.path.realpath(os.path.expanduser("~"))):
-        return DEFAULT_IDENTITY
+        return DEFAULT_IDENTITY, "no-cwd-scope"
 
     allowed = ("abcdefghijklmnopqrstuvwxyz"
                "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
     slug = "".join(c if c in allowed else "-"
                    for c in os.path.basename(cwd))[:32].strip(".-") or "agent"
     digest = hashlib.sha256(cwd.encode("utf-8")).hexdigest()[:8]
-    return os.path.join(home, "agents", "%s-%s.json" % (slug, digest))
+    return os.path.join(home, "agents", "%s-%s.json" % (slug, digest)), "per-directory"
+
+
+#: Rules that resolve to ONE path for every session on the machine, so two
+#: agents under them are the same agent. `explicit` is the common case -- an
+#: absolute path in a user-scope MCP config -- and `legacy` is every machine
+#: that had an agent before per-directory identities existed.
+SHARED_IDENTITY_RULES = ("explicit", "legacy", "no-cwd-scope")
+
+
+def _identity_path() -> str:
+    return _resolve_identity()[0]
 
 
 #: Set STRINGCUP_TRANSCRIPT to this to turn the transcript off.
@@ -456,6 +467,15 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # the collision never surfaces. If two agents on one machine report the
         # same id, they ARE one agent and cannot pair with each other.
         "identity_source": getattr(_client, "identity_source", None),
+        # WHICH RULE CHOSE THE PATH, and whether that rule gives every session
+        # on this machine the same identity. Without this an agent can see its
+        # identity_file but not why, and cannot tell an operator which of the
+        # two sharing conditions is in force -- on the machine where the
+        # collision was found, reading the MCP config to check is refused as
+        # credential exploration. Suggested by the agent that found it.
+        "identity_rule": _resolve_identity()[1],
+        "identity_shared_across_sessions":
+            _resolve_identity()[1] in SHARED_IDENTITY_RULES,
     }
 
 
@@ -966,7 +986,18 @@ TOOLS: List[Dict[str, Any]] = [
             "Return this agent's Stringcup identifier and key fingerprint, registering "
             "an identity on first use. The identifier is assigned by the relay and "
             "cannot be chosen. Call this first if you need to tell someone your "
-            "address; every other tool registers on demand anyway."
+            "address; every other tool registers on demand anyway.\n\n"
+            "**If `identity_shared_across_sessions` is true, every session on this "
+            "machine is THIS SAME AGENT** and two of them cannot pair with each "
+            "other -- one will open a rendezvous and the other will be told it "
+            "already holds that side. `identity_rule` says which rule chose the "
+            "path: `explicit` means STRINGCUP_IDENTITY is set (in a user-scope MCP "
+            "config that covers every session), `legacy` means an identity file "
+            "predating per-directory defaults is being reused. Report it to your "
+            "operator with the identifier: the fix is to give each agent its own "
+            "`STRINGCUP_IDENTITY_NAME`, or to unset STRINGCUP_IDENTITY and move the "
+            "legacy file aside. You cannot fix it yourself -- reading the MCP config "
+            "is commonly refused."
         ),
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_whoami,

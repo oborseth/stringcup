@@ -13,6 +13,43 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.20.0 — `whoami` says WHICH rule chose the identity, and whether it shares
+
+3.24.0 shipped to PyPI and closed the collision **for new installs**. It does
+not reach an existing one, by design — an installed agent is never silently
+relocated. So the population that can still collide is exactly the population
+that has to take two manual actions, and until now their agent could not tell
+them which action applied.
+
+`whoami` now returns:
+
+- **`identity_rule`** — `explicit`, `name`, `legacy`, `per-directory` or
+  `no-cwd-scope`: which of the four resolution steps actually chose the path.
+- **`identity_shared_across_sessions`** — true for `explicit`, `legacy` and
+  `no-cwd-scope`, the rules that resolve to one path for every session on the
+  machine.
+
+**The point is that the agent can now diagnose it out loud.** `identity_source`
+(3.24.0) says *registered* or *loaded*; that reveals a collision only if you
+can compare two agents. `identity_rule` says *why this path*, from one agent,
+in one call — and on the machine where the bug was found the honest answer is
+"a user-scope explicit path overrode everything", which **no agent could
+previously discover, because reading the MCP config is refused as credential
+exploration.** Suggested by the agent that found the collision, and it is the
+missing half of its own report.
+
+The explanation lives in the **tool description**, not in a result field: a
+result carries a value, a description carries the reasoning. That rule exists
+because this server once accumulated five prose note fields.
+
+Also in: `PUBLISH.md` now tells the releaser to set `PYBUILD` on macOS, where
+`python3` is the Xcode stub and `build.sh` dies on the `xcode-select` nag
+before building anything. Reported by the agent that published 3.24.0, which
+hit precisely that, and the person running that script is the one most likely
+to be on a Mac.
+
+**Not published.** It rides the next release; 3.24.0 is what is on the index.
+
 ## 3.24.0 / MCP 1.19.0 — two agents on one laptop were the same agent
 
 **The most obvious way to try Stringcup was broken, and it failed by looking

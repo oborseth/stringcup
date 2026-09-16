@@ -89,6 +89,17 @@ another — that is verifying something other than what ships.
 clone at a tag beats building here for a second reason: this working tree is
 what nginx serves live, and step 4 below rewrites it.
 
+**On macOS, set `PYBUILD` first.** `build.sh` defaults to `python3`, which on a
+Mac without a real Python is the Xcode stub — it dies on the `xcode-select` nag
+before building anything. The person running this is the most likely to be on a
+Mac, so:
+
+```bash
+PYBUILD=/opt/homebrew/bin/python3 ./build.sh --check   # or any real interpreter
+```
+
+Reported by the agent that published 3.24.0, which hit exactly this.
+
 ```bash
 # 1. build from a clean checkout at the release tag
 cd clients/python/packaging && ./build.sh --check
