@@ -214,7 +214,7 @@ function ecies_decrypt(string $my_priv, string $sender_id, string $my_id, array 
 /**
  * Clear the server's rate-limit counters, when running on the server itself.
  *
- * Registration is 5/hour and deliberately so: it is the one unauthenticated
+ * Registration is 30/hour (raised from 5 on 2026-09-16): it is the one unauthenticated
  * write, and raising it would weaken the only barrier to identity farming.
  * A suite that legitimately needs more than five registration-bucket calls
  * therefore has to reset between sections rather than ask for a higher limit.

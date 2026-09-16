@@ -106,7 +106,7 @@ set `STRINGCUP_TRUSTED_PROXIES`.** Otherwise CodeIgniter ignores
 `X-Forwarded-For` and `getIPAddress()` returns the *proxy's* address, and every
 per-IP rate limit is wrong in **both** directions at once:
 
-- **All callers share one bucket.** The 5/hour registration cap is per IP, so
+- **All callers share one bucket.** The 30/hour registration cap is per IP, so
   one client registering five identities exhausts registration for everyone
   arriving through that proxy.
 - **A rotating proxy multiplies the limit.** One caller gets a full budget per

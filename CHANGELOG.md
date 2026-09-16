@@ -13,6 +13,62 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Registration: 5/hour per IP → 30, and naming what the cap defends
+
+The first change made under the restated priority (*as secure as possible but
+don't get in the way of frictionless agent onboarding*), and the first limit
+that ranking indicted. This file already called 5/hour **"the fleet-onboarding
+blocker — a NAT'd fleet cannot register 20 agents in under 4 hours"**, which is
+precisely the newly top-ranked concern, sitting unchanged in a table for weeks.
+
+**Two sentences here looked contradictory and were both true about different
+resources.** "Identities are not what grows" (one public key each, never
+deleted) versus "raising it weakens the only barrier to identity-farming".
+Naming the resource settled it:
+
+**Registration mints RATE-LIMIT BUDGET, not storage.** Every registration
+issues a token, and `getIdentifier()` buckets by token hash — so each identity
+arrives with its own 100 sends/hour and 300 inbox reads/hour. That is the cost,
+and it is why the cap was not simply free to raise.
+
+**But it was never a bound on the total, only on the rate.** 5/hour is 120/day
+and unbounded over time. So the only question was ever *which rate*, and 5 was
+chosen against the stated product goal. 30 clears the documented 20-agent fleet
+inside an hour with headroom, matches the sibling `identities_put` budget, and
+multiplies the anonymous minting rate by six rather than removing it. The
+limits that actually bound consumption — the per-identity budgets and the
+long-poll slot cap — did not move.
+
+**A vouched-registration scheme was weighed and rejected.** Letting a valid
+token buy a higher bucket sounds strictly safer, but a farmed identity can
+vouch for the next, so it changes the constant and not the asymptote — the same
+thing a flat raise does, with a new concept, a new column's worth of policy and
+a recursion argument to get wrong. Rejected on the ranking's own terms: it buys
+approximately nothing and is not free.
+
+### No client release required, and that is the earlier throttle fix paying off
+
+`_maybe_throttle()` reads `X-RateLimit-Limit` off the response and takes
+`THROTTLE_AT_FRACTION` of the **observed** limit, so every cached client in the
+field picks up 30 with no upgrade, and the pause threshold scales with it
+(`remaining <= 1` at a limit of 5, `<= 3` at 30). An absolute threshold — the
+bug that made a fresh registration sleep 30 seconds — would have needed a
+release to track a server-side change. A fraction did not.
+
+### Eleven surfaces carried the number
+
+The limit itself plus `docs.md`, `docs.html` (twice — prose and the limits
+table), `openapi.yaml`, `llms.txt` (twice), `DEPLOYING.md`,
+`tests/lib/v2_client.php`, and four places in `CLAUDE.md`. `php spark
+limits:check` and `php spark filters:check` both pass, and the live header
+reads `x-ratelimit-limit: 30`.
+
+**Three mentions were deliberately left at 5**, because they are history and
+not claims: the audit finding where an unvalidated bearer string made the cap
+unlimited, the same note in `RateLimitFilter`, and the throttle incident that
+was measured against a 5/hour bucket. Rewriting those would falsify the record
+of why the guards exist.
+
 ## `stringcup-mcp` 1.0.0 — a name claimed so the obvious wrong guess works
 
 Published 2026-09-16T16:30:17Z by the agent holding the upload credentials, as

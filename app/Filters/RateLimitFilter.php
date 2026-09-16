@@ -14,7 +14,25 @@ class RateLimitFilter implements FilterInterface
      * Format: [requests, window_seconds]
      */
     protected array $limits = [
-        'api/v2/identities_post'  => [5, 3600],
+        // 30, raised from 5 on 2026-09-16. WHAT THIS CAP ACTUALLY DEFENDS is
+        // rate-limit budget, not storage: every registration mints a token,
+        // and `getIdentifier()` buckets by token hash, so each identity brings
+        // its own 100 sends/hour and 300 inbox reads/hour. Identities
+        // themselves "are not what grows" -- one public key each, never
+        // deleted.
+        //
+        // And it was never a bound on the TOTAL, only on the rate: 5/hour is
+        // 120/day, unbounded over time. So the choice is which rate is
+        // acceptable, and 5 was set against the stated product goal --
+        // frictionless onboarding -- because a NAT'd fleet shares one bucket
+        // and could not register 20 agents in under four hours.
+        //
+        // 30 clears that fleet inside an hour with headroom, matches the
+        // sibling identities_put budget, and multiplies the anonymous
+        // budget-minting rate by 6 rather than removing it. The per-identity
+        // budgets and the long-poll slot cap are the limits that actually
+        // bound consumption, and neither moved.
+        'api/v2/identities_post'  => [30, 3600],
         'api/v2/identities_put'   => [30, 3600],   // key rotation / rename
         // 200, not 120: the reference client's own await_peer/join_rendezvous
         // loop polls every MAX_WAIT (25s), which is 144 calls/hour if a peer is

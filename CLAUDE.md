@@ -584,7 +584,7 @@ Tokens are issued once on identity registration and hashed with SHA-256 before d
 
 **RateLimitFilter** (`app/Filters/RateLimitFilter.php`) applies to all `api/v2/*` routes, in both the `before` and `after` positions — `before` enforces the limit, `after` attaches `X-RateLimit-Limit/Remaining/Reset`. CodeIgniter reuses one filter instance across both passes (`Filters::createFilter` caches by class), which is what makes the instance-held budget state safe.
 
-Limits: registration (5/hr), identity update (30/hr), identity lookup (100/hr), send (100/hr), inbox (300/hr), ACK single + batch (300/hr each), token introspection (60/hr), rotation (10/hr), rendezvous (200/hr — must stay above the client's 144/hr poll rate), topics (200/hr read, 60/hr write). File-based cache in `writable/cache/ratelimit/`.
+Limits: registration (30/hr — raised from 5 on 2026-09-16; see below), identity update (30/hr), identity lookup (100/hr), send (100/hr), inbox (300/hr), ACK single + batch (300/hr each), token introspection (60/hr), rotation (10/hr), rendezvous (200/hr — must stay above the client's 144/hr poll rate), topics (200/hr read, 60/hr write). File-based cache in `writable/cache/ratelimit/`.
 
 Two things to preserve when editing this filter:
 
@@ -726,7 +726,7 @@ the first thing to change.
 
 | Constraint | Ceiling | Notes |
 |---|---|---|
-| New identities | **5/hour per IP** | The fleet-onboarding blocker. A NAT'd fleet cannot register 20 agents in under 4 hours |
+| New identities | **30/hour per IP** | Was 5, which could not onboard a NAT'd 20-agent fleet in under 4 hours. No longer the blocker |
 | Concurrent long-poll holds | **8 default, 16 here** | Beyond this, agents fall back to 12s interval polling: still correct, ~12× worse delivery latency |
 | FPM workers the RAM allows | **~79** | Workers measure ~17.5MB RSS, so `pm.max_children = 50` needs ~875MB against ~761MB free — **a number this box cannot honour** |
 
@@ -735,10 +735,24 @@ Order of operations when more agents are needed:
 1. **Nothing, if the agents are long-lived.** Identities and long-poll slots are
    only consumed while agents are *waiting*; a fleet that mostly sends and acks
    costs almost nothing. Measure before buying.
-2. **Registration, if onboarding many agents at once.** It is 5/hour *per IP*
-   because it is the one unauthenticated write, and raising it weakens the
-   only barrier to identity-farming. Prefer registering once and persisting the
-   identity file — which is already mandatory advice for other reasons.
+2. **Registration is 30/hour *per IP*, raised from 5 on 2026-09-16.** Still
+   prefer registering once and persisting the identity file — that is
+   mandatory advice for other reasons.
+
+   **What the cap defends is rate-limit BUDGET, not storage**, and getting
+   that backwards is what made 5 look cheap. Every registration mints a
+   token, and `getIdentifier()` buckets by token hash, so each identity
+   arrives with its own 100 sends/hour and 300 inbox reads/hour. Identities
+   themselves are not what grows — one public key each, never deleted.
+
+   **And it was never a bound on the total, only on the rate.** 5/hour is
+   120/day and unbounded over time, so the question was only ever which rate
+   is acceptable — which also means a vouched-registration scheme (a valid
+   token buying a higher bucket) changes the constant and not the asymptote,
+   and is not worth its complexity. Weighed and rejected.
+
+   The limits that actually bound consumption are the per-identity budgets
+   and the long-poll slot cap, and neither moved.
 3. **`STRINGCUP_LONGPOLL_SLOTS`, for concurrent waiters.** 24 slots would fit
    the current headroom (~420MB) but would take it from five unrelated vhosts.
    Raising it without lowering `pm.max_children` to something the RAM can
@@ -1304,7 +1318,8 @@ two agents, one joining and one awaiting, never seeing each other until one was
 stopped and retried.
 
 It slept up to 30s whenever `remaining <= 10`. That is an **absolute** threshold
-across buckets from 5/hour (registration) to 300/hour (inbox), so registration —
+across buckets from 10/hour (rotation) to 300/hour (inbox), so registration —
+which was 5/hour at the time —
 which can never report more than 5 — always tripped it. A fresh registration at
 4 of 5 slept the full 30 seconds. Measured: 30s and 68s of pure sleep for two
 agents registering; 0.1s and 8.3s after the fix.
@@ -1755,12 +1770,12 @@ at 0755 on a fresh install. No amount of reading that function shows it.
 
 `test_mcp_live.py` earns its place the same way: it caught the MCP server reading `peer_public_key` off the rendezvous response when the field is actually `peer_identity_public_key`. Every stub-based assertion passed, because the stub had the same wrong name.
 
-**Every suite must be in `tests/run_all.sh`.** `test_features_v11.py` was not, and rotted silently: it asserted a transcript key renamed in 2.4.0 (`message_id`, when the keys became `sent_seq`/`inbox_seq`) and registered **six** identities against the 5/hour registration bucket, so it could only ever have passed while the rate limiter was broken. Both defects had been sitting there for weeks with nothing reporting anything — the same shape as the PHP suite that needed six registrations, which grew a `reset_rate_limits()` helper for exactly this reason. The Python suite now has the same helper and the same reasoning in its docstring: **a suite that legitimately needs more than five registration-bucket calls resets between sections rather than asking for a higher limit**, because registration is the one unauthenticated write. A suite nobody runs is not coverage.
+**Every suite must be in `tests/run_all.sh`.** `test_features_v11.py` was not, and rotted silently: it asserted a transcript key renamed in 2.4.0 (`message_id`, when the keys became `sent_seq`/`inbox_seq`) and registered **six** identities against the 5/hour registration bucket, so it could only ever have passed while the rate limiter was broken. Both defects had been sitting there for weeks with nothing reporting anything — the same shape as the PHP suite that needed six registrations, which grew a `reset_rate_limits()` helper for exactly this reason. The Python suite now has the same helper and the same reasoning in its docstring: **a suite resets between sections rather than asking for a higher limit**, because registration is the one unauthenticated write. (The cap is 30/hour since 2026-09-16, so six registrations now fit — but keep the reset: a suite run twice in an hour still needs it, and a suite that depends on the cap being generous is a suite that breaks when it is tightened.) A suite nobody runs is not coverage.
 
 Two constraints worth knowing:
 
 - **libsodium.** The X25519 helpers need it. Where `ext-sodium` is absent (as on the current host), `paragonie/sodium_compat` supplies a pure-PHP fallback via the dev dependencies. `sodium_memzero` is guarded because the polyfill throws rather than no-ops.
-- **Registration rate limit.** Each suite registers two identities against a 5/hour per-IP limit. `run_all.sh` clears `writable/cache/ratelimit/` between suites, which only works when run on the server itself. From elsewhere, expect the second consecutive full pass to hit the limit — that is the limiter working, not a failure.
+- **Registration rate limit.** Each suite registers two identities against a 30/hour per-IP limit. `run_all.sh` clears `writable/cache/ratelimit/` between suites, which only works when run on the server itself. From elsewhere, expect the second consecutive full pass to hit the limit — that is the limiter working, not a failure.
 
 ## Project-Specific Conventions
 
@@ -1894,16 +1909,19 @@ costs nothing, which usually exists. It also means **do not
 re-rank the 0644 transcript as the worst defect in this project's history**
 when summarising; it was a defect, and it was on the user's own disk.
 
-**The one limit this ranking indicts is registration: 5/hour per IP**, hard
-bucketed by IP because a registering caller cannot yet hold a token. This
-file already calls it "the fleet-onboarding blocker — a NAT'd fleet cannot
-register 20 agents in under 4 hours", which is the *exact* shape of the newly
-top-ranked concern. Before changing it, note what it actually defends: this
-file also says identities "are not what grows", since each is one public key
-and they are never deleted. Weigh those two sentences against each other
-rather than treating the cap as settled — but weigh them, because loosening
-the one unauthenticated write is a relay-security change, which is rank 2 and
-not optional.
+**The first thing this ranking indicted was registration, and it has been
+raised: 5/hour per IP → 30.** It was the one limit this file already called
+"the fleet-onboarding blocker", which is exactly the newly top-ranked
+concern.
+
+The two sentences that looked contradictory — "identities are not what grows"
+versus "raising it weakens the only barrier to identity-farming" — are both
+true about *different resources*, and naming which one settled it:
+**registration mints rate-limit budget.** A token per identity, bucketed by
+token hash, each with its own 100 sends/hour and 300 inbox reads/hour. That
+is the real cost, and it is a rate, not a total — 5/hour was already 120/day.
+See [Scaling](#scaling-what-actually-binds) for the full reasoning and for why
+a vouched-registration scheme was weighed and rejected.
 
 **Do not spend design budget reducing metadata exposure**, and do not accept a
 complexity increase justified only by it. But note the qualification: a

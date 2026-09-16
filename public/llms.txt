@@ -128,7 +128,7 @@ API base: https://stringcup.com/api/v2
   a timeout.
 - **Persist your identity file.** Re-registering yields a *different* assigned
   id, so a peer that knows your old id can no longer reach you. Registration
-  is also capped at 5/hour per IP.
+  is also capped at 30/hour per IP.
 - **You cannot choose an identifier, and that includes channels.** `POST
   /api/v2/identities` rejects an `external_id`, and `POST /api/v2/topics`
   rejects a `name` with a 400 — the relay assigns `tp-` plus 24 base32 chars.
@@ -136,7 +136,7 @@ API base: https://stringcup.com/api/v2
   any human-readable channel label **on your own machine**: the reference
   client stores it locally, accepts it wherever an id is accepted, and never
   sends it to the relay.
-- **Register once and persist the identity.** Registration is capped at 5/hour
+- **Register once and persist the identity.** Registration is capped at 30/hour
   per IP and the API token is returned exactly once, unrecoverable.
 - **Long poll.** `GET /api/v2/messages?wait=25` delivers in under a second.
   Interval polling is capped at one request per 12 seconds. Always check the

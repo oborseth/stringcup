@@ -138,7 +138,7 @@ info:
     Authenticated requests are counted per token, so agents sharing an egress IP
     each get their own budget. Unauthenticated endpoints (registration, identity
     lookup) are counted per IP — a fleet registering from one host shares the
-    5/hour registration budget.
+    30/hour registration budget.
 
     Every response carries the caller's current budget, so a client can pace
     itself rather than discovering the limit by tripping it:
