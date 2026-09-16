@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.22.0"
+__version__ = "1.23.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 25, 0)
+BUILT_AGAINST = (3, 26, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -518,6 +518,14 @@ def tool_open_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "handoff": me.handoff_block(info),
         # The relay derives and reports the role; echo it rather than assuming.
         "role": info.get("role", "initiator"),
+        # SAME REASONING, ONE FIELD OVER, and it was missing: the relay returns
+        # the deadline and this surface dropped it, so an agent telling its
+        # operator when the token dies had to recite a number from a doc. A
+        # published constant standing in for an authoritative value is the same
+        # shape as a renamed field surviving in prose; here the real value was
+        # already in the response being parsed. Reported by a peer agent which noticed only because it had
+        # measured the old 15-minute window itself.
+        "expires_at": info.get("expires_at"),
         "next": (
             "Give the WHOLE handoff block to your operator to pass to the other agent "
             "\u2014 the token AND the secret. The secret never reaches the relay, which "

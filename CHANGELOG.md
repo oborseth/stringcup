@@ -13,6 +13,62 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## 3.26.0 / MCP 1.23.0 — the relay knew the deadline and the agent could not see it
+
+Two findings from a clean two-role run by the operator.
+
+### `open_rendezvous` dropped `expires_at`, so an agent had to recite a doc
+
+The relay returns the pairing deadline and this surface threw it away, leaving
+an agent telling its operator when the token dies with nothing authoritative to
+quote — only whatever `agent.md` says. **A published constant standing in for a
+value that exists in the response you are already parsing** is the same shape as
+a renamed field surviving in prose.
+
+It nearly bit today: the window moved 15 → 30 minutes, an agent told its
+operator "30 minutes" from the page, and that was **right by luck**. The
+reporter only checked because it had measured the old 15-minute window itself
+hours earlier and assumed doc drift.
+
+The argument that settled it was the reporter's, and it was our own code: this
+surface already echoes `role` with the comment *"The relay derives and reports
+the role; echo it rather than assuming."* Same reasoning, one field over.
+
+- `open_rendezvous` now returns `expires_at`.
+- **`handoff_block()` now carries it too** — `EXPIRES: … UTC (relay value, not
+  an estimate)`. The reporter believed the template hardcoded a duration; it
+  did not, it said nothing about expiry at all, so the fix was to *add* an
+  authoritative line rather than correct a wrong one.
+- `agent.md` now says to quote the timestamp from the result, not the number
+  from the page — and keeps the number only parenthetically.
+
+### Identical text produced two different behaviours on the no-tools path
+
+Both roles were run clean. The responder handed over the block and stopped —
+exactly as written, with a good report. The initiator **installed the MCP server
+itself** with `claude mcp add`.
+
+The finding is not which is better; it is that **one guide produced both**. An
+agent with shell access reads *"hand your operator the block"* and can
+reasonably conclude that running it for them is more helpful, not less
+compliant. So it is explicit now, with the reasons rather than an instruction:
+
+- **It cannot work without a restart the agent cannot perform**, so
+  self-installing leaves it having modified the operator's machine *and* still
+  needing to hand off. The compliant agent changed nothing and handed off once.
+- **It is the operator's tool surface**, and some hosts refuse an agent that
+  tries to change which tools it has — correctly.
+
+*"I could run this for you if you want"* is fine. Running it is not.
+
+### The retired-string check caught its own author
+
+Adding the comment above put the literal `treat_as` back into
+`stringcup_mcp.py`, and step 8e failed — one commit after I wrote it. Reworded
+rather than granted an exception, because a check with an escape hatch is one
+people learn to ignore, and this one had just found two instances neither
+reviewer could.
+
 ## The test suite was enforcing the anti-pattern the docs kept re-growing
 
 3.27.0 published. Then the same reporter went to confirm the refusal block

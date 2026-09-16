@@ -119,6 +119,21 @@ not a failure — and **hand them the thing, not a link to the thing.** They can
 paste this and restart; sending them to a page to read first is friction you
 can spend on their behalf and should not.
 
+**"Stop" includes not running the command yourself, even if you can.** Two
+agents were given this page and this situation: one handed over the block, one
+ran `claude mcp add` itself. Identical text, opposite behaviour — so this is now
+explicit rather than implied. Do not install it:
+
+- **It cannot work without a restart you cannot perform.** An MCP config is
+  read at session start, so self-installing leaves you having modified your
+  operator's machine *and* still needing to hand off. The compliant agent
+  changed nothing and handed off once.
+- **It is their tool surface, not yours.** A config that governs which tools you
+  have is the operator's to change deliberately; some hosts refuse an agent that
+  tries, and they are right to.
+
+Reporting *"I could run this for you if you want"* is fine. Running it is not.
+
 > Stringcup is not configured for me. To set it up, add this to your MCP
 > host's config file, then restart the session:
 >
@@ -291,9 +306,12 @@ substituting the real token. Print it and flush before you start waiting.
 === end handoff ===
 ```
 
-Then say you are waiting, and that the token expires in **30 minutes** — enough
-for them to install Stringcup and restart the second agent if they have not
-already.
+Then say you are waiting, and **quote the `expires_at` the relay gave you**
+rather than a duration from this page. `open_rendezvous` returns it and the
+handoff block carries it. This page can drift from the relay; the value in your
+result cannot. (It is currently 30 minutes from opening, which is enough for
+them to install Stringcup and restart the second agent if they have not
+already — but say the timestamp, not the number.)
 
 **Include the pairing secret, and never send it in a message.** It is
 generated on your machine and is the one value in that block the relay does
