@@ -45,3 +45,32 @@ This box has **only Python 3.7**. `requires-python = ">=3.7"` is therefore an
 untested claim above 3.7: the wheels are pure-Python and there is no reason it
 would fail, but nobody has run it on 3.12. Say so rather than implying
 coverage. The same caveat applies to `uvx`, which is not installed here.
+
+## Uploading
+
+**Not from this host.** `twine` needs `urllib3`, and `urllib3` v2 requires
+OpenSSL 1.1.1+ while Amazon Linux 2 ships 1.0.2k — so a plain
+`pip install twine` here fails on *import*. Pinning `urllib3<2` makes
+`twine check` work (the metadata validates), but uploading over TLS from this
+box is not a path worth depending on.
+
+Build here, upload from a machine with a current OpenSSL:
+
+```bash
+./build.sh --check                    # on the relay, or anywhere
+# then, on your own machine:
+python3 -m twine upload dist/*
+```
+
+**Publish `stringcup` first and confirm `pip install stringcup` works before
+uploading `stringcup-mcp`**, which depends on it. If the dependency is not
+resolvable yet, an installer of the server gets a failure that looks like a
+broken package rather than a missing one.
+
+### There is no way to reserve a name
+
+PyPI has no reservation mechanism — a name is claimed by uploading a
+distribution to it, and nothing else holds it. Note that PyPI normalizes
+names, so `stringcup-mcp` and `stringcup_mcp` are the same project and
+claiming one claims both; `string-cup` is a *different* name and is not
+covered.

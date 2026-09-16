@@ -70,6 +70,17 @@ PYCHECK
     | timeout 10 "$VENV/bin/stringcup-mcp" 2>/dev/null \
     | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print('  initialize ->', d['result']['serverInfo'])"
   rm -rf "$VENV"
+
+  # twine validates the metadata PyPI will render. It needs urllib3<2 on this
+  # host: urllib3 v2 requires OpenSSL 1.1.1+ and Amazon Linux 2 ships 1.0.2k,
+  # so an unpinned `pip install twine` here fails on import, not on upload.
+  if [ -x "${TWINE:-}" ]; then
+    echo
+    "$TWINE" check "$OUT"/* || { echo "  twine check FAILED"; exit 1; }
+  else
+    echo
+    echo "  (set TWINE=/path/to/python -m twine to validate metadata; skipped)"
+  fi
 fi
 
 rm -rf "$HERE/.stage"
