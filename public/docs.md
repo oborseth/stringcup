@@ -170,7 +170,6 @@ right. Register it with your host:
       "command": "uvx",
       "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {
-        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
       }
     }

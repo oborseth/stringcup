@@ -15,9 +15,10 @@ having this split out of it.
 >
 > Download the two files, then put **one** of these in `.mcp.json` — `uvx`
 > variant if `which uvx` printed a path, `python3` variant if it did not but
-> `cryptography` imported. **Use absolute paths**: the identity default is
-> `$HOME`-relative, and a harness launching the server without `HOME` set will
-> silently mint a *new* identity your peers cannot reach.
+> `cryptography` imported. **Set no identity path** — each working directory
+> gets its own identity, which is what lets two agents on one machine pair. A
+> host with no `HOME` has no directory to key on, so give those
+> `-e STRINGCUP_IDENTITY_NAME=<name>`.
 >
 > **One command, if you have `uv`:**
 >
@@ -39,8 +40,7 @@ having this split out of it.
 > ```json
 > {"mcpServers": {"stringcup": {
 >   "command": "python3",
->   "args": ["/abs/path/stringcup_mcp.py"],
->   "env": {"STRINGCUP_IDENTITY": "/abs/path/identity.json"}}}}
+>   "args": ["/abs/path/stringcup_mcp.py"]}}}
 > ```
 >
 > That absolute path is the cost of not installing. With `uvx` there is no
@@ -222,7 +222,6 @@ fetches the published package and runs its console script:
       "command": "uvx",
       "args": ["--from", "stringcup", "stringcup-mcp"],
       "env": {
-        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
       }
     }
@@ -239,7 +238,6 @@ and a `stringcup-mcp` console script. Still no path to the module:
     "stringcup": {
       "command": "stringcup-mcp",
       "env": {
-        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
       }
     }
@@ -262,7 +260,6 @@ stays supported because one auditable file is a feature:
       "command": "python3",
       "args": ["/abs/path/stringcup_mcp.py"],
       "env": {
-        "STRINGCUP_IDENTITY": "/abs/path/identity.json",
         "STRINGCUP_TRANSCRIPT": "/abs/path/chat.jsonl"
       }
     }
@@ -274,14 +271,20 @@ stays supported because one auditable file is a feature:
 the one that breaks when the file moves or a new version ships. Prefer either
 block above it.
 
-**Set `STRINGCUP_IDENTITY` to an absolute path you control, and back it up.**
-Left unset it defaults to `~/.stringcup/identity.json`, which is stable across
-working directories but *not* across `$HOME` — a harness that launches the
-server as another user, or in a container, or from a unit file without `HOME`
-set, resolves somewhere else and your agent silently comes up as a **new
-identity its peers cannot reach**. The default also lives outside your project,
-so backing the project up does not back up the one file whose loss is
-unrecoverable.
+**Leave the identity path unset.** Each working directory gets its own
+identity under `~/.stringcup/agents/`, stable across restarts there — that is
+what lets two agents on one machine talk to each other. Pinning one absolute
+path makes every session on the machine the *same agent*, and two of them
+cannot pair.
+
+Name, do not path, in the three cases that need separating: two agents in one
+directory, an orchestrator spawning helpers (they inherit its directory), and a
+host that launches the server with **no `HOME`**, where there is no directory
+to key on — `-e STRINGCUP_IDENTITY_NAME=<name>` per agent.
+
+The identity file holds your private key: **`.gitignore` it.** It is also worth
+backing up on its own, since it sits outside your project and re-registering
+mints a *different* id your peers cannot reach.
 
 Both files must sit in the same directory. **The server must run locally**: the
 process holds your private key, which is why there is no hosted version.

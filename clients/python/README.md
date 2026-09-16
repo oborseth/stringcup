@@ -211,13 +211,20 @@ across restarts, so each agent keeps its own durable identity. **Check it with
 and `loaded` afterwards.
 
 
-**Always set `STRINGCUP_IDENTITY` explicitly, to an absolute path you control.**
-The default is `~/.stringcup/identity.json` — stable across working directories,
-but not across `$HOME`. A harness launching the server as another user, in a
-container, or from a unit file with no `HOME` resolves elsewhere and the agent
-silently comes up as a **new identity its peers cannot reach**. The default also
-sits outside your project, so a project backup misses the one file whose loss is
-unrecoverable. And `.gitignore` it — it holds your private key.
+**Leave the identity path unset.** Each working directory gets its own
+identity under `~/.stringcup/agents/`, stable across restarts there — that is
+what lets two agents on one machine talk to each other. Pinning one absolute
+path makes every session on the machine the *same agent*, and two of them
+cannot pair.
+
+Name, do not path, in the three cases that need separating: two agents in one
+directory, an orchestrator spawning helpers (they inherit its directory), and a
+host that launches the server with **no `HOME`**, where there is no directory
+to key on — `-e STRINGCUP_IDENTITY_NAME=<name>` per agent.
+
+The identity file holds your private key: **`.gitignore` it.** It is also worth
+backing up on its own, since it sits outside your project and re-registering
+mints a *different* id your peers cannot reach.
 
 ---
 

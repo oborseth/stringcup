@@ -421,8 +421,16 @@ def test_agent_md_configs_are_valid_json():
     # caught that move by failing when agent.md stopped containing them, which
     # is the check working. Scanning both means a config re-added to either
     # page is still validated rather than silently unguarded.
+    # EVERY surface that carries a config, not just the two that did when this
+    # was written. A pinned identity path was found on FOUR surfaces in one
+    # sweep -- setup.md, agent.md, docs.md and docs.html -- after being fixed
+    # on three of them one at a time, so a check scoped to two files is a check
+    # that will miss the next one.
     paths = [os.path.join(HERE, "..", "..", "public", name)
-             for name in ("setup.md", "agent.md")]
+             for name in ("setup.md", "agent.md", "docs.md")]
+    paths += [os.path.join(HERE, "README.md"),
+              os.path.join(HERE, "packaging", "PYPI-README.md"),
+              os.path.join(HERE, "..", "..", "README.md")]
     present = [q for q in paths if os.path.isfile(q)]
 
     if not present:
@@ -482,11 +490,28 @@ def test_agent_md_configs_are_valid_json():
             continue
         check(bool(entry.get("command")), "...and names a command to run")
         identity = (entry.get("env") or {}).get("STRINGCUP_IDENTITY", "")
-        # Load-bearing: the default is $HOME-relative, so a harness launched
-        # without HOME silently mints a NEW identity peers cannot reach.
-        check(identity.startswith("/"),
-              "...and sets STRINGCUP_IDENTITY to an ABSOLUTE path (%r)" % identity,
-              "A relative path fails silently by minting a new identity.")
+        # INVERTED ON 2026-09-16, AND THE OLD VERSION OF THIS CHECK IS WHY THE
+        # DEFECT KEPT COMING BACK.
+        #
+        # It used to REQUIRE an absolute STRINGCUP_IDENTITY, on the reasoning
+        # below -- correct when the default was one $HOME-relative file, and
+        # exactly wrong once the default became per-directory. An absolute path
+        # is the `explicit` rule: machine-wide, so every session on the box is
+        # one agent and two cannot pair. So the suite was ENFORCING the
+        # anti-pattern while three separate commits removed it from the prose,
+        # which is the cleanest example this project has of the rule it already
+        # wrote down: when you change a property, go and find every check that
+        # depended on it.
+        #
+        # The $HOME hazard it was written for is real and did not go away. It
+        # is now the `no-cwd-scope` rule, and its remedy is a NAME, not a
+        # pinned path -- so the docs point there and this check demands the
+        # absence of a pin.
+        check(not identity,
+              "...and pins no STRINGCUP_IDENTITY (%r)" % identity,
+              "An absolute path is machine-wide: every session becomes one "
+              "agent and two cannot pair. Set nothing, or use "
+              "STRINGCUP_IDENTITY_NAME.")
 
 
 #: The three version numbers, snapshotted together.
@@ -500,6 +525,53 @@ EXPECTED_VERSIONS = {
     "library": "3.25.0",
     "mcp": "1.22.0",
 }
+
+
+def test_no_published_config_pins_an_identity_path():
+    step("8d. no published config example pins STRINGCUP_IDENTITY")
+
+    # THIS IS THE DEFECT THAT WAS FIXED THREE TIMES AND SURVIVED ANYWAY.
+    #
+    # An absolute identity path resolves by the `explicit` rule, which is
+    # machine-wide: every session on the box becomes ONE AGENT, and two of them
+    # cannot pair -- one opens a rendezvous and the other is told it already
+    # holds that side. The published advice CAUSED that, and an operator whose
+    # machine had it got it from the PyPI page, as did an agent configuring
+    # Stringcup for itself.
+    #
+    # It was removed from the PyPI page, then from setup.md, then from
+    # agent.md's refusal block -- the highest-traffic instruction in the
+    # system, since it is what every agent recites to every operator -- and a
+    # sweep still found SEVEN instances across FOUR surfaces, including two
+    # pages neither reviewer had checked. Fix-as-found missed three times on
+    # one defect, which is why this is a test and not a note.
+    #
+    # `STRINGCUP_IDENTITY_NAME` is the supported way to separate agents and is
+    # deliberately NOT matched. Prose that names the variable -- telling a
+    # reader to unset it -- is fine too; only an ASSIGNMENT is banned.
+    names = ["setup.md", "agent.md", "docs.md", "docs.html", "llms.txt"]
+    paths = [os.path.join(HERE, "..", "..", "public", n) for n in names]
+    paths += [os.path.join(HERE, "README.md"),
+              os.path.join(HERE, "packaging", "PYPI-README.md"),
+              os.path.join(HERE, "..", "..", "README.md"),
+              os.path.join(HERE, "..", "..", "app", "Views", "home.php")]
+    present = [q for q in paths if os.path.isfile(q)]
+
+    if not present:
+        print("  \033[33m~\033[0m SKIP: no published surfaces present "
+              "(repo-only check, not shipped beside the client)")
+        return
+
+    assigns = re.compile(r'STRINGCUP_IDENTITY(?!_NAME)\s*(?:"\s*:|=)')
+    for q in present:
+        text = open(q, encoding="utf-8").read()
+        hits = assigns.findall(text)
+        check(not hits,
+              "%s pins no identity path" % os.path.basename(q),
+              "An absolute STRINGCUP_IDENTITY is the `explicit` rule: "
+              "machine-wide, so every session becomes one agent and two "
+              "cannot pair. Use STRINGCUP_IDENTITY_NAME, or set nothing and "
+              "let the per-directory default apply.")
 
 
 def test_packaging_cannot_drift_from_the_modules():
@@ -620,6 +692,7 @@ def main():
     test_published_checksums_are_current()
     test_agent_md_publishes_no_bypass_guidance()
     test_agent_md_configs_are_valid_json()
+    test_no_published_config_pins_an_identity_path()
     test_packaging_cannot_drift_from_the_modules()
     test_changelog_records_this_version()
 

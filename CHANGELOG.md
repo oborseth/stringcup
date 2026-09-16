@@ -13,6 +13,76 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## The test suite was enforcing the anti-pattern the docs kept re-growing
+
+3.27.0 published. Then the same reporter went to confirm the refusal block
+`agent.md` hands to operators — **the highest-traffic instruction in the whole
+system, since it is what every agent recites to every operator who does not yet
+have the server** — and found it prescribing an absolute
+`STRINGCUP_IDENTITY`. The third surface, fixed the same day the first two were.
+
+So this time I swept instead of fixing what was reported. **Seven instances
+across four surfaces**: `setup.md` (four), `agent.md`, `docs.md`,
+`docs.html` — two of them pages neither reviewer had opened. The reporter
+predicted exactly that and said outright they had not looked: *"I am reporting
+what I read, not what I searched."*
+
+### The cause was a test, and this is the clearest instance of the rule
+
+`test_contract.py` contained:
+
+    check(identity.startswith("/"),
+          "...and sets STRINGCUP_IDENTITY to an ABSOLUTE path")
+
+**The suite required the anti-pattern.** That assertion was correct when the
+default was one `$HOME`-relative file — a relative path really did mint a new
+identity — and became exactly wrong when the default went per-directory, since
+an absolute path is the `explicit` rule and therefore machine-wide. So three
+commits removed the advice from the prose while a test demanded it back.
+
+This project already wrote the rule down: *when you remove or change a
+property, go and find every check that depended on it.* The property removed
+was "the default is one path per user". The check that depended on it was two
+directories away in a file nobody re-read. **It is the cleanest example of that
+rule the project has, and it was found by a reviewer checking a doc, not by
+anyone auditing the suite.**
+
+Inverted, with the reasoning kept in the comment so the next person does not
+restore it. The `$HOME` hazard it was written for is real and did not vanish —
+it is now the `no-cwd-scope` rule, and its remedy is a **name**, not a pin.
+
+### Enforced, not remembered
+
+The reporter's own conclusion was that the fix mattered less than a check:
+*"fix-as-found has now missed three times on one defect."* So:
+
+- **New step 8d** — no published surface may *assign* `STRINGCUP_IDENTITY`,
+  across nine files including `home.php` and the PyPI README.
+  `STRINGCUP_IDENTITY_NAME` is deliberately unmatched, and prose telling a
+  reader to *unset* the variable stays legal: only an assignment is banned.
+- **The existing JSON-validity check widened from two files to six.** It was
+  scoped to `setup.md` and `agent.md`, and I had just edited configs in
+  `docs.md` and `docs.html`. A check scoped to the files that carried configs
+  when it was written is a check that misses the next one.
+
+`test_contract.py` 65 → **86 assertions**. All 12 suites pass.
+
+### Three stale prose passages the regex could not see
+
+`setup.md` twice and `clients/python/README.md` once still told readers to set
+an absolute path in prose rather than in a config block. Rewritten around the
+per-directory default, naming all three cases that need a name instead: two
+agents in one directory, an orchestrator whose helpers inherit its directory,
+and a host started with no `HOME`.
+
+### And two errors of mine, both caught by machines rather than care
+
+Stripping the `env` block left **one closing brace too many** in two files —
+`env` was one of the four closes. The existing JSON check would have caught it;
+I had not re-run it yet. And my first validator reported three legitimate
+non-JSON blocks as invalid, because it matched every fenced `json` block rather
+than the `mcpServers` ones.
+
 ## The page that exists to fix a page was itself wrong in four places
 
 The publishing agent was told to fix the PyPI page, went to build it, **and
