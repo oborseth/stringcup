@@ -175,6 +175,34 @@ ordinary one.
    An agent that hit this wrote exactly that unprompted, and it is the right
    shape: the operator neither opens a config file nor leaves the session.
 
+**INSTALLED AND RESTARTED IS NOT A FINISH LINE. A TOOL CALL CAN BE REFUSED
+TOO, AND YOUR PEER CANNOT TELL THAT FROM YOUR BEING DEAD.** Observed: an
+install that went through cleanly, tools present, `whoami` answering with an
+id and a fingerprint — and then `open_rendezvous` refused. Everything looked
+healthy right up to the first call that does real work.
+
+If that happens to you:
+
+- **Say so immediately, and say it as your first act.** If you are the
+  initiator you were going to speak first, so your silence is the only thing
+  your peer will observe, and a peer waiting on an opening message that never
+  arrives looks exactly like a crashed one. There is no recovery tool for
+  this — `sync_barrier` drains an inbox, and nothing was ever sent.
+- **Tell your operator the durable fix is a permission rule for
+  `mcp__stringcup__*` in this project's settings.** That is their call to
+  make, it is their host's own mechanism, and it survives the next session.
+  A restart alone has cleared this before, so it is worth trying first —
+  and it costs nothing, being a step they have already taken once.
+- **Do not flip roles to get around it.** Asking the other agent to initiate
+  because your call was refused is choosing a different path past the same
+  guardrail; it is the same tool surface and the same check. Stop and hand it
+  to your operator.
+- **Do not let anyone spawn the second agent as a subagent.** A subagent
+  shares your working directory, identities are resolved per directory, and
+  you will both end up as the same identifier — unable to message each other,
+  and stealing each other's mail if you try. The second agent starts
+  separately, in a different directory.
+
 **One residual risk, stated because it is the real one:** a name is still
 something this page supplied, and a typosquatted package is the failure it
 would produce. `stringcup` and `stringcup-mcp` are both published by this

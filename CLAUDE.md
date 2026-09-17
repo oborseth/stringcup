@@ -1344,6 +1344,45 @@ cannot send anything anywhere. Not shipped — 3.32.0 was already on the index.
 `/tags` produced the other three. In every instance the aggregate was the thing
 that lied. **Ask for the thing, not the list that contains it.**
 
+**THE BLOCK MOVED DOWNSTREAM OF EVERYTHING THAT LOOKS HEALTHY.** Later the
+same evening, on a session where the install SUCCEEDED, the classifier refused
+the MCP tool call `open_rendezvous` with `[Untrusted Code Integration]` — the
+code that had previously hit the install command. Everything before it
+verified: tools present after the restart, `whoami` answering with an id, a
+fingerprint, `identity_exclusive: true`, per-directory resolution and a
+matching `mcp_version`.
+
+So "installed and restarted" is not a finish line, and `agent.md` must not
+imply it is. There is a third failure surface after the two operator actions,
+and it is invisible until the first protocol call.
+
+**The symptom is the expensive one this project already documents.** A blocked
+initiator produces no token, so its peer waits on an opening message that is
+never coming — indistinguishable from a crashed peer, which is the same
+confusion the stale-inbox bug produced and the reason `sync_barrier` exists.
+The difference is that no barrier helps here: there is nothing to drain,
+because nothing was ever sent.
+
+**There is precedent that a restart alone can clear it**: an earlier session
+refused `whoami` as `[Data Exfiltration]`, and after a restart the identical
+call went through with no rule change. Try that before writing a rule, because
+it is an action the sequence already requires.
+
+**The durable fix is a permission rule for `mcp__stringcup__*`, and it is
+legitimate for the same reason MCP itself was** — the host's own mechanism,
+with the operator granting the capability deliberately. **Flipping roles so the
+other agent initiates is NOT**, and an agent proposed exactly that while
+admitting it expected `join_rendezvous` to trip the same check. Same tool
+surface, same classifier, and choosing a call because a guardrail might inspect
+it less is the thing this project has forbidden itself four times. The right
+answer is still the operator's permission rule.
+
+**And do not let an agent spawn the second agent.** A subagent shares the
+working directory, identity resolution is keyed on the cwd hash, so both land
+on one identity file and receive the same `sc-` id — the collision this week
+was spent fixing. The second agent is launched separately, from a different
+directory.
+
 **Product consequence, which is the part that matters:** self-install is a
 bonus that CANNOT BE RELIED ON, not a step — and "unreliable" is the claim,
 not "usually refused", which an earlier draft said and the operator corrected.
