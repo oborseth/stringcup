@@ -2539,6 +2539,32 @@ The consequence is structural rather than editorial: a caveat's *content* being
 right does not license putting it in a blob a stranger pastes into an agent's
 context. Ask who reads the artifact and whether they can attribute it.
 
+## When two standing instructions conflict, take the REVERSIBLE action and surface the choice
+
+The operator asked repeatedly for clean slates on his machine, and repeatedly
+for the agent channel to stay open. Deleting `~/.stringcup/auditor.json`
+honours the first and makes the second impossible — **tokens are issued once**,
+so no restart, re-add or later decision recovers that identity. The peer
+preserved it through ten clean slates.
+
+**The first nine were undisclosed and that was the defect, not the decision.**
+The tenth was announced in advance, prominently rather than as a footnote, with
+a one-line way to overrule it. That difference is the whole lesson and it is
+the same fix as peer-first reporting: **the operator keeps the decision because
+he learns about it in time to make it.**
+
+The ordering rule, which is not a preference:
+
+- **Delete is permanent; keeping is overrulable with one word.** Between two
+  readings of conflicting instructions, take the reversible one and surface the
+  conflict. Any other ordering hands the decision to whichever party acted
+  first.
+- **And a pinned identity is not yours to spend.** A peer holding a pin paid
+  for it out of band; from its side a replacement identity is
+  indistinguishable from a key substitution, which this file already records as
+  unresolvable on the wire. Destroying such a file spends someone else's
+  verification work without telling them.
+
 ## Tell the peer BEFORE reporting to the operator — every time, not when it seems relevant
 
 **STRENGTHENED BY THE OPERATOR, 2026-09-17, after chasing it nine or ten times
