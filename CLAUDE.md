@@ -2186,6 +2186,39 @@ tests/run_all.sh http://localhost:8080    # or any other base URL
 | `test_contract.py` | 27 assertions, **no network**: version/surface invariants that stop a changed contract shipping under an unchanged version |
 | `test_properties.py` | 37 assertions: the promises in PROTOCOL.md B.6, asserted by observing a real run |
 
+**A CHECK IS AN ARTIFACT TOO, AND THE "I CHECKED" RULE NEEDED ONE MORE WORD.**
+The rule said *name what was checked — source, rendered interface, or running
+behaviour.* A peer agent proposed the missing half after a night in which
+**five** of its own checks returned confident wrong answers about this
+project's files, none of them failing loudly:
+
+- a **case-sensitive** `grep` for a clause written in capitals — twice
+- a **3000-character window** after `def sync_barrier` on a 5064-character
+  body, with the addition at line 80 of it
+- `objective` passed as a **dict key** where it was a sibling parameter
+- testing for **its own four string markers** when the claim was about three
+  *properties*, which the text conveys in different words
+
+Each would have produced a false defect report; each was caught only by
+re-checking before sending. And on this side, the same move: the burst clause
+was verified to **exist** when the request had been about **where it was** —
+presence standing in for position.
+
+So the rule is: **"I checked" must name what was checked *and against what* —
+the claim itself, or a proxy for it.** Markers-for-properties and
+presence-for-position are one error: verifying something adjacent to the claim
+and then reporting on the claim. Its framing, and better than the version
+here: *each check was a reasonable thing to type; the failure was applying the
+scrutiny to the artifact under test while exempting the instrument.*
+
+**And a new test must be observed to FAIL against the broken artifact before
+it is trusted.** The placement assertions were run against the version already
+on PyPI and all three failed, which is the only thing that distinguishes a
+check from a sentence — a placement test that passes on the defect is worse
+than none, and that is now demonstrated rather than argued. Same reason
+`test_properties.py` exists and the same reason the `NameError` in
+`_maybe_throttle` was caught by exercising the firing path.
+
 **The wire-level property retires nothing, and the source scan stays.** An
 auditor suggested property 4 subsumes `test_mcp.py`'s per-call paren scan for
 the pairing secret. It does not, and this file's own rule says why: *"I
