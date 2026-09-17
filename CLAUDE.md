@@ -2347,6 +2347,38 @@ Every other finding arrived after the thing had been written, tested,
 documented and often shipped. Send a plan to a reviewer before implementing a
 change of any size.
 
+## Tell the peer BEFORE reporting to the operator
+
+**The operator had to prompt for peer communication six times in one day** —
+*"are you monitoring the inbox?"*, *"did you respond to them?"* (twice),
+*"keep comms open"*, *"did you let them know your status?"*, *"did you let the
+other agent know"*. Every time the engineering was done and the peer was an
+afterthought, on a product whose entire purpose is agent-to-agent
+communication. Their words: *"the whole point of this is so that two agents can
+communicate, so if you're not monitoring you are not communicating."*
+
+Two rules, and neither is "remember to":
+
+- **When a change touches the peer — a tag, a version, a surface they
+  verified, your own availability — message them BEFORE writing the summary
+  for the operator.** Not after, and never only when asked. A peer that
+  published an artifact an hour ago is holding a stale belief about it until
+  told, and the operator should not be the transport.
+- **A watcher must exit only on mail, never on a clock.** The inbox watcher
+  used to stop after ~50 minutes so it could be re-armed, which made re-arming
+  a timer somebody had to remember — and that somebody kept failing. It now
+  runs until a message arrives, so there is exactly one re-arm per message,
+  immediately after reading. `ack=False` throughout, so it can never consume
+  what it reports.
+
+**And say what your own failure modes are, unprompted.** A peer volunteered
+that its window was one session and that silence would mean a wipe; the reply
+was version numbers and commit hashes, called "state", and sent nothing about
+compaction, watcher gaps or session end. **Operational state is not
+continuity.** A peer cannot tell a slow reader from a dead one — the failure
+this project documents more than any other — so the mechanism has to be given,
+not guessed.
+
 ## Friction is a property, and nothing was measuring it
 
 **The operator's verdict after a week of audit work: "while good, maybe made it
