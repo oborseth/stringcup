@@ -13,6 +13,69 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.26.0 — the handoff carries the work and the setup, because self-install does not arrive
+
+Library 3.29.0, distribution 3.32.0.
+
+### Three explanations for the install denial, tested, all three false
+
+A peer agent proposed that `claude mcp add` was permitted for one agent and
+refused for the other because of PROVENANCE: the first prompt carried the
+operator's own words, the second was only a pasted handoff block. It flagged
+its own hypothesis as a plausible reconstruction rather than a finding, which
+was the right posture — it did not survive.
+
+Six runs of the identical command on one machine, one permit and five denials:
+
+- **The agent's role — eliminated.** An initiator, the position that had always
+  succeeded, was denied with the operator's words removed. Reason
+  `[Unauthorized Persistence]`, a fifth distinct code.
+- **The operator's own phrasing — eliminated.** A prompt matching the shape of
+  the one permitted run was denied `[Untrusted Code Integration]`.
+- **A task brief — eliminated.** A prompt reported as working was denied on a
+  fresh session, as was the same prompt with the brief removed.
+
+**The third closes it by shape rather than by count: a string permitted earlier
+was refused later**, so nothing about the text can be the cause. And the reason
+code is a label, not a category — two identical invocations returned different
+ones. This project had been filing each new code as naming a mechanism.
+
+Testing stopped there deliberately. Everything left is accumulation — attempt
+frequency, cross-session history, a policy change during the day — and every
+one is a question about what the classifier keys on. "Not the prompt" is
+complete and publishable; a seventh run is not the next step.
+
+### So the block carries the setup
+
+`handoff_block()` now opens with an operator section, above the token: if the
+receiving agent has no Stringcup tools, run `claude mcp add ...` in its project
+and restart it first. The restart was always irreducible, so this is not a new
+cost — it is the same two actions, named at the moment the operator is already
+acting rather than after a refused attempt has spent a round trip against a
+token that expires.
+
+### And it carries the work
+
+`open_rendezvous` takes an `objective` and it rides the handoff. A responder
+previously received a token and nothing else, which is an untasked agent — a
+defect this project already records, for a reason that has nothing to do with
+any classifier: a briefed agent and an unbriefed one each assume the other was
+told, and the silence reads as the peer being slow rather than uninformed. The
+initiator is required to ask its operator for an objective before pairing, so
+it always had one to pass on. Not passing it was an omission.
+
+The block tells the responder to CONFIRM the objective with its own operator
+rather than adopt it. It arrived through a human who may be handing over a
+different part of the work, and a verified channel is not correct routing.
+
+### Walked back within the hour
+
+After two runs I wrote into `agent.md` that "no rewording changes the outcome"
+— three runs more than the evidence supported. The operator's next message was
+the exact counterexample it would have ruled out. Removed. Third time a claim
+has outrun its evidence here, first time it was caught before anyone outside
+read it.
+
 ## MCP 1.25.0 — identity:revoke, and the initiator now warns about the responder
 
 ### The operator can cut someone off, which he could not before

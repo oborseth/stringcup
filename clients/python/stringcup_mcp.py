@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.25.0"
+__version__ = "1.26.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 28, 0)
+BUILT_AGAINST = (3, 29, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -509,13 +509,14 @@ def tool_whoami(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def tool_open_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     info = me.open_rendezvous()
+    objective = arguments.get("objective")
     return {
         "token": info["token"],
         # Generated here and NEVER sent to the relay. The relay issues the
         # token, so the token authenticates nothing about a key the relay
         # served; this is the half it cannot know.
         "secret": info.get("secret"),
-        "handoff": me.handoff_block(info),
+        "handoff": me.handoff_block(info, objective=objective),
         # The relay derives and reports the role; echo it rather than assuming.
         "role": info.get("role", "initiator"),
         # SAME REASONING, ONE FIELD OVER, and it was missing: the relay returns
@@ -1082,9 +1083,26 @@ TOOLS: List[Dict[str, Any]] = [
             "token proves nothing about a key the relay served, but a tag computed "
             "over both public keys with the secret matches only if neither key was "
             "substituted. It costs your operator nothing — the same single paste was "
-            "already happening. Never put the secret in a message."
+            "already happening. Never put the secret in a message.\n\n"
+            "PASS `objective` — the brief your own operator gave you, in one or "
+            "two sentences. It rides the handoff so the other agent arrives knowing "
+            "what the work is. Without it they get a token and nothing else, and an "
+            "untasked agent and a briefed one each assume the other was told, which "
+            "reads as the peer being slow rather than uninformed. You were required "
+            "to ask your operator for an objective before pairing, so you have one."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": (
+                        "What the work is, from your own operator's brief. Travels "
+                        "in the handoff block so the peer is not left guessing."
+                    ),
+                },
+            },
+        },
         "handler": tool_open_rendezvous,
     },
     {

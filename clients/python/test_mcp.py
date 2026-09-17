@@ -222,9 +222,12 @@ class FakeClient:
             out["secret"] = "ps-" + "s" * 22
         return out
 
-    def handoff_block(self, info, role="responder"):
-        return "STRINGCUP HANDOFF\n  TOKEN: %s\n  SECRET: %s" % (
+    def handoff_block(self, info, role="responder", objective=None):
+        block = "STRINGCUP HANDOFF\n  TOKEN: %s\n  SECRET: %s" % (
             info["token"], info.get("secret"))
+        if objective:
+            block += "\n  OBJECTIVE: %s" % objective
+        return block
 
     def await_peer(self, token, timeout=300.0, secret=None):
         self.pair_calls += 1
@@ -382,9 +385,23 @@ def test_rendezvous_flow():
     opened = call("open_rendezvous")["structuredContent"]
     check(opened["token"].startswith("rv-"), "Relay-issued token returned")
     check(opened["role"] == "initiator", "Opening makes you the initiator")
+    # ASSERT THE PROPERTY, NOT THE PROXY. This used to require the schema be
+    # EMPTY, which was a stand-in for the real rule: the token, the secret and
+    # the role are machine-generated and a caller must not be able to name any
+    # of them. Emptiness enforced that only by accident, and broke the moment a
+    # harmless argument was added — so it would have been "fixed" by deleting
+    # it, taking the actual guarantee with it.
     schema = [t for t in mcp.TOOLS if t["name"] == "open_rendezvous"][0]["inputSchema"]
-    check(not schema.get("properties"),
-          "open_rendezvous takes no arguments — a token cannot be supplied")
+    for forbidden in ("token", "secret", "role"):
+        check(forbidden not in schema.get("properties", {}),
+              "open_rendezvous exposes no %s argument — it is machine-generated"
+              % forbidden)
+
+    opened = call("open_rendezvous", {"objective": "Ship the thing."})["structuredContent"]
+    check("OBJECTIVE: Ship the thing." in opened["handoff"],
+          "The objective rides the handoff block")
+    check("Ship the thing." not in str(fake.sent),
+          "The objective goes in the block, never out as a message")
 
     for tool in ("await_peer", "join_rendezvous"):
         props = [t for t in mcp.TOOLS if t["name"] == tool][0]["inputSchema"]["properties"]

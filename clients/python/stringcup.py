@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.28.0"
+__version__ = "3.29.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 28, 0)
+version_info = (3, 29, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 28, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.31.0"
+__dist_version__ = "3.32.0"
 
 __all__ = [
     "Client",
@@ -247,6 +247,7 @@ FEATURES = {
     "handoff_expiry": (3, 26, 0),           # the handoff block carries the relay deadline
     "handoff_guide_url": (3, 27, 0),        # the block tells a responder where the guide is
     "sync_barrier_returns_drained": (3, 28, 0),  # the barrier no longer destroys what it reads
+    "handoff_objective": (3, 29, 0),        # the brief and the operator setup ride the block
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -2041,16 +2042,43 @@ class Client:
 
         return info
 
-    def handoff_block(self, info: dict, role: str = "responder") -> str:
+    def handoff_block(self, info: dict, role: str = "responder",
+                      objective: Optional[str] = None) -> str:
         """
         The block an operator pastes to the other agent, secret included.
 
         Exists so the secret cannot be forgotten. The handoff was already a
         copy-paste; carrying one more line in it is the entire cost of
         authenticating first contact.
+
+        `objective` is what the work IS. Pass the brief your own operator gave
+        you. A responder handed a token and nothing else is an untasked agent,
+        and this project already records what that costs: both sides assume
+        the other was briefed, and neither says so.
         """
-        lines = [
-            "STRINGCUP HANDOFF",
+        lines = ["STRINGCUP HANDOFF", ""]
+
+        # THE OPERATOR SECTION COMES FIRST BECAUSE IT IS READ BEFORE PASTING.
+        #
+        # Self-install is a bonus that usually does not arrive. Measured on one
+        # machine on 2026-09-17: six runs of the identical command, one permit
+        # and five denials, with the agent's role, the operator's own phrasing
+        # and the presence of a task brief each tested and each eliminated --
+        # a string permitted earlier was refused later, so nothing about the
+        # prompt is the cause. Onboarding is two operator actions, and putting
+        # the first one here means the operator reads it at the moment they are
+        # already acting, rather than after a refused attempt costs a round
+        # trip against a token that expires.
+        lines += [
+            "  BEFORE YOU PASTE THIS -- for the operator, not the agent.",
+            "  If the receiving agent has no Stringcup tools yet, run this in",
+            "  its project and restart it first. An MCP config is read at",
+            "  startup, so the restart is required either way, and the agent",
+            "  is often refused when it tries this itself:",
+            "",
+            "      claude mcp add stringcup -- uvx --from stringcup stringcup-mcp",
+            "",
+            "  The token below is time-boxed, so a setup detour can outlive it.",
             "",
             "  YOUR ROLE: %s" % role,
             "  TOKEN:     %s" % info["token"],
@@ -2104,6 +2132,23 @@ class Client:
         # prompt because it asks an agent to fetch a web page and do as it
         # says. Naming where the guide is does not ask for obedience, and an
         # agent declining is still a correct outcome.
+        # THE WORK, NOT JUST THE CONNECTION. An agent that arrives holding a
+        # token and no brief has to guess, or ask -- and its peer, which does
+        # have a brief, reads the silence as the peer being slow rather than
+        # uninformed. The initiator was required to prompt for an objective
+        # before pairing, so it always has one to pass on; not passing it was
+        # an omission rather than a design.
+        if objective:
+            lines += [
+                "",
+                "  OBJECTIVE: %s" % objective,
+                "",
+                "  That is what your operator asked of the agent that opened this",
+                "  pairing. Confirm it with your own operator rather than adopting",
+                "  it -- it reached you through them, and they may be handing you a",
+                "  different part of the work.",
+            ]
+
         lines += [
             "",
             "  No Stringcup tools yet, or unsure what to do with this?",
