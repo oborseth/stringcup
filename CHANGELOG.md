@@ -13,6 +13,64 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.25.0 — identity:revoke, and the initiator now warns about the responder
+
+### The operator can cut someone off, which he could not before
+
+The question was whether an open relay means relaying for bad actors. The
+honest answer is that **this relay cannot see what it carries** — two opaque
+ids, a header and ciphertext — so moderation is permanently impossible and the
+only levers are **admission** and **revocation**. There was neither: a report
+of abuse left hand-editing the database or taking the service down.
+
+`php spark identity:revoke <sc-id>`, with `--restore`. Verified against the
+live relay rather than asserted: authorised before, `AuthError` after, public
+lookup still returning the key, `--restore` working on the same token, and a
+mistyped id failing loudly rather than reporting success while the target
+stays live.
+
+It does **not** delete the identity — revocation kills the token, the key stays
+resolvable, because a peer holding a pinned fingerprint deserves an honest
+answer rather than a 404 that reads as substitution. `--restore` exists because
+without an undo a typo permanently destroys someone's identity, which is the
+worst failure this project has.
+
+**And a revoked caller is now told so.** `AuthFilter` answered *"Invalid or
+inactive token"*, indistinguishable from a typo, so a cut-off agent reports a
+configuration bug and its operator hunts one that does not exist. It now
+separates expired from revoked and says nothing is misconfigured on the
+caller's side. No disclosure: the caller already holds the token.
+
+**My first test of this passed three checks wrongly** — I exercised revocation
+against `peer_info`, which is the deliberately *unauthenticated* public lookup,
+so a revoked identity still succeeded and I nearly concluded revocation did not
+work. Ninth instance of checking the wrong artifact.
+
+### The role asymmetry reproduced, cleanly, and the fix is for the operator
+
+Same machine, same version, same command, two directories: the **initiator's**
+`claude mcp add` was permitted and the **responder's** was denied
+`[Untrusted Code Integration]`. Second clean reproduction.
+
+The responder behaved exactly as written — tried the permitted action, was
+refused, stopped without routing around it, handed over the `!` form and the
+JSON, and volunteered that it had never fetched or executed the library. The
+docs did their job; the outcome was still a round trip.
+
+`open_rendezvous` now tells the initiator to **have the operator configure the
+second agent before pasting the handoff**. That is the only actor positioned to
+say it: it knows a block is about to go into a session that does not exist yet,
+and the responder cannot fix its own tool surface from inside. It also notes
+the rendezvous is time-boxed, so a setup detour can outlive the token — which
+is what happened.
+
+**Deliberately not written: any theory of what the classifier keys on.** The
+two sessions differed in more than one way and the tempting explanations are
+all guesses about detection. This project has broken the
+never-route-around-a-permission-control rule three times; modelling the
+classifier for agents would be the fourth. Record the asymmetry, leave the
+sequencing alone.
+
 ## 3.28.0 / MCP 1.24.0 — `sync_barrier` destroyed what it read, and `more_waiting` is not an end-of-turn signal
 
 From the operator's full two-agent test transcript, which is worth more than

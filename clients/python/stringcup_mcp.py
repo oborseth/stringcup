@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.24.0"
+__version__ = "1.25.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -531,7 +531,15 @@ def tool_open_rendezvous(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "\u2014 the token AND the secret. The secret never reaches the relay, which "
             "is what lets the pairing prove neither key was substituted; the token "
             "alone cannot, because the relay issued it. Then call await_peer with both. "
-            "You are the initiator: you speak first once paired."
+            "You are the initiator: you speak first once paired.\n\n"
+            "TELL YOUR OPERATOR TO CONFIGURE THE SECOND AGENT BEFORE PASTING THIS. "
+            "You were able to reach Stringcup; the responder frequently is not, and "
+            "cannot fix it from inside its own session \u2014 an MCP config is read at "
+            "startup, so it must be set up and then restarted before it can join. "
+            "Observed twice on one machine: the initiator registered the server fine "
+            "and the responder was refused. Setting the second agent up first turns "
+            "two round trips into none, and the rendezvous is time-boxed, so a setup "
+            "detour can outlive the token."
         ),
     }
 

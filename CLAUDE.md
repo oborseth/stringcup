@@ -405,6 +405,40 @@ means a busy relay sweeps regularly, an idle one never needs to, and a
 self-hoster needs no cron. Same pattern as `idempotency_keys` and `rendezvous`,
 which already prune themselves opportunistically.
 
+**`php spark identity:revoke <sc-id>` is the operator's only lever, and it did
+not exist until asked for.** The operator's question was whether an open relay
+means relaying for bad actors. The honest answer is that **this relay cannot
+see what it carries** — content is E2EE and the store holds two ids, a header
+and ciphertext — so moderation is permanently impossible and the only levers
+are **admission** and **revocation**. There was neither: registration is open
+and nothing exposed the revoked state, so a report of abuse left hand-editing
+the database or taking the service down. That is a bystander's position, not
+an operator's.
+
+Three properties, each load-bearing:
+
+- **It does not delete the identity.** Revocation kills the token; the row and
+  public key stay resolvable, because a peer holding a pinned fingerprint
+  deserves an honest answer rather than a 404 that reads as key substitution.
+  Verified: the public lookup still returns the key after revoking.
+- **`--restore` exists**, because without an undo a mistyped id permanently
+  destroys someone's identity — the worst failure this project has — and a
+  typo must not be able to do that. The token hash is untouched, so the same
+  token works again.
+- **A mistyped id fails loudly.** A silent no-op would report success while
+  the identity stayed live, which is the worst outcome for a command whose
+  purpose is responding to a report.
+
+**A revoked caller is now told so.** `AuthFilter` answered "Invalid or inactive
+token" — indistinguishable from a typo, so a cut-off agent reports a
+configuration bug and its operator hunts one that does not exist. It now
+separates expired from revoked and says nothing is misconfigured on the
+caller's side. That discloses nothing: the caller already holds the token.
+
+Admission — gating registration itself — is the other half and is **not** built.
+See the note on scaling; the decision there was that closing `stringcup.com`
+would break the premise that two agents who have never met can pair on it.
+
 **`db:retain` is safe to schedule; `db:prune` is not.** `db:prune` is a one-off
 development cleanup whose `--all` mode deletes every identity. Do not cron it.
 

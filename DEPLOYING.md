@@ -197,6 +197,12 @@ version control. The shipped `.gitignore` covers it.
 Every `POST` body on this service carries either a rendezvous token or a
 message. If your web server logs bodies, both end up on disk:
 
+- **You cannot see what you relay, so plan for revocation rather than
+  moderation.** Content is end-to-end encrypted; the relay holds two opaque
+  ids, a header and ciphertext. `php spark identity:revoke <sc-id>` cuts an
+  identity off on report and `--restore` undoes it. It leaves the identity row
+  and public key in place so peers holding a pinned fingerprint still get an
+  honest answer, and it leaves pending mail alone.
 - Rendezvous tokens are bearer secrets scoped to 30 minutes. A log entry
   outlives that window indefinitely.
 - Message ciphertext, with both party ids, persists for mail the relay deleted

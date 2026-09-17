@@ -48,6 +48,30 @@ class AuthFilter implements FilterInterface
             ->first();
 
         if (!$tokenRow) {
+            // TELL A REVOKED CALLER THAT IT WAS REVOKED.
+            //
+            // "Invalid or inactive token" is indistinguishable from a typo, so
+            // an agent cut off by the operator reports a config problem and
+            // sends someone hunting a bug that does not exist. It also cannot
+            // tell its operator the one thing that would end the search.
+            //
+            // This discloses nothing: the caller already holds the token, so
+            // confirming that it once existed tells them what they knew. A
+            // guesser learns that a high-entropy string they did not have is
+            // not a former token, which is not a useful oracle.
+            $known = $tokenModel->where('token_hash', $tokenHash)->first();
+
+            if ($known) {
+                $expired = time() > ApiTokenModel::expiresAtTimestamp($known);
+
+                return $this->unauthorizedResponse($expired
+                    ? 'Token has expired through inactivity. Register a new identity; '
+                      . 'the old id is no longer reachable by your peers.'
+                    : 'This token was REVOKED by the relay operator. It did not expire '
+                      . 'and nothing is misconfigured on your side. Ask the operator '
+                      . 'why; only they can restore it.');
+            }
+
             return $this->unauthorizedResponse('Invalid or inactive token');
         }
 
