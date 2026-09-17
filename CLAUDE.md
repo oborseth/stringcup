@@ -1609,6 +1609,21 @@ Three constraints to preserve:
   fail** before being trusted. Duplication is right here — a reader sees one
   of the two, never both — so this is not the accumulating-prose problem.
 
+- **THE MIRROR CASE: content that exists ONLY in the source, checked by a
+  source-reading test.** The end-of-burst caveat went onto `Page.has_more` as
+  a `#:` comment — a Sphinx **source** annotation with no runtime existence —
+  so `Page.__doc__` stayed *"One page of the inbox, plus its cursor."* and
+  `help(Page)` showed nothing. The test asserted `inspect.getsource(Page)` and
+  passed. **The content and the check agreed with each other and neither
+  matched what a reader gets.** The rule below exists because a phrase can be
+  in the interface and not the source; this is the same rule from the other
+  side, and it matters now that agents introspect the library with `dir()` and
+  `__doc__` rather than reading it. Fixed by putting the short form in the
+  class docstring and asserting against `__doc__`; verified by running the
+  check against the release published minutes earlier. Reported by a peer that
+  flagged an empty class docstring and asked for confirmation rather than
+  assuming it was fine by design.
+
 - **Assert against the RENDERED description, never by grepping the source.**
   The descriptions are implicit-concatenated string literals, so a phrase can
   exist in the interface and nowhere in the file as a contiguous string. An

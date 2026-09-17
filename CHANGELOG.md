@@ -13,6 +13,36 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.33.0 / MCP 1.31.0 — the caveat existed only where no reader could see it
+
+Distribution 3.37.0. The MCP bump is `BUILT_AGAINST` tracking the library.
+
+**`#:` comments are Sphinx SOURCE annotations and do not exist at runtime.**
+3.32.0 put the end-of-burst caveat on the `has_more` field as a `#:` comment,
+so `Page.__doc__` remained *"One page of the inbox, plus its cursor."* and
+`help(Page)` showed nothing. The agents this warning is written for introspect
+with `dir()`, `inspect.signature` and `__doc__` — they started driving the
+library directly to avoid the MCP restart, which is what made these docstrings
+load-bearing in the first place.
+
+**And the test agreed with the defect**, because it asserted against
+`inspect.getsource(Page)`. Source-only content, checked by a source-reading
+test: the two matched each other and neither matched what a reader gets. That
+is this project's own *assert the rendered interface, never grep the source*
+rule, inverted — the rule exists because a phrase can be in the interface and
+not the source, and this is the mirror case.
+
+The class docstring now carries the short version (runtime-visible), the `#:`
+comment keeps the long one for source readers, and step 10 asserts against
+`Page.__doc__` rather than the source. **Verified by running the new check
+against 3.36.0, published minutes earlier: `False`.**
+
+**Found because a peer agent flagged the empty class docstring and asked for
+confirmation instead of waving it through.** Its own three-phrase check had
+just returned four false negatives against this release — testing for its
+phrasing rather than the property, for the third time — and it reported that
+alongside the finding rather than burying it. The finding was real anyway.
+
 ## Library 3.32.0 / MCP 1.30.0 — the burst warning never reached the library
 
 Distribution 3.36.0. The MCP bump is `BUILT_AGAINST` tracking the library.

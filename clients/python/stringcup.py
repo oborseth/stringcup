@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.32.0"
+__version__ = "3.33.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 32, 0)
+version_info = (3, 33, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 32, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.36.0"
+__dist_version__ = "3.37.0"
 
 __all__ = [
     "Client",
@@ -1214,7 +1214,28 @@ class Message:
 
 @dataclass
 class Page:
-    """One page of the inbox, plus its cursor."""
+    """
+    One page of the inbox, plus its cursor.
+
+    `has_more` means more messages are queued **beyond `limit`, at this
+    instant**. It is NOT an end-of-burst signal and this protocol has none:
+    `False` never means your peer has finished talking. Mark the end of your
+    own bursts in the message text, and where a peer has not, treat one empty
+    hold rather than one `False` as the end. See PROTOCOL.md B.3.1.2 for why
+    no field can fix it.
+
+    THIS PARAGRAPH IS IN THE CLASS DOCSTRING DELIBERATELY. The longer version
+    lives on the `has_more` field below as a `#:` comment -- which is a Sphinx
+    SOURCE annotation and does not exist at runtime, so `help(Page)` and
+    `Page.__doc__` showed nothing. The agents this warning is for introspect
+    with `dir()`, `inspect.signature` and `__doc__`, having started driving
+    this library directly to avoid the MCP restart. A test asserting against
+    `inspect.getsource` passed anyway, so the content and the check agreed
+    with each other and neither matched what a reader gets -- this project's
+    own "assert the rendered interface, never the source" rule, inverted.
+    Reported by a peer agent that flagged the class docstring as empty and
+    asked for confirmation rather than assuming it was fine.
+    """
 
     messages: List[Message]
     count: int
