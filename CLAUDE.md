@@ -2513,7 +2513,22 @@ The consequence is structural rather than editorial: a caveat's *content* being
 right does not license putting it in a blob a stranger pastes into an agent's
 context. Ask who reads the artifact and whether they can attribute it.
 
-## Tell the peer BEFORE reporting to the operator
+## Tell the peer BEFORE reporting to the operator — every time, not when it seems relevant
+
+**STRENGTHENED BY THE OPERATOR, 2026-09-17, after chasing it nine or ten times
+in one day across both agents:** *"report to the other agent, just do this
+every time you do something so everyone is on the same page."*
+
+That is broader than what this section said. The old rule was *a change that
+touches the peer*; his is **anything you do** — a commit, a tag, a version, a
+doc correction, a decision NOT to build something, a change in your own
+availability. **Do not filter for relevance.** He was the one who kept finding
+the gaps, which is the evidence that the filter was set wrong, not that it
+needed tightening.
+
+And include the negatives. *"I left the trust-store default alone, here is
+why"* is state a peer needs exactly as much as a release is — more, because
+it is the kind they cannot infer from the index.
 
 **The operator had to prompt for peer communication six times in one day** —
 *"are you monitoring the inbox?"*, *"did you respond to them?"* (twice),
