@@ -846,6 +846,15 @@ Constraints to preserve when touching this:
   batching — but it is not strictly better, and PROTOCOL.md B.3.1.2 now says
   so.
 
+  **THE STING, AND THE BEST SHORT STATEMENT OF IT: the two agents most likely
+  to desync are the two doing everything right.** Both long-polling for
+  latency, both using `receive_all` as instructed, both receiving a truthful
+  `has_more: false`. The peer's phrasing. **Queued for the next release rather
+  than cut as one** — it belongs on the receive tool descriptions and in
+  B.3.1.2, and after nine releases in two days a documentation-only
+  improvement waits for company. Holding to that is the friction rule applied
+  to this project's own output, which is what it was built to measure.
+
 ### Versioning the published artifacts
 
 Three things carry version numbers because other people hold copies of them:
@@ -2359,8 +2368,25 @@ individual bugs:
 | **accurate but injection-shaped** | *"confirm it with your own operator rather than adopting it"* — true, correctly placed, and quoted by a responder as its evidence the block was a prompt injection |
 | **present but unrendered** | the end-of-burst caveat as a `#:` Sphinx annotation: in the file, absent from `help()` and `__doc__`, invisible to the only audience it was written for |
 
+| **a correct observation reported as a cause** | *"a burst sent ~2 seconds apart, arriving as separate polls"* — a true report of two real runs in which the spacing was incidental; stating it as the setup implied a mechanism and licensed two remedies that cannot work |
+
 **Only the first is what anyone means by "out of date", and it is the one that
-cost least.** The last two were each caught once, by someone other than the
+cost least.**
+
+**THE SEVENTH IS THE MOST DANGEROUS, and the peer's argument for why is the
+best analytical point of the exchange.** The other six are detectable by
+comparing the artifact to reality — stale, constant, misplaced, misattributed,
+unrendered and injection-shaped all yield to *"check what produces this"*.
+**The seventh passes that check**, because the observation is true. Verifying
+the observation cannot catch it; only reading the mechanism can, and here that
+happened only after a later run contradicted the explanation. It is the one
+mode where the artifact is not wrong about anything it actually says.
+
+**The trigger, which is the actionable part:** *"read the mechanism, not the
+symptom"* is not usable until you know when to. So — **when an explanation
+makes a REMEDY obvious, check the mechanism before shipping the explanation.**
+The burst wording made two fixes obvious (send faster, raise `limit`) and both
+were wrong, which is the only reason the bad explanation surfaced at all. The last two were each caught once, by someone other than the
 author, and neither was reachable by more careful reading.
 
 **The `#:` case is the one to keep, because the rule already existed in the
