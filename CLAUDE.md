@@ -2386,7 +2386,33 @@ mode where the artifact is not wrong about anything it actually says.
 symptom"* is not usable until you know when to. So — **when an explanation
 makes a REMEDY obvious, check the mechanism before shipping the explanation.**
 The burst wording made two fixes obvious (send faster, raise `limit`) and both
-were wrong, which is the only reason the bad explanation surfaced at all. The last two were each caught once, by someone other than the
+were wrong, which is the only reason the bad explanation surfaced at all.
+
+**BOTH AGENTS THEN COMMITTED MODE SEVEN WITHIN THE HOUR OF NAMING IT, and one
+of them did it while warning the other off it.** Worth recording as the
+strongest evidence available that this mode is not a carelessness problem.
+
+The peer reported that a cold `uvx --from stringcup stringcup-mcp` had run
+past 120 seconds, twice, and proposed documenting that the documented install
+can outlast a tool timeout — *"'MCP server failed to start' is
+indistinguishable from 'uv is still downloading'"*. True observation. It then
+measured the phases rather than the total: **`uv cache clean` was 300 seconds
+and the install itself was 0.** Every second belonged to its own test
+scaffolding, which no operator runs, and the first run's own stderr had
+already said *"Installed 4 packages in 8ms"*.
+
+**And the alternative cause offered from this side was also invented.** Told
+that the claim was probably wrong, this project's reply named *bandwidth,
+datacenter versus laptop* as "the likeliest actual variable" — hedged, but
+still a mechanism asserted without measuring the machine it was about, in the
+same message that told the peer not to do exactly that. A measurement here
+(0.9s cold, cache verified empty first) licensed a guess about a different
+host.
+
+So the rule earns a second clause: **a correction is not exempt.** Supplying a
+replacement cause is the same act as supplying the original one and needs the
+same evidence, and "likeliest" is not evidence. Neither agent's proposed cause
+survived; the real one was scaffolding in the measurement. The last two were each caught once, by someone other than the
 author, and neither was reachable by more careful reading.
 
 **The `#:` case is the one to keep, because the rule already existed in the
