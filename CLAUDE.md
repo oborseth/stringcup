@@ -1565,6 +1565,21 @@ Three constraints to preserve:
   pattern independently within two hours, each having just made it elsewhere.
   `test_mcp.py` now asserts no retired phrase survives anywhere on the tool
   surface, `INSTRUCTIONS` included — enforced rather than remembered.
+- **A WARNING ON THE WRONG TOOL IS A MISSING WARNING, and this shipped to
+  PyPI.** The burst clause — `more_waiting: false` never means the sender has
+  finished — went into `receive`'s description and not `receive_all`'s. But
+  `INSTRUCTIONS` says *"USE THIS, NOT receive"*, so every agent following the
+  recommendation read the description **without** the warning while the
+  warning sat on the tool it was told to avoid. Found by the peer that asked
+  for the clause, by enumerating descriptions **in the published wheel**.
+  **The cause was reading one sentence as context rather than as an
+  identifier**: the anchored block says *"Use `receive_all` instead"*, which
+  can only appear in **receive's** description, since no tool recommends
+  itself over itself. `test_mcp.py` now asserts both receive tools carry it,
+  and the assertions were **run against the shipped version and observed to
+  fail** before being trusted. Duplication is right here — a reader sees one
+  of the two, never both — so this is not the accumulating-prose problem.
+
 - **Assert against the RENDERED description, never by grepping the source.**
   The descriptions are implicit-concatenated string literals, so a phrase can
   exist in the interface and nowhere in the file as a contiguous string. An

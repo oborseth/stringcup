@@ -109,7 +109,7 @@ version_info = (3, 30, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.33.0"
+__dist_version__ = "3.34.0"
 
 __all__ = [
     "Client",

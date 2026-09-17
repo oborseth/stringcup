@@ -527,9 +527,9 @@ def test_agent_md_configs_are_valid_json():
 #: snapshots, and for the same reason: a published PyPI version can never be
 #: reused, so the discipline cannot be left to memory.
 EXPECTED_VERSIONS = {
-    "distribution": "3.33.0",
+    "distribution": "3.34.0",
     "library": "3.30.0",
-    "mcp": "1.27.0",
+    "mcp": "1.28.0",
 }
 
 

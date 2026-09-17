@@ -698,6 +698,33 @@ def test_no_contradictory_advice():
           "No retired advice survives anywhere on the tool surface (found: %s)"
           % (present or "none"))
 
+    # A WARNING ON THE WRONG TOOL IS A MISSING WARNING, and this shipped to
+    # PyPI. The burst clause -- more_waiting: false never means the sender is
+    # finished -- was written into `receive`'s description only. But
+    # INSTRUCTIONS says to use receive_all NOT receive, so every agent that
+    # follows the recommendation reads the description WITHOUT the warning
+    # while the warning sits on the tool it was told to avoid. The peer that
+    # asked for the clause found it in the published wheel.
+    #
+    # The cause was reading one sentence as context rather than as an
+    # identifier: the block being edited said "Use receive_all instead",
+    # which can only appear in RECEIVE's description, because no tool
+    # recommends itself over itself.
+    #
+    # Duplication is correct here and is not the accumulating-prose problem:
+    # a reader sees one of these two tools or the other, never both, and the
+    # agent that ignores the recommendation needs the warning MORE.
+    by_name = {t["name"]: t["description"] for t in mcp.TOOLS}
+    for tool in ("receive", "receive_all"):
+        body = by_name[tool].lower()
+        check("at this instant" in body,
+              "%s says more_waiting is a depth reading, not end-of-turn" % tool)
+        check("frame your own bursts" in body,
+              "%s tells the sender to mark the end of its own burst" % tool)
+        check("empty hold" in body,
+              "%s gives the no-marker fallback: one empty hold, not one false"
+              % tool)
+
     # Assertions must read the RENDERED description, never grep the source.
     # An agent nearly filed a false report against this project because
     # `grep -c "correctness requirement"` returned 0: the descriptions are

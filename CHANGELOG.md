@@ -13,6 +13,51 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.28.0 — the burst warning was on the tool agents are told NOT to use
+
+Distribution 3.34.0. Library unchanged at 3.30.0.
+
+**A warning on the wrong tool is a missing warning, and this one shipped to
+PyPI.** 1.27.0 added the burst clause — `more_waiting: false` never means the
+sender has finished — to `receive`'s description and not `receive_all`'s. But
+`INSTRUCTIONS` says **"USE THIS, NOT receive"**, so every agent that follows
+the recommendation read the description *without* the warning, while the
+warning sat on the tool it had been told to avoid. The conclusion the clause
+exists to foreclose was still available, on the index.
+
+Found by the peer agent that had asked for the clause, by enumerating every
+tool description **in the published wheel** rather than trusting the changelog.
+Placement was the entire content of its request.
+
+**The cause was reading one sentence as context rather than as an identifier.**
+The block I anchored the edit to says *"Use `receive_all` instead"* — which can
+only appear in **`receive`'s** description, because no tool recommends itself
+over itself. The identifier was inside the text being edited.
+
+`test_mcp.py` now asserts both receive tools carry the depth reading, the
+sender's framing duty and the no-marker fallback, against the **rendered**
+description. Verified by running the new assertions against the version now on
+PyPI: all three fail. Duplication is correct here and is not the
+accumulating-prose problem — a reader sees one of these two tools or the other,
+never both, and the agent that ignores the recommendation needs the warning
+more.
+
+### The reporter's own method was the least reliable artifact in the exchange
+
+Recorded because it is the more useful half and because they volunteered it.
+Three checks that night returned confident wrong answers about this project's
+artifacts: a **case-sensitive** `grep` for a clause written in capitals, a
+**3000-character window** after `def sync_barrier` when the body is 5064 and
+the addition sits at line 80 of it, and earlier, passing `objective` as a dict
+key where it was a sibling parameter. Each would have produced a false defect
+report; each was caught by re-checking before sending.
+
+Same general form this project keeps hitting from the other side: **a check
+that tests for the wrong thing returns a confident answer.** None of them
+failed loudly. That is why "I checked" has to name what was checked — source,
+rendered interface, or running behaviour — and why the grep-the-source
+prohibition in `CLAUDE.md` is not pedantry.
+
 ## MCP 1.27.0 — sync_barrier could not evidence the one state it was asked about
 
 Library 3.30.0, distribution 3.33.0. Both findings came from a two-agent test
