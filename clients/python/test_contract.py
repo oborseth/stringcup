@@ -144,6 +144,8 @@ EXPECTED_FEATURES = {
     "handoff_guide_url": (3, 27, 0),
     "sync_barrier_returns_drained": (3, 28, 0),
     "handoff_objective": (3, 29, 0),
+    "barrier_transcript_fallback": (3, 30, 0),
+    "handoff_objective_from_info": (3, 30, 0),
 }
 
 
@@ -525,9 +527,9 @@ def test_agent_md_configs_are_valid_json():
 #: snapshots, and for the same reason: a published PyPI version can never be
 #: reused, so the discipline cannot be left to memory.
 EXPECTED_VERSIONS = {
-    "distribution": "3.32.0",
-    "library": "3.29.0",
-    "mcp": "1.26.0",
+    "distribution": "3.33.0",
+    "library": "3.30.0",
+    "mcp": "1.27.0",
 }
 
 

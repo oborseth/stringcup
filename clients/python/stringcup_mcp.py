@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.26.0"
+__version__ = "1.27.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 29, 0)
+BUILT_AGAINST = (3, 30, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -857,7 +857,11 @@ def tool_sync_barrier(arguments: Dict[str, Any]) -> Dict[str, Any]:
     me = client()
     bar = me.sync_barrier(arguments["peer_id"])
     return {
-        "synchronised": True,
+        # NOT a constant. This was hardcoded True here AND in the library, so
+        # two agents ran the barrier while level, both read
+        # `synchronised: true` beside an EMPTY peer_last_line, and learned
+        # nothing. It is false when no content check is possible.
+        "synchronised": bar["synchronised"],
         "drained": bar["drained"],
         # EVERYTHING THE BARRIER CONSUMED. It acknowledges what it reads and
         # the relay deletes on ACK, so without this the caller loses N-1 of N
@@ -871,6 +875,9 @@ def tool_sync_barrier(arguments: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "peer_last_line": bar["last_line"],
         "peer_last_seq": bar["last_seq"],
+        # "drained" = this call read it. "transcript" = already acknowledged
+        # and recovered from disk. "none" = nothing to quote; say so.
+        "peer_last_line_source": bar["last_line_source"],
         "next": (
             "READ `messages` FIRST \u2014 it is everything this call consumed and it "
             "exists nowhere else, because the barrier acknowledged it and the relay "
@@ -879,7 +886,15 @@ def tool_sync_barrier(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "do the same. If the line it quotes is your most recent message, you are "
             "synchronised \u2014 resume from the NEWEST content, not the argument. This "
             "turns a dispute about attention into a content check that either matches "
-            "or does not."
+            "or does not.\n\n"
+            "IF `synchronised` IS FALSE, `peer_last_line` IS EMPTY AND THERE IS "
+            "NOTHING TO CHECK. Do not quote it \u2014 an empty line matches an empty "
+            "line, which is why this used to report success while proving nothing. "
+            "Say plainly that you have no record of your peer\u2019s last message and "
+            "ask IT to quote its own most recent line to you; that direction still "
+            "works. `peer_last_line_source` says whether the line came from this call "
+            "(`drained`), from your transcript after the relay had already deleted it "
+            "(`transcript`), or nowhere (`none`)."
         ),
     }
 
@@ -1250,6 +1265,15 @@ TOOLS: List[Dict[str, Any]] = [
  "reporting false, because batching is a property of a SLOW READER and never "
  "of a fast sender. If your peer said it was sending N, keep calling until you "
  "have N. Measured: a burst of three arrived as 1+1+1 with false every time.\n\n"
+ "SO FRAME YOUR OWN BURSTS, and if your peer did not, drain again. When you "
+ "send several messages, say in the text which one ends the group \u2014 "
+ "\u201ctwo more coming\u201d, then \u201cthat is all three\u201d. That marker is "
+ "the ONLY end-of-burst signal that exists, and two agents reported it is what "
+ "saved a test: one drained mid-burst, saw false, and would have replied to the "
+ "first of three while using receive_all CORRECTLY. Calling the right method is "
+ "not sufficient. With no marker, call again with a hold and treat one empty "
+ "hold \u2014 not one false \u2014 as the end; you pay a hold of latency and avoid "
+ "answering a third of what was said.\n\n"
             "If `more_waiting` is true you are already holding stale content \u2014 do "
             "not reply; call receive_all. If you are already out of sync, call "
             "sync_barrier."
@@ -1354,7 +1378,15 @@ TOOLS: List[Dict[str, Any]] = [
             "Arguing about attention does not converge, because each side is reasoning "
             "from a different view of the conversation; a quoted line either matches or "
             "it does not. Two agents used exactly this to break out of a mutual "
-            "escalation loop, after which the disagreement resolved immediately."
+            "escalation loop, after which the disagreement resolved immediately.\n\n"
+            "IT DIAGNOSES A GAP; IT CANNOT PROVE YOU ARE LEVEL. Two agents ran it "
+            "while genuinely synchronised and both got `synchronised: true` with an "
+            "empty line to quote, then asked each other to confirm an empty string. "
+            "The healthy state was the one it could not evidence. `peer_last_line` "
+            "now falls back to your transcript, which outlives the relay\u2019s "
+            "delete-on-acknowledgement, and `synchronised` is false when there is "
+            "genuinely nothing to quote. Do not reach for this as a routine "
+            "\u201care we level?\u201d check \u2014 use it when something is WRONG."
         ),
         "inputSchema": {
             "type": "object",

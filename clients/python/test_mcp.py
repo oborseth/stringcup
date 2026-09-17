@@ -329,11 +329,23 @@ class FakeClient:
              "fingerprint_short": stringcup.fingerprint_short(self.PUB)},
         ]}
 
+    # `barrier_has_line` exists because the DEFECT was in the empty case: the
+    # library and the MCP layer both hardcoded synchronised=True, so a barrier
+    # run on a healthy inbox reported success beside an empty line and each
+    # side asked the other to confirm an empty string. A stub that can only
+    # produce the happy path cannot catch that -- the same way a stub with the
+    # wrong key name once passed every assertion around peer_public_key.
+    barrier_has_line = True
+
     def sync_barrier(self, peer, timeout=120.0):
         self.barriered = peer
+        if not self.barrier_has_line:
+            return {"drained": 0, "last_text": "", "last_line": "",
+                    "last_seq": None, "last_line_source": "none",
+                    "synchronised": False}
         return {"drained": 4, "last_text": "most recent thing\nsecond line",
                 "last_line": "most recent thing", "last_seq": 42,
-                "synchronised": True}
+                "last_line_source": "drained", "synchronised": True}
 
     def verify_channel_claim(self, sender_id, claim):
         # Mirrors the library: a claim verifies only if both parties are in it.
@@ -1274,6 +1286,23 @@ def test_sync_barrier():
           "Returns the peer's most recent line, which is the verifiable part")
     check("quoting" in payload["next"] or "quot" in payload["next"],
           "Tells the model to send the quoted line back, not to argue")
+    check(payload["peer_last_line_source"] == "drained",
+          "Says where the quoted line came from")
+
+    # THE EMPTY CASE IS THE DEFECT. Two agents ran the barrier while level and
+    # both got synchronised:true beside an empty line, then asked each other to
+    # confirm an empty string -- an empty match being indistinguishable from a
+    # real one. `synchronised` was a hardcoded True in BOTH the library and
+    # this layer, so it could never be false and was not a check.
+    fake.barrier_has_line = False
+    empty = call("sync_barrier", {"peer_id": "sc-" + "c" * 24})["structuredContent"]
+    check(empty["synchronised"] is False,
+          "synchronised is FALSE when no content check is possible")
+    check(empty["peer_last_line_source"] == "none",
+          "Names the absence rather than returning a bare empty string")
+    check("Do not quote it" in empty["next"],
+          "Tells the model NOT to quote an empty line as though it were content")
+    fake.barrier_has_line = True
 
 
 def test_channels():

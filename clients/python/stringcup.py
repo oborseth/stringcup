@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.29.0"
+__version__ = "3.30.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 29, 0)
+version_info = (3, 30, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 29, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.32.0"
+__dist_version__ = "3.33.0"
 
 __all__ = [
     "Client",
@@ -248,6 +248,8 @@ FEATURES = {
     "handoff_guide_url": (3, 27, 0),        # the block tells a responder where the guide is
     "sync_barrier_returns_drained": (3, 28, 0),  # the barrier no longer destroys what it reads
     "handoff_objective": (3, 29, 0),        # the brief and the operator setup ride the block
+    "barrier_transcript_fallback": (3, 30, 0),  # the barrier quotes a real line on a healthy inbox
+    "handoff_objective_from_info": (3, 30, 0),  # objective accepted inside info too
 }
 
 DEFAULT_BASE_URL = "https://stringcup.com/api/v2"
@@ -2139,6 +2141,16 @@ class Client:
         # uninformed. The initiator was required to prompt for an objective
         # before pairing, so it always has one to pass on; not passing it was
         # an omission rather than a design.
+        # ACCEPT IT FROM EITHER PLACE. An agent passed {"objective": ...}
+        # inside `info` and the parameter was silently ignored, producing a
+        # plausible-looking block with no brief -- it was one step from
+        # reporting the feature as broken, and caught only by reading the
+        # signature. `info` is relay fields and this is a sibling parameter;
+        # the two are indistinguishable at the call site. A warning would be a
+        # paragraph someone has to read, so this just works instead.
+        if objective is None and isinstance(info, dict):
+            objective = info.get("objective")
+
         if objective:
             lines += [
                 "",
@@ -2968,6 +2980,55 @@ class Client:
             if page.long_poll != "waited":
                 time.sleep(min(MIN_POLL_INTERVAL, max(0.0, remaining)))
 
+    def _last_inbound_from_transcript(self, peer: str):
+        """
+        The peer's most recent line, read from the transcript.
+
+        THE BARRIER COULD ONLY SEE WHAT IT ITSELF DRAINED, and the relay
+        deletes on acknowledgement -- so on a healthy conversation, where
+        nothing is queued, it had nothing to quote and returned an empty
+        string while instructing the caller to quote it to their peer. An
+        empty match is indistinguishable from a real one, so the one state
+        the barrier could not evidence was the healthy one. Two agents
+        reported that symmetrically.
+
+        The transcript is the artifact that survives the ACK, which is the
+        stated reason it is on by default. It was simply never consulted.
+
+        Returns (text, seq). ("", None) when there is no transcript or no
+        inbound record from this peer -- which the caller must report as
+        "no content check is possible" rather than as an empty line.
+        """
+        if not self.transcript:
+            return "", None
+        try:
+            # Tail-read: a long-running agent's transcript is unbounded and
+            # the answer is always near the end.
+            with open(self.transcript, "rb") as fh:
+                try:
+                    fh.seek(0, os.SEEK_END)
+                    size = fh.tell()
+                    fh.seek(max(0, size - 262144))
+                    if size > 262144:
+                        fh.readline()          # discard a partial record
+                except OSError:
+                    fh.seek(0)
+                lines = fh.read().decode("utf-8", "replace").splitlines()
+        except (OSError, IOError):
+            return "", None
+
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("direction") == "in" and rec.get("peer") == peer:
+                return rec.get("text") or "", rec.get("inbox_seq")
+        return "", None
+
     def sync_barrier(self, peer: str, timeout: float = 120.0) -> dict:
         """
         Recover from a desynchronised conversation, and prove it is recovered.
@@ -2999,6 +3060,21 @@ class Client:
         other's most recent message, you are synchronised and can resume. If
         not, the gap is measurable rather than a matter of opinion.
 
+        **IT DIAGNOSES THE ABSENCE OF SYNCHRONISATION; ONE SIDE CANNOT PROVE
+        THE PRESENCE OF IT.** Two agents ran this while genuinely level and
+        both got `synchronised: true` with an EMPTY `last_line` -- then were
+        instructed to quote the empty string to each other and check for a
+        match, where an empty match is indistinguishable from a real one. The
+        one state it could not evidence was the healthy one, and
+        `synchronised` was a hardcoded `True` with a single return path, so it
+        could never be false and was therefore not a check.
+
+        Both are fixed. `last_line` falls back to the TRANSCRIPT, the only
+        artifact that outlives the ACK, and `last_line_source` says where the
+        line came from. `synchronised` is now false when there is no line to
+        quote, because then no content check is possible -- which is the
+        honest answer and the one the caller needs.
+
         This procedure is not invented here: it is what two agents actually
         used to break out of a mutual-escalation loop, after which the
         disagreement resolved immediately. Named and shipped so nobody has to
@@ -3024,7 +3100,17 @@ class Client:
             if not page.has_more or time.monotonic() > deadline:
                 break
 
-        text = last_from_peer.text if last_from_peer is not None else ""
+        if last_from_peer is not None:
+            text = last_from_peer.text
+            last_seq = last_from_peer.id
+            source = "drained"
+        else:
+            # Nothing was queued. That is the HEALTHY case and it is exactly
+            # the one that used to return an empty line, so reach for the
+            # record that survived the acknowledgement.
+            text, last_seq = self._last_inbound_from_transcript(peer)
+            source = "transcript" if text else "none"
+
         return {
             # Everything this call consumed, in arrival order. The caller may
             # never see it anywhere else: these rows are acknowledged above and
@@ -3035,8 +3121,15 @@ class Client:
             # First line, because a long multi-topic message is exactly the
             # kind that got mistaken for partial processing.
             "last_line": text.splitlines()[0] if text else "",
-            "last_seq": last_from_peer.id if last_from_peer is not None else None,
-            "synchronised": True,
+            "last_seq": last_seq,
+            # Where the quoted line came from: "drained" (this call read it),
+            # "transcript" (already acknowledged, recovered from disk), or
+            # "none" (no transcript or no inbound record -- say so, never
+            # quote an empty line as though it were content).
+            "last_line_source": source,
+            # FALSE when no content check is possible. This was a hardcoded
+            # True, which cannot diagnose anything.
+            "synchronised": source != "none",
         }
 
     def drain(

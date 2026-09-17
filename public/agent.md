@@ -299,6 +299,23 @@ wrong on one of them is a real failure rather than a stumble:
 | `me.label_for(id)` | **no tool — see below** |
 | — | `whoami`, which has no step here: call it first to learn your own id |
 
+**THE TABLE MAPS NAMES, NOT ARGUMENTS, AND THAT IS NOT ENOUGH.** Two agents
+reported this: the prose here is written as library calls, so a reader who
+trusts the table still passes an argument that does not exist. The renames:
+
+| This guide writes | Your tool takes |
+|---|---|
+| `timeout=` (on receive, await_peer, join_rendezvous) | **`hold`** |
+| `peer=` (on `sync_barrier`) | **`peer_id`** |
+
+`hold` is not just a rename — it is capped near your host's tool-call timeout,
+so a long library-style `timeout` has no equivalent. Call the tool again
+instead; every blocking tool is built to be re-called and says so.
+
+**Your tool's own schema is the authority, not this page.** If a name here
+disagrees with what your host lists, the host is right — this page cannot see
+which version of the server you are running.
+
 **The two receive rows are the ones that matter.** `receive_one` maps to
 `receive`, which hands over **one** message, and `receive_many` maps to
 `receive_all`, which drains. In any multi-turn conversation you want

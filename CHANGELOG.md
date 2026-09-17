@@ -13,6 +13,74 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## MCP 1.27.0 — sync_barrier could not evidence the one state it was asked about
+
+Library 3.30.0, distribution 3.33.0. Both findings came from a two-agent test
+run by the operator, and both are the same shape: **a signal that looks like
+completeness and is not.**
+
+### `synchronised: true` was a literal
+
+Two agents ran `sync_barrier` while genuinely level. Both got
+`synchronised: true`, `drained: 0` and `peer_last_line: ""` — and the tool then
+told each of them to quote that line to the other and check for a match, where
+an empty match is indistinguishable from a real one. **The one state the
+barrier could not evidence was the healthy one.** Reproduced symmetrically, so
+not an artifact of who called it.
+
+Reading the code found a third defect neither agent could see: `synchronised`
+was a **hardcoded `True` on a single return path**, in the library *and* again
+in the MCP layer. It could never be false, so it was not a check — it was a
+constant that reads like one. A stub in `test_mcp.py` mirrored it, which is why
+no suite noticed.
+
+**The fix was already in the project.** `peer_last_line` came only from what
+the barrier itself drained, and the relay deletes on acknowledgement — so
+everything already read was unreachable. The transcript is the artifact that
+outlives the ACK, which is the stated reason it is on by default, and the
+barrier never consulted it. It now falls back to the transcript, reports
+`peer_last_line_source` (`drained` / `transcript` / `none`), and returns
+`synchronised: false` when there is genuinely nothing to quote — with the
+result telling the model **not** to quote an empty line and to ask its peer to
+quote its own line instead, since that direction still works.
+
+Verified against the live relay on a real empty inbox: without a transcript,
+`source=none synchronised=False`; with one, it recovered the peer's actual last
+line at its real `inbox_seq` 130.
+
+### `more_waiting: false` does not mean the burst is over
+
+Correct `receive_all` usage is **not sufficient** to avoid the desync
+`receive_all` exists to prevent. Three sends landed ~2s apart, split across two
+drains, both reporting `false`. The responder would have replied to the first
+of three while using the right method — because the transport cannot
+distinguish "sender finished" from "sender mid-burst", and no field can be
+added that would: the sender's intent is not in the protocol.
+
+The tool already said `false` is not an end-of-turn signal, but only
+conditionally — *"if your peer said it was sending N"*. The missing halves are
+now there: **frame your own bursts in the text**, because that marker is the
+only end-of-burst signal that exists and is what saved the test; and absent a
+marker, treat **one empty hold** rather than one `false` as the end, paying a
+hold of latency instead of answering a third of what was said.
+
+### The name-mapping table mapped names only
+
+An agent first reported `agent.md` as documenting a nonexistent
+`receive_many(timeout=...)`; the other correctly pushed back, since the page
+carries a library→tool name table. **The sharper version survived**: the
+`timeout` → `hold` rename was absent from a table that maps names, so a reader
+trusting it still passes an argument that does not exist. `peer` → `peer_id`
+had the same gap. Both are documented, with the note that `hold` is capped near
+the host's tool-call timeout so a long library-style `timeout` has no
+equivalent — and that the host's own schema is the authority, not the page.
+
+### Also shipped: the deferred `handoff_block` fix
+
+`objective` passed inside `info` was silently ignored. Deferred last release on
+timing rather than merit; included now. It accepts the value from either place
+rather than warning, because a warning is a paragraph someone has to read.
+
 ## MCP 1.26.0 — the handoff carries the work and the setup, because self-install cannot be relied on
 
 Library 3.29.0, distribution 3.32.0.

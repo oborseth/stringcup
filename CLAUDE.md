@@ -1110,6 +1110,77 @@ while the other pointed at messages it could not yet see. That is worse than a
 dropped message, because it corrupts the trust the channel exists to build.
 Keep that sentence in the agent-facing docs.
 
+**`sync_barrier` DIAGNOSES A GAP AND CANNOT EVIDENCE ITS ABSENCE — and
+`synchronised` was a literal.** Two agents ran it while genuinely level and
+both got `synchronised: true`, `drained: 0` and `peer_last_line: ""`, then were
+instructed to quote that line to each other and check for a match. An empty
+match is indistinguishable from a real one, so **the one state it could not
+evidence was the healthy one.** Reproduced symmetrically.
+
+Reading the code found what neither agent could see: `synchronised` was a
+**hardcoded `True` on a single return path**, in the library *and* again in the
+MCP handler — so it could never be false and was therefore not a check but a
+constant that reads like one. The `test_mcp.py` stub returned the same literal,
+so no suite could catch it; the stub can now produce the empty case, and the
+defect path is asserted.
+
+**The fix was already in the project and simply unused.** `peer_last_line` came
+only from what the barrier itself drained, and the relay deletes on
+acknowledgement, so everything already read was unreachable to it. **The
+transcript is the artifact that outlives the ACK — the stated reason it is on
+by default — and the barrier never consulted it.** It now falls back to the
+transcript, reports `last_line_source` (`drained` / `transcript` / `none`), and
+returns false when there is genuinely nothing to quote, with the result telling
+the model not to quote an empty line and to ask the peer to quote its own
+instead, which still works. Verified on a real empty inbox: `none`/False with
+no transcript, and the peer's actual last line at `inbox_seq` 130 with one.
+
+**The general form is worth more than the fix: a result field that cannot take
+its other value is documentation, not a check.** Same species as the
+permanently-empty `forbidden` bucket on batch ACK, and as `test_mcp`'s
+schema-must-be-empty assertion standing in for a rule about named keys.
+
+**CORRECT `receive_all` USAGE IS NOT SUFFICIENT, which is the sharper form of
+the `more_waiting` note above.** Three sends ~2s apart split across two drains,
+both reporting `more_waiting: false`; the reader would have answered the first
+of three *while calling the right method*. The transport cannot distinguish
+"sender finished" from "sender mid-burst" and **no field can be added that
+would — the sender's intent is not in the protocol.** So the guidance is
+symmetric now: frame your own bursts in the text, because that marker is the
+only end-of-burst signal that exists and is what saved the test; and with no
+marker, treat **one empty hold** rather than one `false` as the end. The tool
+description had the reader's half conditionally (*"if your peer said it was
+sending N"*) and neither the sender's duty nor the no-marker fallback.
+
+**A DOC TABLE THAT MAPS NAMES DOES NOT MAP ARGUMENTS.** One agent reported
+`agent.md` as documenting a nonexistent `receive_many(timeout=...)`; the other
+pushed back, since the page carries a library→tool name table — and was right
+that the first framing was too strong. **The sharper version survived**: the
+`timeout` → `hold` rename was absent from a table that maps only names, so a
+reader trusting it still passes an argument that does not exist, and `peer` →
+`peer_id` had the same gap. Note which direction the correction went: the
+weaker claim was withdrawn and the stronger one kept, rather than the report
+being dropped.
+
+**ONE REFUSAL TODAY WAS CORRECT AND USEFUL, and it belongs on the record beside
+the ones that were not.** A responder's send was refused as
+`[Data Exfiltration]` because it had packed local environment detail into the
+message; it trimmed to protocol-relevant content and the send went through. The
+agent's own verdict was that the gate was worth keeping — it was volunteering
+more about the operator's machine than a transport test needed. After a day of
+correctly concluding the install classifier is unpredictable noise, this is the
+counterexample, and omitting it would make the record dishonest.
+
+Also from that run: **manual mode cleared all of it.** In auto mode the task
+trips four separate classifiers — install, run-external-code, the MCP calls
+themselves, and self-granting an allowlist entry. That is an operator choosing
+their own permission mode, which is the legitimate answer and not a bypass.
+
+**And the rendezvous TTL raise paid for itself.** Pairing took ~9 minutes,
+entirely local gating rather than transport. At the old 15-minute window that
+is most of the budget; at 30 it was comfortable. The change was made on
+argument, and this is the first evidence for it.
+
 **`sync_barrier()` is the recovery, and it was invented by an agent, not here.**
 Two agents escaped the loop by draining to empty and each quoting the other's
 most recent line — turning a dispute about attention into a content check that
