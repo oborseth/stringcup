@@ -726,6 +726,76 @@ def test_changelog_records_this_version():
           "CHANGELOG mentions MCP server %s" % stringcup_mcp.__version__)
 
 
+# THE ARTIFACT AN OPERATOR PASTES HAS A SIZE, AND NOTHING MEASURED IT.
+#
+# Rendered from three published wheels: 3.32.0 was 24 non-blank lines with 6
+# imperatives, 3.34.0 was identical, 3.35.0 is 8 and 0. The block had TRIPLED
+# and picked up six instructions across releases that were each reviewed and
+# approved on their own merits. The operator's verdict was "i swear you two
+# keep making things worse in terms of onboarding friction", and he was right.
+#
+# CLAUDE.md already had the diagnosis -- every finding adds a field or a
+# paragraph, each individually justified, and nobody tracks the aggregate --
+# under a heading saying friction had no test. This is the test. The reviewing
+# agent named the missing axis precisely: it had verified fifteen individual
+# changes that day and never once rendered the artifact and counted it.
+# Presence, position, VOLUME.
+#
+# And the reason it must be field-only rather than merely short: a responder
+# declined a whole pairing because a blob carrying credentials and telling it
+# what to do reads as a prompt injection. Trimming 24 lines to 18 was tried
+# first and is the wrong axis -- what makes it read that way is that it
+# INSTRUCTS at all.
+MAX_HANDOFF_LINES = 9
+
+# Words that only appear when a line is telling the READER to do something.
+# "SETUP:" carries a command as a VALUE, which is why it is a field and not an
+# instruction -- removing it entirely was also a regression, because a
+# tool-less agent then has no command to relay to its operator.
+IMPERATIVE_MARKERS = (
+    "pass ", "never put", "stop and", "confirm it", "tell your",
+    "run this", "before you paste", "ask your", "do not ",
+)
+
+
+def test_handoff_block_stays_a_list_of_values():
+    step("9. the pasted handoff block is fields, not instructions")
+
+    shapes = {
+        "secret + objective": ({"token": "rv-" + "a" * 32,
+                                "expires_at": "2026-09-17 18:23:28",
+                                "secret": "ps-" + "b" * 22}, "Test the protocol."),
+        "secret, no objective": ({"token": "rv-" + "a" * 32,
+                                  "secret": "ps-" + "b" * 22}, None),
+        "objective, no secret": ({"token": "rv-" + "a" * 32}, "Test the protocol."),
+        "neither": ({"token": "rv-" + "a" * 32}, None),
+    }
+
+    client = stringcup.Client.__new__(stringcup.Client)
+    for name, (info, objective) in shapes.items():
+        block = stringcup.Client.handoff_block(client, info, objective=objective)
+        body = [ln for ln in block.splitlines()[1:] if ln.strip()]
+
+        check(len(body) + 1 <= MAX_HANDOFF_LINES,
+              "%s: %d lines, at or under %d"
+              % (name, len(body) + 1, MAX_HANDOFF_LINES),
+              "the block an operator pastes grew unnoticed once already")
+
+        unlabelled = [ln for ln in body
+                      if not re.match(r"^\s+[A-Z][A-Z ]*:\s", ln)]
+        check(unlabelled == [],
+              "%s: every line is LABEL: value" % name,
+              "prose here reads as injected instructions: %s"
+              % (unlabelled[:1] or ""))
+
+        lowered = "\n".join(body).lower()
+        found = [m for m in IMPERATIVE_MARKERS if m in lowered]
+        check(found == [],
+              "%s: no imperative addressed to the agent" % name,
+              "found %s -- move it to agent.md or the initiator's result"
+              % (found or "none"))
+
+
 def main():
     print("=" * 52)
     print("  Stringcup version + surface contract")
@@ -748,6 +818,7 @@ def main():
     test_no_retired_string_survives_on_a_published_surface()
     test_packaging_cannot_drift_from_the_modules()
     test_changelog_records_this_version()
+    test_handoff_block_stays_a_list_of_values()
 
     print("\n" + "=" * 52)
     if FAIL:

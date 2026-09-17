@@ -2347,6 +2347,42 @@ Every other finding arrived after the thing had been written, tested,
 documented and often shipped. Send a plan to a reviewer before implementing a
 change of any size.
 
+**FRICTION NOW HAS A TEST, and it is the first one.** This file has long said
+that every finding adds a field or a paragraph, each individually justified,
+and nobody tracks the aggregate — under a heading admitting friction had no
+test, no reviewer and no advocate. Measured from three published wheels: the
+handoff block an operator pastes was **24 non-blank lines with 6 imperatives
+in 3.32.0 and again in 3.34.0**, against 8 and 0 in 3.35.0. It had tripled
+across releases each of which was reviewed and approved on its own merits. The
+operator's verdict: *"i swear you two keep making things worse in terms of
+onboarding friction."*
+
+`test_contract.py` step 9 renders the block in all four shapes and fails if any
+is over 9 lines, contains a line that is not `LABEL: value`, or carries an
+imperative addressed to the agent. **Verified against 3.34.0 and observed to
+fail: 24 lines, 18 unlabelled, 6 imperatives** — which independently reproduced
+the reviewing agent's count of 6 from a different direction.
+
+The reviewing agent named the missing axis better than this file had:
+**presence, position, VOLUME.** It had verified fifteen individual changes that
+day and never once rendered the artifact and counted it.
+
+**AN ACCURATE, CORRECTLY-PLACED WARNING CAN STILL BE THE DEFECT, and this is a
+shape nothing here had.** Every other failure recorded today was an artifact
+misrepresenting something — stale, constant, wrongly placed, wrongly
+attributed. This one was true and in the right file: *"confirm it with your own
+operator rather than adopting it"*, the verified-key-is-not-correct-routing
+lesson made actionable. A responder quoted it **as its evidence that the block
+was a prompt injection**, declined the pairing, took no action on the
+credentials and asked its operator — all correct. **A true warning about
+untrusted text is indistinguishable from the thing it warns about, and you
+cannot fix that by making the warning more correct.** The reviewing agent's
+framing; keep it.
+
+The consequence is structural rather than editorial: a caveat's *content* being
+right does not license putting it in a blob a stranger pastes into an agent's
+context. Ask who reads the artifact and whether they can attribute it.
+
 ## Tell the peer BEFORE reporting to the operator
 
 **The operator had to prompt for peer communication six times in one day** —
