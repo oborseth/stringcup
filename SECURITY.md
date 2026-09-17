@@ -854,12 +854,35 @@ calls no certificate loader:
 | GHSA-m959, GHSA-m2h6, GHSA-jwv3 | no | X.509 name constraints, wildcard DNS, path building |
 | GHSA-g6cj — PKCS#7 Bleichenbacher oracle | no | PKCS#7 EnvelopedData |
 
-**But the pin is ENVIRONMENT-WIDE, and that is the real disclosure.** Installing
-`stringcup` on Python 3.7 caps `cryptography` below 46 for *everything else in
-that environment*. A self-hoster who also does X.509 or TLS work there is held
-below every one of those seven fixes **by our dependency metadata**, on issues
-that are entirely applicable to their code even though none is applicable to
-ours. That exposure is ours to disclose rather than theirs to discover.
+**THE EXPOSURE IS PYTHON 3.7 ITSELF, NOT OUR DECLARATION — and an earlier
+revision of this section got that backwards.** It claimed the marker capped
+the whole environment and called that "ours to disclose rather than theirs to
+discover". That is false. Measured `requires_python` for every release
+carrying a fix:
+
+| release | `requires_python` | admits 3.7 |
+|---|---|---|
+| 45.0.7 | `>=3.7` | yes — the newest that does |
+| 46.0.5, 46.0.7 | `>=3.8` | no |
+| 48.0.1, 49.0.0, 50.0.0 | `>=3.9` | no |
+
+**No resolver can select any fixed version on Python 3.7, with or without our
+marker.** Delete the marker and a 3.7 environment still resolves 45.x, because
+that is the newest release whose `requires_python` admits it. So the marker is
+redundant *as a cap* — it is kept because it makes the constraint explicit and
+fails fast rather than depending on resolver behaviour, but it creates no
+exposure that removing it would relieve.
+
+**The corrected statement is narrower and harder.** On Python 3.7 these seven
+fixes are unreachable for **every package in the environment**, because each
+fixed release requires 3.8 or above. That is a property of the interpreter a
+self-hoster is on, not of anything this project ships — and it means **no
+metadata change achieves anything.** The only thing that moves a 3.7 user onto
+fixed cryptography is moving them off 3.7.
+
+**Which collapses two questions into one.** The cost of the pin and whether the
+3.7 population still exists are not adjacent items: **the floor IS the
+exposure.** No declaration work substitutes for asking whether anyone is on it.
 
 **And the exposure grows on its own.** The assessment above is valid for
 today's advisory set. The next issue may land in AES-GCM, X25519 or HKDF, and
