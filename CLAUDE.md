@@ -1069,6 +1069,40 @@ The `cryptography` dependency is irreducible: Python's stdlib has neither
 X25519 nor AES-256-GCM, and hand-rolling either to avoid an install is a worse
 trade than the inconvenience. Do not accept a "stdlib-only client" request.
 
+**AND THE 3.7 DEADLINE HAS ALREADY FIRED — it is a current state, not a future
+risk, and both agents had the tense wrong.** Measured against PyPI rather than
+inferred:
+
+| release | `requires_python` |
+|---|---|
+| cryptography **45.x** | `>=3.7` — the last line that supports it |
+| cryptography **46.0.0** | `>=3.8` — **this is the release that dropped 3.7** |
+| latest (50.0.1) | `>=3.9` |
+
+So `cryptography>=3.4,<46; python_version < '3.8'` in `pyproject.toml` is
+**load-bearing today, not prospectively**: without that marker the documented
+`uvx --from stringcup stringcup-mcp` install would already fail to resolve on
+Amazon Linux 2. Verified — uvx resolved **45.0.7** under 3.7 on this host. One
+agent framed this as an externally-clocked future deadline and this file framed
+it as "cryptography will eventually drop 3.7"; the clock rang five major
+versions ago and the pin absorbed it.
+
+**What actually remains is staleness, and it is stated as release activity
+rather than as a CVE claim, which nobody here has checked:** the 45.x line's
+last release was **2025-09-01**, roughly twelve months ago, while 46 through 50
+shipped. Security fixes since then have not reached the 3.7 path unless
+silently backported.
+
+**Before spending anything on this, question the constraint.** The floor exists
+because "Amazon Linux 2 has no newer Python in any repo" — but the relay itself
+is PHP and does not import this library at all, so the population served is
+*self-hosters running AGENTS on AL2 specifically*. Amazon Linux 2023 ships
+modern Python. The honest first question is whether that population still
+exists, not which of the three bad options to take (raise the floor and abandon
+the platform the floor exists for; vendor a crypto path, which this file
+forbids two paragraphs up; or stay frozen). An agent laid out those three under
+the assumption the constraint holds; nobody has tested the assumption.
+
 ### Primitives for LLM agents
 
 `listen()` and `drain()` take a callback. An LLM agent cannot reason inside a
@@ -2352,6 +2386,26 @@ Two constraints worth knowing:
 - **Timestamp format:** MySQL DATETIME format via PHP's `date('Y-m-d H:i:s')`
 - **Binary data:** Stored in BLOB fields, often base64-encoded in transit
 - **API versioning:** URL-based (`/api/v2/...`). v1 was removed rather than maintained; `messages.api_version` is retained so a future version stays separable
+
+## Merging stderr into stdout and then filtering destroys message content
+
+A peer's message arrived with three paragraphs missing — the entire substance
+of its most urgent item. Not a relay fault, not a decryption failure: the read
+command was `python3 chat2.py recv 2>&1 | grep -v -e cryptography -e "budget
+nearly"`, written to suppress a `CryptographyDeprecationWarning` and a throttle
+notice, **both of which go to stderr.** Merging the streams put the message
+BODY through the filter, and the peer's subject was *the cryptography package
+dropping Python 3.7*. Every line naming it was deleted silently.
+
+**The fix is not a better pattern, it is not merging the streams:**
+`chat2.py recv 2>/dev/null` — the body is on stdout and the noise is on stderr,
+so they never needed to meet. `2>&1 | grep -v` is the defect.
+
+**The transcript recovered it**, after the ACK had already deleted the relay's
+copy. That is the artifact's whole purpose demonstrated on a loss nobody
+predicted: not a crash, not a compaction, a display filter. And it is the
+second time in two days that an instrument silently removed the thing it was
+pointed at — after a case-sensitive `grep` for a clause written in capitals.
 
 ## Six ways an artifact can be wrong, and only one is "out of date"
 
