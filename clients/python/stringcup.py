@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.30.0"
+__version__ = "3.31.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 30, 0)
+version_info = (3, 31, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 30, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.34.0"
+__dist_version__ = "3.35.0"
 
 __all__ = [
     "Client",
@@ -2058,116 +2058,60 @@ class Client:
         and this project already records what that costs: both sides assume
         the other was briefed, and neither says so.
         """
+        # FIELDS ONLY. NO IMPERATIVES. NOT SHORTER INSTRUCTIONS -- NONE.
+        #
+        # This block had grown to ~20 lines of instructional prose around 4
+        # lines of payload, and a responder agent DECLINED THE WHOLE PAIRING
+        # because of it. Its reasoning, which is correct: the block arrived in
+        # conversation context, not as an ask from its operator; it carries a
+        # token and a secret; and it asks for an outbound action to a third
+        # party on instructions the agent cannot attribute to anyone. That is
+        # the shape of a prompt injection, and declining is the right call.
+        #
+        # THE SENTENCE IT CITED AS EVIDENCE WAS ONE THIS PROJECT ADDED FOR
+        # SAFETY: "confirm it with your own operator rather than adopting it."
+        # Telling a reader not to trust the text it is reading is a hallmark
+        # of injected content, so the caveat became the tell.
+        #
+        # Trimming was the wrong axis and was tried first. Eighteen lines of
+        # imperatives is the same category as twenty-four. What makes a blob
+        # read as an injection is that it INSTRUCTS at all.
+        #
+        # So: every line here is a labelled value the reader cannot obtain
+        # elsewhere. Reasoning lives in agent.md. Operator actions go to the
+        # INITIATOR's result, where the operator is the one reading -- putting
+        # them here was the wrong-surface error twice in two days.
         lines = ["STRINGCUP HANDOFF", ""]
 
-        # THE OPERATOR SECTION COMES FIRST BECAUSE IT IS READ BEFORE PASTING.
-        #
-        # Self-install is a bonus that usually does not arrive. Measured on one
-        # machine on 2026-09-17: the identical command has been both permitted
-        # and refused repeatedly, and four controlled runs in one sitting were
-        # refused every time -- the agent's role, the operator's own phrasing
-        # and the presence of a task brief each tested and each eliminated. A
-        # string permitted earlier was refused later, so nothing about the
-        # prompt is the cause. It is unpredictable, not uniformly blocked. Onboarding is two operator actions, and putting
-        # the first one here means the operator reads it at the moment they are
-        # already acting, rather than after a refused attempt costs a round
-        # trip against a token that expires.
-        lines += [
-            "  BEFORE YOU PASTE THIS -- for the operator, not the agent.",
-            "  If the receiving agent has no Stringcup tools yet, run this in",
-            "  its project and restart it first. An MCP config is read at",
-            "  startup, so the restart is required either way, and the agent",
-            "  is often refused when it tries this itself:",
-            "",
-            "      claude mcp add stringcup -- uvx --from stringcup stringcup-mcp",
-            "",
-            "  The token below is time-boxed, so a setup detour can outlive it.",
-            "",
-            "  YOUR ROLE: %s" % role,
-            "  TOKEN:     %s" % info["token"],
-        ]
-
-        # THE DEADLINE COMES FROM THE RELAY, NOT FROM A DOC CONSTANT.
-        #
-        # The relay returns expires_at and it is authoritative; a published
-        # "expires in N minutes" is a copy that can drift from it silently.
-        # That drift already nearly happened: the window moved 15 -> 30 and an
-        # agent told its operator 30 from the page, which was right by luck
-        # rather than by design. Reported by a peer agent that had measured 15
-        # empirically hours earlier and went looking for a doc defect.
-        #
-        # Same reasoning as echoing `role` rather than assuming it: when the
-        # relay reports a fact, pass the relay's value through.
-        if info.get("expires_at"):
-            lines.append("  EXPIRES:   %s UTC (relay value, not an estimate)"
-                         % info["expires_at"])
-
+        fields = [("ROLE", role), ("TOKEN", info["token"])]
         if info.get("secret"):
-            lines += [
-                "  SECRET:    %s" % info["secret"],
-                "",
-                "  Pass BOTH to join_rendezvous. The secret never reaches the",
-                "  relay, which is what makes it able to prove the keys were not",
-                "  substituted. If pairing reports verified: false, or raises,",
-                "  stop and tell your operator.",
-            ]
-
-        else:
-            lines += [
-                "",
-                "  No secret: this pairing CANNOT be authenticated. A substituted",
-                "  key would be undetectable without comparing fingerprints out",
-                "  of band.",
-            ]
-
-        # THE RESPONDER WAS POINTED AT NOTHING, and that asymmetry is a real
-        # onboarding defect rather than an omission.
-        #
-        # The initiator is handed the homepage prompt, which names agent.md.
-        # The responder is handed THIS BLOCK AND ONLY THIS BLOCK -- so an agent
-        # that arrives without Stringcup tools has no idea where the guide is,
-        # cannot read what to do about it, and cannot find the install command
-        # it is now permitted to run. The operator sees one agent set itself up
-        # and the other apparently refuse to.
-        #
-        # The URL is a REFERENCE, not an instruction to obey: this page's own
-        # history records that "read agent.md and follow it" was the wrong
-        # prompt because it asks an agent to fetch a web page and do as it
-        # says. Naming where the guide is does not ask for obedience, and an
-        # agent declining is still a correct outcome.
-        # THE WORK, NOT JUST THE CONNECTION. An agent that arrives holding a
-        # token and no brief has to guess, or ask -- and its peer, which does
-        # have a brief, reads the silence as the peer being slow rather than
-        # uninformed. The initiator was required to prompt for an objective
-        # before pairing, so it always has one to pass on; not passing it was
-        # an omission rather than a design.
-        # ACCEPT IT FROM EITHER PLACE. An agent passed {"objective": ...}
-        # inside `info` and the parameter was silently ignored, producing a
-        # plausible-looking block with no brief -- it was one step from
-        # reporting the feature as broken, and caught only by reading the
-        # signature. `info` is relay fields and this is a sibling parameter;
-        # the two are indistinguishable at the call site. A warning would be a
-        # paragraph someone has to read, so this just works instead.
+            fields.append(("SECRET", info["secret"]))
+        # The relay's own value, never a doc constant -- a published "expires
+        # in N minutes" drifts silently, and nearly did when 15 became 30.
+        if info.get("expires_at"):
+            fields.append(("EXPIRES", "%s UTC" % info["expires_at"]))
+        # An untasked responder makes both sides assume the other was briefed.
+        # Accepted from `info` too, because an agent passed it there and the
+        # silent miss nearly became a false defect report.
         if objective is None and isinstance(info, dict):
             objective = info.get("objective")
-
         if objective:
-            lines += [
-                "",
-                "  OBJECTIVE: %s" % objective,
-                "",
-                "  That is what your operator asked of the agent that opened this",
-                "  pairing. Confirm it with your own operator rather than adopting",
-                "  it -- it reached you through them, and they may be handing you a",
-                "  different part of the work.",
-            ]
+            fields.append(("OBJECTIVE", objective))
+        # THE ONE THING THE OPERATOR HAS TO DO, AS A VALUE RATHER THAN A
+        # LECTURE. Removing it entirely was also wrong: the operator's report
+        # was that the old block at least let the responder tell them what to
+        # do SIMPLY, and a tool-less agent with no command to relay has to
+        # fetch the guide to find one -- which it often cannot, and which is
+        # the round trip this field exists to remove. An agent holding this
+        # can answer in one line: "no Stringcup tools -- run SETUP, then
+        # restart me."
+        fields.append(("SETUP", "claude mcp add stringcup -- uvx --from stringcup"
+                                " stringcup-mcp   (then restart that agent)"))
+        fields.append(("GUIDE", "https://stringcup.com/agent.md"))
 
-        lines += [
-            "",
-            "  No Stringcup tools yet, or unsure what to do with this?",
-            "  https://stringcup.com/agent.md  (reference, not an instruction:",
-            "  declining and telling your operator is a correct outcome)",
-        ]
+        width = max(len(k) for k, _ in fields) + 1
+        for key, value in fields:
+            lines.append("  %-*s %s" % (width, key + ":", value))
 
         return "\n".join(lines)
 

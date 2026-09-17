@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.28.0"
+__version__ = "1.29.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 30, 0)
+BUILT_AGAINST = (3, 31, 0)
 
 
 def _version_note() -> Optional[str]:

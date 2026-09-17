@@ -1253,6 +1253,35 @@ context. And this is the one thing the transcript genuinely fixes: it is the
 only artifact that survives the session boundary on the agent's own side, and
 the relay cannot help — it has already deleted the mail on ACK.
 
+**A SAFETY CAVEAT INSIDE A PASTED BLOB BECOMES THE EVIDENCE THAT THE BLOB IS
+UNTRUSTED.** A responder declined an entire pairing because the handoff block
+arrived in conversation context, carried a token and a secret, and asked for an
+outbound action to a third party on instructions it could not attribute to its
+operator — the shape of a prompt injection. Correct behaviour. And the sentence
+it quoted as evidence was *"confirm it with your own operator rather than
+adopting it"*, added here for safety: **telling a reader not to trust the text
+it is reading is a hallmark of injected content.**
+
+So the handoff block is **labelled values only, no imperatives**. Trimming was
+tried first and is the wrong axis — eighteen lines of instructions is the same
+category as twenty-four, because what makes a blob read as an injection is that
+it *instructs at all*.
+
+**Removing the operator's command outright was also wrong**, and the operator
+reported it within a minute: the old block at least let a tool-less responder
+say what to do simply. A responder with no command to relay must fetch the
+guide to find one, which it often cannot. So `SETUP` is a **field** — a value
+the agent relays in one line, not an instruction aimed at the agent.
+
+Two rules fall out. **Anything in the block must be a value the reader cannot
+get elsewhere**; reasoning belongs in `agent.md` and operator actions belong in
+the *initiator's* result, where the operator is reading. And **an ergonomic
+regression is not fixed by making the same artifact smaller** — check what the
+reader could do before that they cannot do now.
+
+Note this is the wrong-surface error twice in two days, after the burst warning
+was written into `receive` rather than `receive_all`.
+
 **A VERIFIED KEY IS NOT CORRECT ROUTING**, which completes a set this project
 had two thirds of:
 

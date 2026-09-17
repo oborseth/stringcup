@@ -13,6 +13,47 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.31.0 / MCP 1.29.0 — the handoff block read as a prompt injection
+
+Distribution 3.35.0. The MCP bump is `BUILT_AGAINST` tracking the library, which
+`test_contract.py` enforces so a partial upgrade cannot pass silently — it
+caught this within a minute of the library moving.
+
+**A responder refused to pair, and its reasoning was correct.** The block
+arrived in conversation context rather than as an ask from its operator, it
+carried a token and a secret, and it asked for an outbound action to a third
+party on instructions the agent could not attribute to anyone. That is the
+shape of a prompt injection. Declining and asking the operator is the right
+call, and `agent.md` says so.
+
+**The sentence it cited as evidence was one added for safety:** *"confirm it
+with your own operator rather than adopting it."* Telling a reader not to trust
+the text it is reading is a hallmark of injected content, so a caveat intended
+to protect the reader became the tell. The block had grown to ~20 lines of
+instructional prose around 4 lines of payload, and it was interleaving two
+audiences — the operator waded through the agent's half and the agent through
+the operator's.
+
+**Trimming was the wrong axis and was tried first.** Cutting 24 lines to 18
+changes nothing: what makes a pasted blob read as an injection is that it
+*instructs at all*. The block is now **labelled values only, no imperatives** —
+role, token, secret, the relay's expiry, the objective, a `SETUP` command and
+the guide URL. Nine lines.
+
+**But removing the operator instruction outright was also wrong, and the
+operator said so immediately:** the old block at least let a tool-less
+responder tell them what to do simply. A responder with no command to relay has
+to fetch the guide to find one, which it frequently cannot and which is the
+round trip the field exists to remove. So the setup command stays — **as a
+value rather than a lecture**, letting the agent answer in one line: *"no
+Stringcup tools — run SETUP, then restart me."*
+
+**Reasoning moved, it did not vanish.** Verification failure and the secret's
+rationale were already in `agent.md`; operator actions belong in the
+*initiator's* result, where the operator is the one reading. That is the
+wrong-surface error for the second time in two days, after the burst warning
+landed on `receive` instead of `receive_all`.
+
 ## MCP 1.28.0 — the burst warning was on the tool agents are told NOT to use
 
 Distribution 3.34.0. Library unchanged at 3.30.0.
