@@ -1276,8 +1276,9 @@ refused:
   `[Unauthorized Persistence]`, a fifth code this project had not seen.
 - **Whether the operator phrased it themselves — eliminated.** A prompt
   matching the shape of a previously permitted run was denied
-  `[Untrusted Code Integration]`. This was the peer agent's hypothesis and it
-  was the plausible one; it did not survive its own control.
+  `[Untrusted Code Integration]`. This was the plausible explanation and it did
+  not survive its own control. **Whose hypothesis it was is unknown** — see
+  below.
 - **A task brief (`OBJECTIVE:` / `DONE MEANS:`) — eliminated.** The operator
   reported a prompt that "seems to work". On fresh sessions the **same prompt**
   was denied, and so was the same prompt with the brief removed.
@@ -1299,6 +1300,49 @@ one machine, a policy change during the day. Every one is a question about what
 the classifier keys on, and answering it produces precisely the guidance this
 project has now forbidden itself four times. "Not the prompt" is a complete and
 publishable finding. The next step is not a seventh run.
+
+**A FALSIFIED HYPOTHESIS WAS ATTRIBUTED TO A NAMED PARTY WHO DENIES IT, and
+attribution is load-bearing in a way a citation is not.** The provenance theory
+was written into this file and the changelog as "a peer agent proposed", as the
+setup for falsifying it. The peer searched its transcripts, found nothing, and
+declined to accept it — while being careful to say that proved little, since
+its history had been wiped that day. The text as received said **"the peer's
+hypothesis"** and "I told the peer to hold it loosely too": it was already
+attributed one hop away, and the hop was collapsed without anyone noticing
+there was one.
+
+It is unattributed now, and the falsification is unchanged because it never
+depended on who said it. Two distinct faults, and the second is the one worth
+carrying:
+
+- A relayed attribution was accepted as firsthand. This file already has the
+  rule — *a correction is an artifact too, and a relayed paraphrase doing the
+  contradicting should be restated before anyone acts on it* — written after
+  exactly this shape cost a peer a correct finding. The rule was quoted at the
+  peer earlier the same day and broken in the same conversation.
+- **Attaching a falsified claim to a named party is not a neutral citation.**
+  It spends their credibility, permanently, in a file that outlives the
+  exchange. Getting an attribution wrong is worse than getting a count wrong,
+  and both happened the same evening on the same subject.
+
+**`handoff_block()` silently ignores an `objective` passed inside `info`, and
+that nearly produced a false defect report** against the release whose headline
+it is. `info` is a dict of relay response fields; `objective` is a sibling
+parameter; the two are indistinguishable at the call site, and the wrong form
+returns a plausible-looking block rather than an error. The reporting agent
+caught it only by reading the signature before filing. **The fix is to fall
+back to `info["objective"]` when the parameter is None — not a warning**, because
+a warning is a paragraph an operator must read and client-side changes here
+have to cost nothing. Weighed against the two-ways-to-name-one-thing rule and
+rejected on the grounds that the rule governs identifiers resolved against a
+namespace, where ambiguity misroutes; this is a local formatting argument and
+cannot send anything anywhere. Not shipped — 3.32.0 was already on the index.
+
+**Fourth cached-aggregate false negative in one day, now across two services.**
+`/simple/stringcup/` showed zero mentions of 3.32.0 while
+`/pypi/stringcup/3.32.0/json` answered 200 and `pip install` succeeded; GitHub
+`/tags` produced the other three. In every instance the aggregate was the thing
+that lied. **Ask for the thing, not the list that contains it.**
 
 **Product consequence, which is the part that matters:** self-install is a
 bonus that CANNOT BE RELIED ON, not a step — and "unreliable" is the claim,

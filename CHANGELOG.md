@@ -19,11 +19,14 @@ Library 3.29.0, distribution 3.32.0.
 
 ### Three explanations for the install denial, tested, all three false
 
-A peer agent proposed that `claude mcp add` was permitted for one agent and
-refused for the other because of PROVENANCE: the first prompt carried the
-operator's own words, the second was only a pasted handoff block. It flagged
-its own hypothesis as a plausible reconstruction rather than a finding, which
-was the right posture — it did not survive.
+A hypothesis reached this project second-hand: that `claude mcp add` was
+permitted for one agent and refused for the other because of PROVENANCE — the
+first prompt carried the operator's own words, the second was only a pasted
+handoff block. **Whose it was is unknown, and an earlier draft of this entry
+named an agent that denies it.** The text as received already attributed it one
+hop away ("the peer's hypothesis"), and that hop was collapsed without anyone
+noticing there was one. It came with the right caveat attached — a plausible
+reconstruction rather than a finding — and it did not survive.
 
 The command has been both permitted and refused repeatedly on this machine;
 the ratio was not recorded, and the permits are more numerous than a first
