@@ -525,6 +525,74 @@ def property_relay_never_receives_plaintext(work):
             pass
 
 
+def property_payload_survives_byte_for_byte(work):
+    step("5. The payload is OPAQUE BYTES end to end -- nothing on the path "
+         "canonicalises, re-encodes or normalises it")
+
+    # TWO AGENTS REFUSED TO CLAIM THIS AND THEY WERE RIGHT TO. Both reported
+    # unicode "survived intact" and then downgraded it to UNVERIFIED, because
+    # they were reading RENDERED tool output rather than bytes and could not
+    # rule out NFC normalisation somewhere in the path. That is the
+    # "I checked -- of what?" discipline applied to their own pass, unprompted.
+    #
+    # And they were right that it was unverified: PROTOCOL.md claimed
+    # byte-for-byte only of the HKDF `info` string, never of the payload, so
+    # there was no promise here for anything to execute. This is the promise
+    # and its execution, added together as this file's own rule requires.
+    #
+    # The adversarial case is a precomposed character against its decomposed
+    # form. They are DIFFERENT byte sequences that render identically, so any
+    # normalisation anywhere collapses them -- and a test that compares
+    # rendered strings cannot see it happen.
+    reset_rate_limits()
+    a = Client.load_or_register(os.path.join(work, "nfc-a.json"), base_url=BASE,
+                                transcript=None)
+    b = Client.load_or_register(os.path.join(work, "nfc-b.json"), base_url=BASE,
+                                transcript=None)
+
+    precomposed = "caf\u00e9"              # e with acute, single code point
+    decomposed  = "cafe\u0301"             # e + COMBINING ACUTE ACCENT
+    assert precomposed != decomposed, "the two forms must differ as Python strs"
+    assert (precomposed.encode("utf-8") != decomposed.encode("utf-8")), "and as bytes"
+
+    payload = "\n".join([
+        precomposed,
+        decomposed,
+        "\t leading tab and trailing space  ",
+        "zwj: \U0001f469\u200d\U0001f4bb",     # woman technologist, ZWJ sequence
+        "cjk \u4f60\u597d  cyrillic \u043f\u0440\u0438  hebrew \u05e9\u05dc\u05d5\u05dd",
+        "crlf ends this line\r",
+        "x" * 300,
+        '{"json": "in a message", "n": 1}',
+    ])
+
+    a.send(b.id, payload)
+    page = b.receive_many(limit=5, timeout=30)
+    check(len(page.messages) == 1, "One message retrieved",
+          "got %d" % len(page.messages))
+    got = page.messages[0].text
+
+    # THE ASSERTION IS ON BYTES, NOT ON THE STRING. Comparing strs would pass
+    # under a normaliser that rewrote both sides consistently; comparing
+    # encoded bytes cannot.
+    check(got.encode("utf-8") == payload.encode("utf-8"),
+          "Payload is byte-identical after a real round trip through the relay",
+          "%d bytes out, %d back" % (len(payload.encode("utf-8")),
+                                     len(got.encode("utf-8"))))
+
+    # And specifically that the two normalisation forms stayed DISTINCT, which
+    # is the assertion neither agent could make from rendered output.
+    lines = got.split("\n")
+    check(lines[0] == precomposed and lines[1] == decomposed,
+          "Precomposed and decomposed forms survived as DISTINCT sequences",
+          "line0=%r line1=%r" % (lines[0], lines[1]))
+    check(lines[0] != lines[1],
+          "...so nothing on the path applied Unicode normalisation")
+
+    b.ack([m.id for m in page.messages])
+    ok("Acknowledged; %d bytes verified" % len(payload.encode("utf-8")))
+
+
 def main():
     work = tempfile.mkdtemp(prefix="stringcup-props-")
 
@@ -540,6 +608,7 @@ def main():
         property_no_world_readable_plaintext,
         property_atomic_writes_refuse_a_hostile_path,
         property_relay_never_receives_plaintext,
+        property_payload_survives_byte_for_byte,
     )
 
     try:
