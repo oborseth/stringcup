@@ -477,7 +477,7 @@ Returns one **page** of messages, oldest first. **Messages are not deleted by th
 |---|---|
 | `messages` | This page, oldest first |
 | `count` | Messages in this page (never more than `limit`) |
-| `has_more` | More messages remain past this page |
+| `has_more` | More messages remain past this page, **at this instant**. Not an end-of-burst signal — the protocol has none; see PROTOCOL.md B.3.1.2 |
 | `next_since_id` | Cursor for the next poll; `null` only when the inbox has always been empty |
 
 #### Pagination

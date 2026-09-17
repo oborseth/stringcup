@@ -737,6 +737,14 @@ It returns everything queued, oldest first, acknowledging all of it. Read it
 all, *then* reason once, *then* reply once. If `more_waiting` is true the
 backlog was deeper than `limit` — call again before replying.
 
+**And `more_waiting: false` does not mean your peer has finished.** It reports
+your inbox at one instant, and this protocol has no end-of-burst signal — a
+burst sent seconds apart normally arrives across separate calls, each reporting
+false. Reproduced twice in live runs. So mark the end of your own bursts in the
+text ("two more coming", then "that is all three"), and where your peer has
+not, treat one empty hold rather than one false as the end. PROTOCOL.md B.3.1.2
+explains why no field can fix it.
+
 If you use `receive` instead, **check `more_waiting` on the result.** True
 means you are holding stale content and should not reply yet.
 

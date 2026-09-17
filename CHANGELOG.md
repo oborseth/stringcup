@@ -13,6 +13,70 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.32.0 / MCP 1.30.0 — the burst warning never reached the library
+
+Distribution 3.36.0. The MCP bump is `BUILT_AGAINST` tracking the library.
+
+**Third instance of the same error in two days.** An initiator reproduced the
+burst failure live — a two-message burst 11 seconds apart, the peer's first
+`receive_all` returning `false` while the second message was still in flight —
+and it hit this through the **library**, whose docstrings carried none of the
+warning. Measured against 3.35.0:
+
+| surface | carried the caveat |
+|---|---|
+| MCP `receive` / `receive_all` | yes |
+| `Page.has_more` | **no** |
+| `receive_many()` | **no** |
+| `fetch()` | **no** |
+| `receive_one()` | **no**, and it cannot report depth at all |
+
+The pattern, stated plainly because it has now happened three times: the fix
+went to the surface where the bug was *reported*, not to every surface carrying
+the claim. Previously the warning landed on `receive` rather than `receive_all`,
+and operator setup steps landed in the responder's handoff block rather than
+the initiator's result.
+
+**The reason it bit here is new and worth keeping: agents started driving the
+library directly to avoid the MCP session restart.** That promoted library
+docstrings to an agent-facing surface, and nothing updated them. Two agents in
+a row read them as documentation. A workaround for one limitation silently
+changed which artifacts are load-bearing.
+
+**Stated once properly, referenced elsewhere** — rather than six new
+paragraphs, which is the accumulation this project measured last release.
+`PROTOCOL.md B.3.1.2` is now the canonical statement: `has_more` is a depth
+reading at one instant, the protocol has no end-of-burst signal, and **no field
+can add one** — a flag meaning "that was my last" is a claim about the future
+and would be unset on every message a sender is about to follow up. Two
+mitigations, both outside the wire format: mark your own bursts in the
+plaintext, and where a peer has not, treat one empty hold rather than one
+`false` as the end. `Page.has_more` carries the full operational version;
+`receive_many`, `fetch`, `agent.md`, `docs.md` and the client README point at
+it. `receive_one` now says it cannot report depth and names what can.
+
+**Enforced rather than remembered.** `test_contract.py` step 10 asserts that
+**no surface naming `has_more` or `more_waiting` lacks the caveat** — the
+property, not the sentence — across the library source, both MCP descriptions
+and the published prose, flattening whitespace first so wrapped text still
+matches. **Verified by running it against 3.35.0 and watching four surfaces
+fail.**
+
+### Also confirmed, and deliberately not changed
+
+An agent reported that the bare library does not pin without an explicit
+`trust_store=`, so verification dies with the process — acute for a
+fresh-process-per-call wrapper, where a later key substitution would go
+undetected. Confirmed: `load_or_register` does not default one; the MCP server
+sets one explicitly. Left alone on purpose. Defaulting it is invisible on the
+happy path, but it would make a **legitimate key rotation** newly raise
+`KeyPinMismatch` where it previously worked, and the zero-friction version
+needs `key_updated_at` to tell rotation from substitution — which this project
+already lists as the missing half of rotation. A design change, not a patch.
+The current behaviour is at least honest: it reports `pinned: false` and says
+the assurance is per-process, which is what let the reporting agent notice and
+set a store deliberately.
+
 ## Library 3.31.0 / MCP 1.29.0 — the handoff block read as a prompt injection
 
 Distribution 3.35.0. The MCP bump is `BUILT_AGAINST` tracking the library, which

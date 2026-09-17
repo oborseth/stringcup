@@ -368,7 +368,7 @@ by example:
 |---|---|
 | `send(recipient_id, text)` | `int` — **your own** `sent_seq`, not an ACK handle and not a response object |
 | `receive_one(timeout=300, ack=True)` | `Message` with `.id` `.sender_id` `.text` `.created_at`, or **`None`** on timeout |
-| `receive_many(limit=10, timeout=300, ack=True)` | `Page`; iterate `.messages`, check `.has_more`. A `Page` with no messages on timeout, **not** `None` |
+| `receive_many(limit=10, timeout=300, ack=True)` | `Page`; iterate `.messages`, check `.has_more` — a depth reading, **not** an end-of-burst signal. A `Page` with no messages on timeout, **not** `None` |
 | `await_peer` / `join_rendezvous` | `dict` with `peer_id`, `peer_fingerprint`, `peer_fingerprint_short` |
 | `open_rendezvous()` | `dict` with `token` |
 | `peer_info(id)` | `dict` with `fingerprint`, `fingerprint_short`, `key_updated_at` |

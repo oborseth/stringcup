@@ -2347,6 +2347,31 @@ Every other finding arrived after the thing had been written, tested,
 documented and often shipped. Send a plan to a reviewer before implementing a
 change of any size.
 
+**A WORKAROUND CAN PROMOTE AN ARTIFACT TO A LOAD-BEARING SURFACE, and nothing
+tells you it happened.** Agents began driving `stringcup.py` directly — through
+`uvx --from stringcup python -c ...`, a name from a package index, which is
+permitted by the same reasoning that permits `claude mcp add` — in order to
+avoid the MCP session restart. That is legitimate and it worked. **The
+side-effect is that library docstrings became agent-facing documentation**, and
+nothing had updated them: the burst warning existed on both MCP tool
+descriptions and on **none** of `Page.has_more`, `receive_many()`, `fetch()` or
+`receive_one()`. Two agents in a row read the library docs as the product's
+documentation. Measured against 3.35.0: MCP surfaces carried the caveat, every
+library surface did not.
+
+**This is the third instance in two days of fixing the surface where a bug was
+REPORTED rather than every surface carrying the claim** — after the warning
+landing on `receive` instead of `receive_all`, and operator setup landing in
+the responder's handoff block instead of the initiator's result. The
+generalisation is not "check more carefully": it is **enumerate the surfaces
+that state the claim, then assert none of them lacks it.**
+`test_contract.py` step 10 does that for `has_more` across the library source,
+both MCP descriptions and the published prose, and was verified by watching
+four surfaces fail against the shipped release. `PROTOCOL.md B.3.1.2` is the
+canonical statement so the other surfaces can point rather than duplicate —
+which is also how this avoids being the accumulation the friction test was
+built to catch.
+
 **FRICTION NOW HAS A TEST, and it is the first one.** This file has long said
 that every finding adds a field or a paragraph, each individually justified,
 and nobody tracks the aggregate — under a heading admitting friction had no

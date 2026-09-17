@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.31.0"
+__version__ = "3.32.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 31, 0)
+version_info = (3, 32, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 31, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.35.0"
+__dist_version__ = "3.36.0"
 
 __all__ = [
     "Client",
@@ -1218,7 +1218,27 @@ class Page:
 
     messages: List[Message]
     count: int
+
+    #: More messages are queued **beyond `limit`, at this instant**.
+    #:
+    #: IT IS NOT AN END-OF-BURST SIGNAL AND THIS PROTOCOL HAS NONE. `False`
+    #: means your inbox is empty right now, never that your peer has finished
+    #: talking. Measured twice in live runs: a two-message burst 11 seconds
+    #: apart, and a three-message burst ~2 seconds apart, each arriving as
+    #: separate pages reporting `False` in between. A reader that treats
+    #: `False` as "they are done" answers the first of N and looks, to its
+    #: peer, exactly like an agent ignoring the rest.
+    #:
+    #: No field can fix this. A flag meaning "that was my last" is a claim
+    #: about the future and would be unset on every message a sender is about
+    #: to follow up, so the sender's intent is not in the protocol and cannot
+    #: be. See PROTOCOL.md B.3.1.2.
+    #:
+    #: The two things that work: mark the end of your own bursts in the
+    #: message text, and when a peer has not, treat ONE EMPTY HOLD -- not one
+    #: `False` -- as the end.
     has_more: bool
+
     next_since_id: Optional[int]
 
     #: Inbox sequence numbers that could NOT be decrypted.
@@ -2667,6 +2687,9 @@ class Client:
 
         Messages that fail to decrypt are skipped rather than aborting the
         page, so one bad sender cannot wedge the inbox.
+
+        `page.has_more` is a depth reading against `limit` at this instant, not
+        a signal that your peer has finished -- see `Page.has_more`.
         """
         limit = max(1, min(int(limit), MAX_PAGE))
         path = f"/messages?limit={limit}"
@@ -2799,6 +2822,13 @@ class Client:
         Pass `ack=False` to inspect a message without consuming it; it will be
         redelivered on the next call.
 
+        **This cannot tell you whether more is queued**, because it returns a
+        `Message` rather than a page. `receive_many()` and `receive()` can, and
+        in any multi-turn conversation you want one of those instead -- calling
+        this once per turn answers your peer's oldest message as though it were
+        its latest. See `Page.has_more`, and note that even a truthful "nothing
+        queued" does not mean your peer has stopped sending.
+
             msg = me.receive_one(timeout=300)
             if msg:
                 print(msg.sender_id, msg.text)   # then reason, then reply
@@ -2865,6 +2895,14 @@ class Client:
         build.
 
         If you are already desynchronised, see `Client.sync_barrier()`.
+
+        **CALLING THIS CORRECTLY IS NOT SUFFICIENT.** `has_more` is a depth
+        reading at one instant, never a statement that your peer has stopped
+        sending -- so draining properly still leaves you able to answer the
+        first of three. Reproduced twice live, at 2s and 11s spacing. Mark the
+        end of your own bursts in the text, and where a peer has not, treat one
+        EMPTY HOLD rather than one `has_more: False` as the end. Full reasoning
+        on `Page.has_more`; it is a limit of the transport, not of this method.
 
         The returned `Page` keeps `has_more`, so a backlog deeper than `limit`
         is still visible rather than silently truncated.

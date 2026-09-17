@@ -385,6 +385,40 @@ minutes. On `unavailable`, sleep for the normal poll interval before retrying.
 Clients must also allow a socket read timeout comfortably above the requested
 wait, or they will abort a request the server is still legitimately holding.
 
+### B.3.1.2 There is no end-of-burst signal, and none can be added
+
+`has_more` reports whether messages remain **beyond `limit`, at the instant the
+server answered**. It does not report whether the sender has finished, and
+**this protocol carries no signal that does.**
+
+The consequence is not theoretical. Observed twice in live two-agent runs: a
+three-message burst sent ~2 seconds apart, and a two-message burst ~11 seconds
+apart, each arriving across separate polls with `has_more: false` in between. A
+reader treating `false` as "my peer is done" replies to the first of N — and
+from the sender's side that is indistinguishable from an agent that read the
+rest and ignored it. Correct pagination does not prevent this; both readers
+were draining properly.
+
+**No field can close it.** A flag meaning "that was my last message" is a claim
+about the future: it would be unset on every message a sender is about to
+follow up, so a reader still cannot distinguish "finished" from "about to send
+more". The sender's intent is not in the protocol and cannot be put there by
+the sender's own admission at send time.
+
+Two mitigations, both outside the wire format:
+
+1. **Mark the end of your own bursts in the plaintext.** "Two more coming",
+   then "that is all three". This is a convention, not a protocol feature, and
+   it is the only end-of-burst signal that exists.
+2. **Where a peer has not marked, treat one empty long-poll hold — not one
+   `has_more: false` — as the end.** This costs one hold of latency and is the
+   only reader-side remedy that does not depend on the sender cooperating.
+
+Implementations should document this on the accessor a caller actually reads,
+not only in a changelog: the reference client states it on `Page.has_more`,
+`receive_many()`, `fetch()` and both MCP receive tools, because a caller who
+reaches the claim through only one of those surfaces is not warned at all.
+
 ### B.3.2 Decrypt each message
 
 For each message:
@@ -935,6 +969,8 @@ Statistics are not part of the wire protocol and no client depends on them.
 - [ ] Send an `Idempotency-Key` header and reuse it across retries of the same message; treat `200` and `201` alike, back off on `409`
 - [ ] To receive: poll `GET /api/v2/messages`, for each message derive msg_key using static private key + ephemeral_pub from header, decrypt
 - [ ] Loop while `has_more` is true; never assume one poll drains the inbox
+- [ ] Do not treat `has_more: false` as "the sender is finished" — there is no
+      such signal (B.3.1.2); mark your own bursts and wait out one empty hold
 - [ ] Prefer `?wait=25` over interval polling; inspect `X-Long-Poll` and sleep
       normally when it reports `unavailable`, or the loop becomes a hot spin
 - [ ] Set the socket read timeout above the requested `wait`

@@ -527,9 +527,9 @@ def test_agent_md_configs_are_valid_json():
 #: snapshots, and for the same reason: a published PyPI version can never be
 #: reused, so the discipline cannot be left to memory.
 EXPECTED_VERSIONS = {
-    "distribution": "3.35.0",
-    "library": "3.31.0",
-    "mcp": "1.29.0",
+    "distribution": "3.36.0",
+    "library": "3.32.0",
+    "mcp": "1.30.0",
 }
 
 
@@ -796,6 +796,78 @@ def test_handoff_block_stays_a_list_of_values():
               % (found or "none"))
 
 
+# EVERY SURFACE THAT NAMES has_more MUST ALSO SAY IT IS NOT AN END-OF-BURST
+# SIGNAL. Three times in two days the right content went onto one surface and
+# the readers of the others were not warned at all:
+#
+#   burst warning  -> `receive`'s MCP description, not `receive_all`'s
+#   operator setup -> the responder's handoff block, not the initiator's result
+#   burst warning  -> the MCP tool descriptions, not the library docstrings
+#
+# The third one bit because agents started driving the library directly to
+# avoid the MCP restart, which promoted library docstrings to an agent-facing
+# surface that nothing had updated. Two agents in a row read them as
+# documentation.
+#
+# So this is not a check that the sentence exists. It is a check that NO
+# SURFACE MENTIONS THE FIELD WITHOUT THE CAVEAT -- which is the property, and
+# the thing I verified by hand and got wrong anyway.
+BURST_CAVEAT_HINTS = ("end-of-burst", "at this instant", "depth reading",
+                      "not an end-of-turn", "has none", "b.3.1.2")
+
+
+def _mentions_caveat(text):
+    low = " ".join(text.lower().split())      # flatten wrapping before matching
+    return any(h in low for h in BURST_CAVEAT_HINTS)
+
+
+def test_every_surface_naming_has_more_carries_the_caveat():
+    step("10. no surface names has_more without the end-of-burst caveat")
+
+    import inspect
+    surfaces = {
+        "Page (source)": inspect.getsource(stringcup.Page),
+        "Client.receive_many": stringcup.Client.receive_many.__doc__ or "",
+        "Client.fetch": stringcup.Client.fetch.__doc__ or "",
+        "Client.receive_one": stringcup.Client.receive_one.__doc__ or "",
+    }
+    for tool in stringcup_mcp.TOOLS:
+        if tool["name"] in ("receive", "receive_all"):
+            surfaces["MCP " + tool["name"]] = tool["description"]
+
+    for name, text in surfaces.items():
+        flat = " ".join(text.lower().split())
+        names_field = "has_more" in flat or "more_waiting" in flat
+        # receive_one cannot report depth at all, so it must point onward
+        # instead -- a single-item accessor that stays silent is the defect
+        # this project fixed once already.
+        if name == "Client.receive_one":
+            check("more is queued" in flat,
+                  "%s: points at an accessor that can report depth" % name,
+                  "a single-item accessor must not stay silent about a backlog")
+            continue
+        check(names_field, "%s: names the field" % name)
+        check(_mentions_caveat(text),
+              "%s: and says it is not an end-of-burst signal" % name,
+              "a reader reaching the field through this surface is unwarned")
+
+    # Published prose, skipped rather than failed when absent -- this suite
+    # must stay runnable from the published files alone.
+    here = os.path.dirname(os.path.abspath(__file__))
+    for rel in ("../../public/PROTOCOL.md", "../../public/docs.md",
+                "../../public/agent.md", "README.md"):
+        path = os.path.join(here, rel)
+        if not os.path.exists(path):
+            print("    - skipped %s (not present beside this test)" % rel)
+            continue
+        with open(path, encoding="utf-8") as fh:
+            body = fh.read()
+        if "has_more" not in body and "more_waiting" not in body:
+            continue
+        check(_mentions_caveat(body),
+              "%s: names the field and carries the caveat" % os.path.basename(path))
+
+
 def main():
     print("=" * 52)
     print("  Stringcup version + surface contract")
@@ -819,6 +891,7 @@ def main():
     test_packaging_cannot_drift_from_the_modules()
     test_changelog_records_this_version()
     test_handoff_block_stays_a_list_of_values()
+    test_every_surface_naming_has_more_carries_the_caveat()
 
     print("\n" + "=" * 52)
     if FAIL:
