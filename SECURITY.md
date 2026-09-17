@@ -825,6 +825,59 @@ material fact it is — published is not reviewed.
   `LongPollGuard`. If you self-host alongside other sites, keep that cap well
   under `pm.max_children`.
 
+## The Python 3.7 dependency pin, and what it costs
+
+**Disclosed because it is a security property expressed as a version marker,
+and a version marker is not where anyone looks for one.**
+
+`pyproject.toml` declares `cryptography>=3.4,<46; python_version < '3.8'`. That
+ceiling is **load-bearing today, not prospectively**: cryptography 46.0.0
+raised `requires_python` to `>=3.8`, so without the marker a `pip` or `uvx`
+install on Python 3.7 — Amazon Linux 2, which ships nothing newer in any repo —
+would fail to resolve. Verified: `uvx --from stringcup stringcup-mcp` resolves
+cryptography **45.0.7** under 3.7.
+
+**The cost of that ceiling, measured against OSV rather than asserted:** 13
+advisory entries, **7 distinct issues**, affect cryptography 45.0.7. Every fix
+is at 46.0.5 or above, so all 7 are unreachable on the 3.7 path by
+construction. The 45.x line's last release was 2025-09-01.
+
+**None of the 7 is reachable through this library's own API surface.** It
+imports exactly `x25519`, `AESGCM`, `SHA256`, `HKDF` and `serialization`, and
+calls no certificate loader:
+
+| advisory | reachable here | why not |
+|---|---|---|
+| GHSA-r6ph — subgroup attack, SECT curves | no | affects `load_pem/der_public_key()` and `EllipticCurvePublicNumbers`; keys are parsed with `X25519PublicKey.from_public_bytes` |
+| GHSA-p423 — buffer overflow, non-contiguous buffers | no | advisory is scoped to **Python >3.11**, which is not the pinned population, and only `bytes` are passed |
+| GHSA-537c — vulnerable bundled OpenSSL (CVE-2026-45447) | no | use-after-free in `PKCS7_verify()`; never called |
+| GHSA-m959, GHSA-m2h6, GHSA-jwv3 | no | X.509 name constraints, wildcard DNS, path building |
+| GHSA-g6cj — PKCS#7 Bleichenbacher oracle | no | PKCS#7 EnvelopedData |
+
+**But the pin is ENVIRONMENT-WIDE, and that is the real disclosure.** Installing
+`stringcup` on Python 3.7 caps `cryptography` below 46 for *everything else in
+that environment*. A self-hoster who also does X.509 or TLS work there is held
+below every one of those seven fixes **by our dependency metadata**, on issues
+that are entirely applicable to their code even though none is applicable to
+ours. That exposure is ours to disclose rather than theirs to discover.
+
+**And the exposure grows on its own.** The assessment above is valid for
+today's advisory set. The next issue may land in AES-GCM, X25519 or HKDF, and
+nothing re-runs this analysis.
+
+**Three bad options, and a prior question nobody had asked.** Raising the floor
+abandons the platform the floor exists for; vendoring a crypto path is
+something this project forbids elsewhere for good reasons; staying frozen is
+the current state. But the relay is PHP and never imports this library, so the
+population served by the 3.7 floor is **self-hosters running agents on Amazon
+Linux 2 specifically**, and Amazon Linux 2023 ships modern Python. Whether that
+population exists has never been tested, while "do not raise the floor
+casually" sat in the contributor docs as settled. If it is empty or migratable,
+raising the floor costs nothing and closes all seven.
+
+**If you are on Python 3.7:** this library's own operations are unaffected, and
+you should not use that environment for certificate or TLS work.
+
 ## For self-hosters
 
 Running your own relay is the only way to remove "trust the operator" from
