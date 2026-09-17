@@ -90,7 +90,7 @@ stringcup.require_features("short_timeouts", "sent_seq", "inbox_quota_errors",
                            "verified_pairing_pins", "local_pairing_role",
                            "header_framed_verify", "undecryptable_visible", "structural_pin_rollback")
 
-__version__ = "1.31.0"
+__version__ = "1.32.0"
 
 #: The MCP revision this server implements.
 PROTOCOL_VERSION = "2025-06-18"
@@ -129,7 +129,7 @@ _IDENTITY_EXCLUSIVE = None
 #:
 #: A newer library is NOT an error: it is usually fine and blocking it would
 #: break legitimate installs. It is reported, not refused.
-BUILT_AGAINST = (3, 33, 0)
+BUILT_AGAINST = (3, 34, 0)
 
 
 def _version_note() -> Optional[str]:
@@ -1333,8 +1333,10 @@ TOOLS: List[Dict[str, Any]] = [
             "\n\nCALLING THIS CORRECTLY IS NOT SUFFICIENT, and that is a LIMIT OF "
             "THE TRANSPORT rather than a caveat about method choice. "
             "`more_waiting: false` means your inbox is empty AT THIS INSTANT, never "
-            "that your peer has finished: a burst of three sent seconds apart "
-            "normally arrives as separate calls each reporting false. Measured \u2014 "
+            "that your peer has finished: a burst of three arrives as separate calls "
+            "each reporting false EVEN WHEN SENT BACK TO BACK, because the relay\u2019s "
+            "hold returns the moment one message lands. Sending faster does not help "
+            "and raising `limit` does not either. Measured \u2014 "
             "an agent drained mid-burst, saw false, and would have answered the "
             "first of three while using THIS tool exactly as instructed. "
             "No field can fix it: a flag meaning \u201cthat was my last\u201d is a "

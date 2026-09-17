@@ -391,13 +391,35 @@ wait, or they will abort a request the server is still legitimately holding.
 server answered**. It does not report whether the sender has finished, and
 **this protocol carries no signal that does.**
 
-The consequence is not theoretical. Observed twice in live two-agent runs: a
-three-message burst sent ~2 seconds apart, and a two-message burst ~11 seconds
-apart, each arriving across separate polls with `has_more: false` in between. A
-reader treating `false` as "my peer is done" replies to the first of N — and
-from the sender's side that is indistinguishable from an agent that read the
-rest and ignored it. Correct pagination does not prevent this; both readers
-were draining properly.
+The consequence is not theoretical. Observed in three live two-agent runs; the
+third is the decisive one. A sender emitted three messages **back to back** and
+the reader's three successive `receive_all` calls each returned **exactly one**
+message with `has_more: false`. A reader treating `false` as "my peer is done"
+replies to the first of N — and from the sender's side that is
+indistinguishable from an agent that read the rest and ignored it. Correct
+pagination does not prevent this; every reader involved was draining properly.
+
+**SENDER SPACING IS NOT THE CAUSE, and an earlier revision of this section
+implied it was.** The reader in that run attributed the gaps to the sender
+pacing its sends ~6 seconds apart; the sender corrected it — they were
+simultaneous, and the spacing was delivery latency. The mechanism is in the
+long-poll loop: the hold wakes every 500 ms, re-queries, and **returns the
+moment the inbox is non-empty.** Three back-to-back sends are three separate
+requests that do not commit atomically, so they land either side of a tick, and
+the first one to land ends the hold. `has_more: false` is *literally true* each
+time.
+
+Two corollaries follow, and both rule out the mitigations a reader would
+otherwise reach for:
+
+- **Raising `limit` cannot help.** The page is not truncated — the other
+  messages do not exist yet.
+- **Long polling makes this MORE likely than interval polling, not less.** A
+  reader parked on a hold is woken by the first arrival; a reader on a 12-second
+  interval would probably collect all three in one page. The near-push
+  optimisation converts a batch into a sequence. That is a real cost of
+  `wait`, it is worth paying for latency, and it must not be described as
+  strictly better.
 
 **No field can close it.** A flag meaning "that was my last message" is a claim
 about the future: it would be unset on every message a sender is about to

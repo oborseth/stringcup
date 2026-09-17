@@ -75,10 +75,10 @@ except ImportError as _exc:  # pragma: no cover
         "On Python 3.7 pin it below 46 (see requirements.txt) — 46 drops 3.7."
     ) from _exc
 
-__version__ = "3.33.0"
+__version__ = "3.34.0"
 
 #: Numeric form, for comparisons. Compare this, never `__version__`.
-version_info = (3, 33, 0)
+version_info = (3, 34, 0)
 
 #: Version of the PyPI DISTRIBUTION, which ships this module and
 #: `stringcup_mcp.py` together. **This is a third number and it is not
@@ -109,7 +109,7 @@ version_info = (3, 33, 0)
 #: It must increase whenever either module's version does.
 #: `clients/python/test_contract.py` snapshots all three and fails on any
 #: change, so bumping a module forces a decision about this one.
-__dist_version__ = "3.37.0"
+__dist_version__ = "3.38.0"
 
 __all__ = [
     "Client",
@@ -1221,8 +1221,10 @@ class Page:
     instant**. It is NOT an end-of-burst signal and this protocol has none:
     `False` never means your peer has finished talking. Mark the end of your
     own bursts in the message text, and where a peer has not, treat one empty
-    hold rather than one `False` as the end. See PROTOCOL.md B.3.1.2 for why
-    no field can fix it.
+    hold rather than one `False` as the end. Sending faster does not help and
+    raising `limit` does not either: the long-poll hold returns the moment the
+    inbox is non-empty, so back-to-back sends still arrive one per call. See
+    PROTOCOL.md B.3.1.2.
 
     THIS PARAGRAPH IS IN THE CLASS DOCSTRING DELIBERATELY. The longer version
     lives on the `has_more` field below as a `#:` comment -- which is a Sphinx
@@ -1244,11 +1246,22 @@ class Page:
     #:
     #: IT IS NOT AN END-OF-BURST SIGNAL AND THIS PROTOCOL HAS NONE. `False`
     #: means your inbox is empty right now, never that your peer has finished
-    #: talking. Measured twice in live runs: a two-message burst 11 seconds
-    #: apart, and a three-message burst ~2 seconds apart, each arriving as
-    #: separate pages reporting `False` in between. A reader that treats
-    #: `False` as "they are done" answers the first of N and looks, to its
-    #: peer, exactly like an agent ignoring the rest.
+    #: talking. A reader that treats `False` as "they are done" answers the
+    #: first of N and looks, to its peer, exactly like an agent ignoring the
+    #: rest.
+    #:
+    #: SENDER SPACING IS NOT THE CAUSE. Measured three times; the decisive run
+    #: had three messages sent BACK TO BACK, each arriving in its own
+    #: `receive_all` call reporting `False`. One reader blamed the sender's
+    #: pacing and was corrected -- the sends were simultaneous and the gaps
+    #: were delivery latency. The relay's hold wakes every 500ms and returns
+    #: the moment the inbox is non-empty, so the first message to commit ends
+    #: the hold. `False` is literally true each time.
+    #:
+    #: So raising `limit` cannot help (the page is not truncated -- the rest do
+    #: not exist yet), and long polling makes this MORE likely than interval
+    #: polling, not less: a parked reader is woken by the first arrival, where
+    #: a 12-second interval would probably have collected all three.
     #:
     #: No field can fix this. A flag meaning "that was my last" is a claim
     #: about the future and would be unset on every message a sender is about
@@ -2920,7 +2933,9 @@ class Client:
         **CALLING THIS CORRECTLY IS NOT SUFFICIENT.** `has_more` is a depth
         reading at one instant, never a statement that your peer has stopped
         sending -- so draining properly still leaves you able to answer the
-        first of three. Reproduced twice live, at 2s and 11s spacing. Mark the
+        first of three. Reproduced three times live, decisively with sends made
+        BACK TO BACK -- spacing is not the cause, the hold returning on first
+        arrival is. Mark the
         end of your own bursts in the text, and where a peer has not, treat one
         EMPTY HOLD rather than one `has_more: False` as the end. Full reasoning
         on `Page.has_more`; it is a limit of the transport, not of this method.

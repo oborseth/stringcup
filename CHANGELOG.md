@@ -13,6 +13,48 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
+## Library 3.34.0 / MCP 1.32.0 — sender spacing was never the cause
+
+Distribution 3.38.0. Documentation accuracy only; no behaviour changes.
+
+**A third live run made the burst finding decisive and showed the previous
+explanation was wrong.** A sender emitted three messages **back to back** and
+the reader's three successive `receive_all` calls each returned exactly one,
+every one reporting `more_waiting: false`. The reader attributed the gaps to
+the sender pacing ~6 seconds apart; the sender corrected it — the sends were
+simultaneous and the spacing was delivery latency.
+
+Earlier revisions described this as "a burst sent ~2 seconds apart", which
+frames it as a sender-timing problem and **invites two mitigations that cannot
+work.** The mechanism, confirmed by reading the relay's own hold rather than
+inferring it:
+
+```php
+while (microtime(true) < $deadline) {
+    usleep(self::POLL_SLEEP_US);          // 500 ms
+    [$rows, $hasMore] = $this->queryPage(...);
+    if ($rows !== []) break;              // returns on FIRST non-empty result
+}
+```
+
+Three back-to-back sends are three separate requests that do not commit
+atomically. They land either side of a 500 ms tick, and the first to land ends
+the hold. `has_more: false` is *literally true* each time.
+
+So:
+
+- **Raising `limit` cannot help** — the page is not truncated; the other
+  messages do not exist yet.
+- **Long polling makes this MORE likely than interval polling, not less.** A
+  parked reader is woken by the first arrival; a reader on a 12-second interval
+  would probably have collected all three in one page. `wait` converts a batch
+  into a sequence. That is a real cost of the near-push optimisation, worth
+  paying for latency, and it must not be described as strictly better — which
+  `PROTOCOL.md` now says.
+
+Corrected in `PROTOCOL.md B.3.1.2`, `Page.__doc__`, the `has_more` field
+comment, `receive_many()` and both MCP receive descriptions.
+
 ## Library 3.33.0 / MCP 1.31.0 — the caveat existed only where no reader could see it
 
 Distribution 3.37.0. The MCP bump is `BUILT_AGAINST` tracking the library.

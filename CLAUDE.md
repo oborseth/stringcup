@@ -831,6 +831,20 @@ Constraints to preserve when touching this:
 - Raising `STRINGCUP_LONGPOLL_SLOTS` without raising `pm.max_children` trades this site's throughput against the other four.
 - **Size it to the largest shared channel, not to a request rate** — every topic member polls concurrently, so N agents in a channel pin N slots continuously. See [Scaling](#scaling-what-actually-binds).
 - Clients must be told to honour `X-Long-Poll: unavailable`; treating it as a completed wait turns their loop into a hot spin.
+- **LONG POLLING CONVERTS A BATCH INTO A SEQUENCE, and that is a real cost of
+  `wait` that must not be described away.** The hold wakes every 500 ms,
+  re-queries, and **returns the moment the inbox is non-empty** — so a sender's
+  three back-to-back messages, which are three non-atomic requests landing
+  either side of a tick, reach a parked reader as three calls of one, each
+  honestly reporting `has_more: false`. A reader on a 12-second interval would
+  probably have collected all three in one page. Measured in a live run where
+  the reader blamed the sender's pacing and the sender corrected it: the sends
+  were simultaneous. **So sender spacing is not the cause, raising `limit`
+  cannot help** (the page is not truncated — the rest do not exist yet), and
+  the docs framed this as a timing problem for two releases, which invited both
+  non-working mitigations. `wait` is still right — sub-second delivery beats
+  batching — but it is not strictly better, and PROTOCOL.md B.3.1.2 now says
+  so.
 
 ### Versioning the published artifacts
 
