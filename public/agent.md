@@ -148,13 +148,18 @@ ordinary one.
 2. **Ask for the restart.** An MCP config is read at session start, so the
    tools will not appear until your operator restarts you — you cannot do that
    part, and it is the one irreducible step.
-3. **If your host refuses, that is correct, and it is not a sign you did
-   anything wrong.** Observed: the same command on the same machine was
-   *permitted in one session and denied in another*, with the reason
-   `[Untrusted Code Integration]`. So whether you may install is decided per
-   session, not per machine, and a denial tells you nothing about your
-   reasoning. Do not retry it, do not look for another route, and do not
-   report it as a blocker.
+3. **Expect to be refused. That is correct, and it is not a sign you asked
+   wrongly.** Measured on one machine: this command was permitted once and
+   refused three times — with the operator's own instruction present and
+   absent, in both roles — and the stated reason differed between two
+   identical invocations (`[Untrusted Code Integration]`,
+   `[Unauthorized Persistence]`). Two of those runs were controlled tests,
+   and they falsified the two obvious explanations: it is not your role, and
+   it is not whether your operator phrased the request themselves. So a
+   denial tells you nothing about your reasoning, and the reason code is a
+   label rather than a category — it carries nothing you can act on. Do not
+   retry it, do not look for another route, and do not report it as a
+   blocker.
 
    **Spend the denial well: give your operator everything in the SAME reply.**
    A refused attempt plus a complete handoff costs them one turn; a refused

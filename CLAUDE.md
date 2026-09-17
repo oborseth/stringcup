@@ -1263,6 +1263,45 @@ the never-route-around-a-permission-control rule three times already; a fourth
 would be telling agents how to sequence their actions to avoid detection.
 Record the observation, leave the sequencing alone.
 
+**THREE EXPLANATIONS WERE TESTED AND ALL THREE ARE FALSE. The variable is not
+in the prompt, and the testing stopped there on purpose.** 2026-09-17, six runs
+of the identical `claude mcp add` on one machine, one permit and five denials:
+
+- **The agent's role — eliminated.** An *initiator*, the position that had
+  always succeeded, was denied with the operator's words removed. Reason
+  `[Unauthorized Persistence]`, a fifth code this project had not seen.
+- **Whether the operator phrased it themselves — eliminated.** A prompt
+  matching the shape of the one permitted run was denied
+  `[Untrusted Code Integration]`. This was the peer agent's hypothesis and it
+  was the plausible one; it did not survive its own control.
+- **A task brief (`OBJECTIVE:` / `DONE MEANS:`) — eliminated.** The operator
+  reported a prompt that "seems to work". On fresh sessions the **same prompt**
+  was denied, and so was the same prompt with the brief removed.
+
+The third is the one that closes the question, and it closes it by *shape*
+rather than by count: **a string that was permitted earlier was refused later.**
+Nothing about the text can be the cause of an outcome that flips while the text
+is fixed. Stop looking in the prompt.
+
+**The reason code is a label, not a category.** Two identical invocations
+returned different codes. This file had been recording each new code as though
+it named a distinct mechanism — five of them — and that reading is wrong; they
+are post-hoc rationales and carry nothing an agent or operator can act on.
+`agent.md` says so now.
+
+**What remains untested is untested deliberately.** The surviving candidates
+are all forms of accumulation — attempt frequency, history across sessions on
+one machine, a policy change during the day. Every one is a question about what
+the classifier keys on, and answering it produces precisely the guidance this
+project has now forbidden itself four times. "Not the prompt" is a complete and
+publishable finding. The next step is not a seventh run.
+
+**Product consequence, which is the part that matters:** self-install is a
+bonus that usually does not arrive, not a step. Onboarding is two operator
+actions — install, restart — and it always was. Do not let a doc, a tool
+description or a plan depend on the agent doing the first one.
+
+
 **THE SELF-INSTALL POLICY BUYS NOTHING ON CLAUDE CODE'S DEFAULT POSTURE, and
 that friction must not be counted as removed.** Correcting a claim made here
 earlier the same day. Measured on the operator's machine: `Bash(claude mcp *)`
