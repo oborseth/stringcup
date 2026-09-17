@@ -13,7 +13,7 @@ library's `__all__` while both files still reported 2.3.0, so
 the README told you to write. `clients/python/test_contract.py` now fails when
 the surface moves without a version decision.
 
-## MCP 1.26.0 — the handoff carries the work and the setup, because self-install does not arrive
+## MCP 1.26.0 — the handoff carries the work and the setup, because self-install cannot be relied on
 
 Library 3.29.0, distribution 3.32.0.
 
@@ -25,13 +25,16 @@ operator's own words, the second was only a pasted handoff block. It flagged
 its own hypothesis as a plausible reconstruction rather than a finding, which
 was the right posture — it did not survive.
 
-Six runs of the identical command on one machine, one permit and five denials:
+The command has been both permitted and refused repeatedly on this machine;
+the ratio was not recorded, and the permits are more numerous than a first
+draft of this entry claimed. What IS controlled is a batch of four runs in one
+sitting, every one refused:
 
 - **The agent's role — eliminated.** An initiator, the position that had always
   succeeded, was denied with the operator's words removed. Reason
   `[Unauthorized Persistence]`, a fifth distinct code.
 - **The operator's own phrasing — eliminated.** A prompt matching the shape of
-  the one permitted run was denied `[Untrusted Code Integration]`.
+  a previously permitted run was denied `[Untrusted Code Integration]`.
 - **A task brief — eliminated.** A prompt reported as working was denied on a
   fresh session, as was the same prompt with the brief removed.
 

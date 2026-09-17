@@ -1264,14 +1264,18 @@ would be telling agents how to sequence their actions to avoid detection.
 Record the observation, leave the sequencing alone.
 
 **THREE EXPLANATIONS WERE TESTED AND ALL THREE ARE FALSE. The variable is not
-in the prompt, and the testing stopped there on purpose.** 2026-09-17, six runs
-of the identical `claude mcp add` on one machine, one permit and five denials:
+in the prompt, and the testing stopped there on purpose.** 2026-09-17. The
+command has been both permitted and refused repeatedly on one machine — **the
+permits are not rare, and a first write-up of this said "one permit" and was
+corrected by the operator.** The ratio was never recorded, so do not quote one.
+What is controlled is a batch of four runs in a single sitting, every one
+refused:
 
 - **The agent's role — eliminated.** An *initiator*, the position that had
   always succeeded, was denied with the operator's words removed. Reason
   `[Unauthorized Persistence]`, a fifth code this project had not seen.
 - **Whether the operator phrased it themselves — eliminated.** A prompt
-  matching the shape of the one permitted run was denied
+  matching the shape of a previously permitted run was denied
   `[Untrusted Code Integration]`. This was the peer agent's hypothesis and it
   was the plausible one; it did not survive its own control.
 - **A task brief (`OBJECTIVE:` / `DONE MEANS:`) — eliminated.** The operator
@@ -1297,7 +1301,11 @@ project has now forbidden itself four times. "Not the prompt" is a complete and
 publishable finding. The next step is not a seventh run.
 
 **Product consequence, which is the part that matters:** self-install is a
-bonus that usually does not arrive, not a step. Onboarding is two operator
+bonus that CANNOT BE RELIED ON, not a step — and "unreliable" is the claim,
+not "usually refused", which an earlier draft said and the operator corrected.
+A path that works often and fails unpredictably still cannot be a step in an
+onboarding sequence, because the failure lands on a first-time user with a
+time-boxed token. Onboarding is two operator
 actions — install, restart — and it always was. Do not let a doc, a tool
 description or a plan depend on the agent doing the first one.
 

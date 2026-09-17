@@ -2061,11 +2061,12 @@ class Client:
         # THE OPERATOR SECTION COMES FIRST BECAUSE IT IS READ BEFORE PASTING.
         #
         # Self-install is a bonus that usually does not arrive. Measured on one
-        # machine on 2026-09-17: six runs of the identical command, one permit
-        # and five denials, with the agent's role, the operator's own phrasing
-        # and the presence of a task brief each tested and each eliminated --
-        # a string permitted earlier was refused later, so nothing about the
-        # prompt is the cause. Onboarding is two operator actions, and putting
+        # machine on 2026-09-17: the identical command has been both permitted
+        # and refused repeatedly, and four controlled runs in one sitting were
+        # refused every time -- the agent's role, the operator's own phrasing
+        # and the presence of a task brief each tested and each eliminated. A
+        # string permitted earlier was refused later, so nothing about the
+        # prompt is the cause. It is unpredictable, not uniformly blocked. Onboarding is two operator actions, and putting
         # the first one here means the operator reads it at the moment they are
         # already acting, rather than after a refused attempt costs a round
         # trip against a token that expires.

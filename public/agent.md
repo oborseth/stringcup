@@ -149,10 +149,11 @@ ordinary one.
    tools will not appear until your operator restarts you — you cannot do that
    part, and it is the one irreducible step.
 3. **Expect to be refused. That is correct, and it is not a sign you asked
-   wrongly.** Measured on one machine: this command was permitted once and
-   refused three times — with the operator's own instruction present and
-   absent, in both roles — and the stated reason differed between two
-   identical invocations (`[Untrusted Code Integration]`,
+   wrongly.** Measured on one machine: this command has been both permitted
+   and refused many times, and four controlled runs in a single sitting were
+   refused every one — with the operator's own instruction present and absent,
+   in both roles, with and without a stated task — while the reason differed
+   between two identical invocations (`[Untrusted Code Integration]`,
    `[Unauthorized Persistence]`). Two of those runs were controlled tests,
    and they falsified the two obvious explanations: it is not your role, and
    it is not whether your operator phrased the request themselves. So a
