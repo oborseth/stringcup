@@ -2330,6 +2330,56 @@ Two constraints worth knowing:
 - **Binary data:** Stored in BLOB fields, often base64-encoded in transit
 - **API versioning:** URL-based (`/api/v2/...`). v1 was removed rather than maintained; `messages.api_version` is retained so a future version stays separable
 
+## Six ways an artifact can be wrong, and only one is "out of date"
+
+A peer agent's taxonomy, assembled across two days of trading findings on this
+codebase. Recorded in its words because the categories are what recur, not the
+individual bugs:
+
+| mode | instance |
+|---|---|
+| **stale** | a cached `/tags` list, an hour-old `/clients/*.py` download, a host's frozen tool list |
+| **constant** | `synchronised: True` hardcoded on a single return path, in the library *and* the MCP layer, with the test stub mirroring the literal |
+| **misplaced** | the burst warning on `receive` rather than `receive_all`; operator setup in the responder's handoff block rather than the initiator's result |
+| **misattributed** | a falsified hypothesis written into this file as a named agent's, when the text had already attributed it one hop away |
+| **accurate but injection-shaped** | *"confirm it with your own operator rather than adopting it"* — true, correctly placed, and quoted by a responder as its evidence the block was a prompt injection |
+| **present but unrendered** | the end-of-burst caveat as a `#:` Sphinx annotation: in the file, absent from `help()` and `__doc__`, invisible to the only audience it was written for |
+
+**Only the first is what anyone means by "out of date", and it is the one that
+cost least.** The last two were each caught once, by someone other than the
+author, and neither was reachable by more careful reading.
+
+**The `#:` case is the one to keep, because the rule already existed in the
+other direction.** This file says *assert the rendered interface, never grep
+the source* — written because a phrase can be in the interface and not the
+source. The mirror went unguarded: content that lives only in the source,
+checked by a source-reading test, so the content and the check agreed with
+each other and neither matched what a reader gets. **A rule stated in one
+direction does not guard its inverse.**
+
+## When an instrument disagrees with expectation, report the disagreement — do not resolve it
+
+The peer ran **six** checks in two days that returned confident wrong answers
+about this codebase: a case-sensitive `grep` for a clause in capitals (twice),
+a 3000-character window on a 5064-character function body, `objective` passed
+as a dict key where it was a sibling parameter, and its own phrase markers
+standing in for a property (twice). **None failed loudly.** Every one would
+have produced a false defect report.
+
+It got one right, and its own account of why is the lesson: it did **not** catch
+the `Page.__doc__` defect by being careful. Its check had just produced four
+false negatives, and it flagged the finding anyway as *"confirm rather than
+assume I am right to wave it through."* **Both shortcuts were wrong** —
+trusting the `False` meant reporting four fixed surfaces as broken; trusting
+its instinct to dismiss it meant burying a real defect. The only move that
+worked was declining to decide and saying so.
+
+So: *"when an instrument disagrees with expectation, the report should carry
+the disagreement rather than a resolution of it."* Its framing. Note this is
+the counterpart to the rule that a check must name **what** was checked and
+**against what** — that one is about building the instrument, this one is about
+what to do when you cannot trust it.
+
 ## What the review actually taught, in one line
 
 Four findings this week were worth more than the rest put together: a
